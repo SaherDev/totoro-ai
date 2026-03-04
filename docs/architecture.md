@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repo (totoro-ai) is the AI brain of Totoro. It owns all AI logic: intent parsing, place extraction, embedding generation, vector retrieval, external discovery, ranking, and agent orchestration. It runs as a standalone FastAPI service that the product repo calls over HTTP.
+This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent parsing, place extraction, embedding generation, vector retrieval, external discovery, ranking, taste model, and agent orchestration. It runs as a standalone FastAPI service that the product repo calls over HTTP.
 
 ```
 ┌──────────────────────────────────┐
@@ -26,19 +26,19 @@ This repo (totoro-ai) is the AI brain of Totoro. It owns all AI logic: intent pa
 └────────┬──────────────┬──────────────┬───────────────────┘
          │              │              │
          │ SQL          │ HTTP         │ TCP
-         │ (read-only)  │              │
+         │ (read-write) │              │
          ▼              ▼              ▼
 ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
 │ PostgreSQL   │ │ Google       │ │ Redis        │
 │ + pgvector   │ │ Places API   │ │ (cache)      │
 │              │ │              │ │              │
-│ Reads:       │ │ Validate     │ │ LLM response │
+│ Writes:      │ │ Validate     │ │ LLM response │
 │ - places     │ │ places       │ │ caching      │
 │ - embeddings │ │ Discover     │ │ Session      │
-│ - taste model│ │ nearby       │ │ context      │
+│ - taste_model│ │ nearby       │ │ context      │
 │              │ │ candidates   │ │ Agent state  │
-│ Writes:      │ │              │ │              │
-│ - none       │ │              │ │              │
+│ Reads:       │ │              │ │              │
+│ - all tables │ │              │ │              │
 └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
@@ -47,10 +47,11 @@ This repo (totoro-ai) is the AI brain of Totoro. It owns all AI logic: intent pa
 - Natural language understanding (intent parsing)
 - Place extraction from URLs, free text, and screenshots
 - Embedding generation
-- Vector similarity search (read-only queries against pgvector)
+- Writing extracted places and embeddings to PostgreSQL
+- Vector similarity search (pgvector queries)
 - External place discovery via Google Places API
 - Ranking and scoring algorithms (deterministic, tunable)
-- Taste model reading (for ranking input)
+- Taste model construction and reading
 - Agent orchestration via LangGraph
 - LLM provider abstraction (model switching via config)
 - LLM response caching via Redis
@@ -61,7 +62,7 @@ This repo (totoro-ai) is the AI brain of Totoro. It owns all AI logic: intent pa
 - Serve UI. No HTML, no templates, no static files.
 - Manage auth. The product repo validates users before calling.
 - Own database migrations. Prisma in the product repo manages all schema changes.
-- Write to PostgreSQL. All database writes go through NestJS in the product repo.
+- Write user records, settings, or recommendation history. Those are product data owned by NestJS.
 
 ## Data Flow: Extract a Place
 
@@ -81,9 +82,12 @@ POST /v1/extract-place
     │
     ├── Generate embedding vector
     │
-    └── Return structured place data + embedding vector to NestJS
-        (NestJS writes both to PostgreSQL)
+    ├── Write place record + embedding to PostgreSQL
+    │
+    └── Return place_id, extracted metadata, and confidence score to NestJS
 ```
+
+FastAPI writes what it generates. NestJS receives a confirmation, not raw data to persist.
 
 ## Data Flow: Consult (Recommend a Place)
 
@@ -101,7 +105,7 @@ LangGraph Agent starts
     │   GPT-4o-mini extracts cuisine, occasion, price, radius, constraints
     │
     ├── Step 2: Retrieve saved places
-    │   Query pgvector directly (read-only) for semantic similarity
+    │   Query pgvector for semantic similarity
     │
     ├── Step 3: Discover external candidates
     │   Call Google Places API with location + category filters
@@ -114,17 +118,17 @@ LangGraph Agent starts
     │
     └── Step 6: Generate response
         Return 1 primary + 2 alternatives with reasoning to NestJS
-        (NestJS persists recommendation and streams to frontend)
+        (NestJS stores recommendation history and streams to frontend)
 ```
 
 The agent runs the full pipeline autonomously. No mid-pipeline callbacks to NestJS.
 
 ## API Contract
 
-| Endpoint               | Request                  | Response                                  |
-| ---------------------- | ------------------------ | ----------------------------------------- |
-| POST /v1/extract-place | raw_input, user_id       | structured place data + embedding vector  |
-| POST /v1/consult       | query, user_id, location | 1 primary + 2 alternatives with reasoning |
+| Endpoint               | Request                  | Response                                   |
+| ---------------------- | ------------------------ | ------------------------------------------ |
+| POST /v1/extract-place | raw_input, user_id       | place_id, place metadata, confidence score |
+| POST /v1/consult       | query, user_id, location | 1 primary + 2 alternatives with reasoning  |
 
 All requests come from NestJS after auth verification. This repo never receives requests directly from the frontend.
 
@@ -141,40 +145,55 @@ Model assignments are config-driven via config/models.yaml. No model names hardc
 
 ## Database Access
 
-This repo connects to the same PostgreSQL instance as the product repo. The connection is read-only.
+This repo connects to the same PostgreSQL instance as the product repo.
 
-Reads from:
+Writes:
 
-- places (place metadata for retrieval context)
-- embeddings (vector similarity search via pgvector)
-- taste_model_updates (taste patterns used in ranking)
+- places (extracted place records)
+- embeddings (generated vectors)
+- taste_model (learned user patterns)
 
-Writes to:
+Reads:
 
-- PostgreSQL: none. All writes go through NestJS.
-- Redis: LLM response cache, session context, intermediate agent state.
+- All tables as needed (places, embeddings, taste_model, users for context)
+
+Does not write:
+
+- users, user_settings, recommendations (product data owned by NestJS)
+
+Schema is defined by Prisma in the product repo. If a migration changes a table this repo writes to, FastAPI must adapt. Database client: SQLAlchemy or asyncpg.
+
+## Redis
+
+Redis is owned exclusively by this repo. The product repo does not connect to Redis.
+
+Used for:
+
+- LLM response caching
+- Session context
+- Intermediate agent state
 
 ## Key Boundaries
 
-- One shared PostgreSQL instance. One migration owner (Prisma in product repo). Two connection strings: product repo read-write, this repo read-only.
-- Redis is owned exclusively by this repo. The product repo does not connect to Redis.
-- Google Places API is called directly by this repo as part of the AI pipeline. The product repo does not call Google Places.
+- One shared PostgreSQL instance. One schema owner (Prisma in product repo). Write ownership split by domain: FastAPI writes AI data, NestJS writes product data.
+- Redis is FastAPI-only.
+- Google Places API is called directly by this repo as part of the AI pipeline.
 - All LLM and embedding provider calls happen in this repo only.
 
 ## Technology Stack
 
-| Layer           | Technology            | Notes                                         |
-| --------------- | --------------------- | --------------------------------------------- |
-| Runtime         | Python 3.11           | AI library compatibility                      |
-| Package Manager | Poetry                |                                               |
-| HTTP Layer      | FastAPI               | Async, Pydantic-native                        |
-| Agent Framework | LangGraph             | Multi-step agent orchestration                |
-| Chains          | LangChain             | Document loaders, retrievers, chains          |
-| LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                |
-| Embeddings      | OpenAI (Phase 1-5)    | Swap to Voyage in Phase 6                     |
-| Monitoring      | Langfuse              | LLM monitoring and evaluation                 |
-| Cache           | Redis                 | LLM response caching, session, agent state    |
-| Database Access | SQLAlchemy or asyncpg | Read-only connection to PostgreSQL + pgvector |
-| External API    | Google Places API     | Place validation and nearby discovery         |
-| Deploy          | Railway               | Hobby $5/mo                                   |
-| Local Dev       | Docker Compose        | PostgreSQL + pgvector, Redis, FastAPI         |
+| Layer           | Technology            | Notes                                          |
+| --------------- | --------------------- | ---------------------------------------------- |
+| Runtime         | Python 3.11           | AI library compatibility                       |
+| Package Manager | Poetry                |                                                |
+| HTTP Layer      | FastAPI               | Async, Pydantic-native                         |
+| Agent Framework | LangGraph             | Multi-step agent orchestration                 |
+| Chains          | LangChain             | Document loaders, retrievers, chains           |
+| LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                 |
+| Embeddings      | OpenAI (Phase 1-5)    | Swap to Voyage in Phase 6                      |
+| Monitoring      | Langfuse              | LLM monitoring and evaluation                  |
+| Cache           | Redis                 | LLM response caching, session, agent state     |
+| Database Client | SQLAlchemy or asyncpg | Read-write connection to PostgreSQL + pgvector |
+| External API    | Google Places API     | Place validation and nearby discovery          |
+| Deploy          | Railway               | Hobby $5/mo                                    |
+| Local Dev       | Docker Compose        | PostgreSQL + pgvector, Redis, FastAPI          |

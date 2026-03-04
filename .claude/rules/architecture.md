@@ -2,8 +2,8 @@
 
 ## Two-Repo Separation
 
-- **totoro** (product repo): Nx monorepo, Next.js, NestJS, Prisma, PostgreSQL + pgvector. Handles UI, auth (Clerk), CRUD, and all database writes.
-- **totoro-ai** (this repo): Pure Python. All AI/ML logic. Read-only database access.
+- **totoro** (product repo): Nx monorepo, Next.js, NestJS, Prisma, PostgreSQL + pgvector. Handles UI, auth (Clerk), CRUD, and product data writes.
+- **totoro-ai** (this repo): Pure Python. All AI/ML logic. Writes AI-generated data (places, embeddings, taste_model) to PostgreSQL.
 - Communication: HTTP only. The product repo calls this repo's FastAPI endpoints (`/v1/extract-place`, `/v1/consult`).
 - This repo never imports from, depends on, or assumes anything about the product repo's internals.
 
@@ -13,9 +13,10 @@
 - Place extraction (free text, URLs, descriptions → structured place data)
 - Google Places API calls (place validation and external discovery)
 - Embeddings (text → vectors for similarity search)
-- Vector similarity search (read-only queries against pgvector)
+- Vector similarity search (pgvector queries)
+- Writing extracted places, embeddings, and taste model to PostgreSQL
 - Ranking (candidates + context → scored recommendations)
-- Taste modeling (reading taste patterns for ranking input)
+- Taste model construction and reading
 - Agent orchestration (LangGraph workflows for multi-step reasoning)
 - LLM provider abstraction (model switching via config)
 - Redis (LLM response caching, session context, agent state — exclusively this repo)
@@ -24,15 +25,18 @@
 ## What This Repo Does NOT Own
 
 - UI, frontend, auth, user management, CRUD operations
-- Database writes — all PostgreSQL writes go through NestJS
+- Product data writes — users, settings, recommendations belong to NestJS
 - Database migrations — Prisma in the product repo manages all schema changes
 - Payment, notifications, or any product feature logic
 
 ## Database Access
 
-- This repo has **read-only** access to PostgreSQL + pgvector
-- Reads: places, embeddings, taste_model_updates
-- Writes: none. All writes (place records, embeddings, taste updates) go through NestJS
+- Write ownership split by domain: FastAPI writes AI data, NestJS writes product data
+- FastAPI writes: places, embeddings, taste_model
+- FastAPI reads: all tables as needed
+- NestJS writes: users, user_settings, recommendations (product data)
+- Schema owned by Prisma in product repo. If a migration changes tables this repo writes to, FastAPI must adapt.
+- Database client: SQLAlchemy or asyncpg
 - Redis is owned exclusively by this repo. NestJS does not connect to Redis.
 
 ## Provider Abstraction

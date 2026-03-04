@@ -82,6 +82,6 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **Current phase: 0.5.** Only Phase 0.5 and Phase 1 content applies. Do not build ahead.
 - **Git comment char is `;`** not `#`. Configured in this repo's git config. Commit messages and interactive rebase use `;` for comments.
 - **No `.env` files**: Secrets are exported in shell. If a command fails with missing API key, check that `scripts/env-setup.sh` values are exported.
-- **pgvector is read-only**: The PostgreSQL + pgvector instance is owned by the product repo on Railway. This repo has read-only access for vector search and place/taste data. All writes (including embeddings) go through NestJS.
+- **Database write split**: Shared PostgreSQL instance on Railway. This repo writes AI data (places, embeddings, taste_model). NestJS writes product data (users, settings, recommendations). Schema owned by Prisma in product repo.
 - **Redis caching**: LLM responses are cached in Redis. When changing prompt templates or model config, consider cache invalidation.
 - **Langfuse tracing**: All LLM calls should be traced via Langfuse. Missing traces usually means the Langfuse callback handler wasn't attached.
