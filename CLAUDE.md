@@ -85,3 +85,4 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **Database write split**: Shared PostgreSQL instance on Railway. This repo writes AI data (places, embeddings, taste_model). NestJS writes product data (users, settings, recommendations). Schema owned by Prisma in product repo.
 - **Redis caching**: LLM responses are cached in Redis. When changing prompt templates or model config, consider cache invalidation.
 - **Langfuse tracing**: All LLM calls should be traced via Langfuse. Missing traces usually means the Langfuse callback handler wasn't attached.
+- **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
