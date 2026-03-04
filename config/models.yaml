@@ -1,0 +1,18 @@
+; Provider configuration for logical AI roles.
+; Code references roles (e.g. intent_parser), never model names directly.
+; Swapping a model means changing this file, not code.
+
+roles:
+  intent_parser:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.0
+
+  orchestrator:
+    provider: anthropic
+    model: claude-sonnet-4-6-20250514
+    temperature: 0.2
+
+  embedder:
+    provider: voyage
+    model: voyage-3.5-lite
