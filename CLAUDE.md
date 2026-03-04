@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**Rule: Keep this file under 150 lines. Move detailed standards to `.claude/rules/` files and reference them here.**
 
 ## Project Context
 
