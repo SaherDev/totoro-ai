@@ -48,17 +48,32 @@ See @.claude/rules/architecture.md for full constraints.
 
 ## Workflow
 
-Before touching code, answer three questions:
-1. Which phase does this belong to?
-2. Does this cross the repo boundary?
-3. Is there an existing pattern to follow?
+Before implementing, ask clarifying questions if the task has ambiguity. Do not assume. Keep questions to 3 or fewer. If the task is fully scoped with no ambiguity, skip questions and start executing.
 
-Then: **plan → implement → verify**.
+Before touching code, answer six questions:
 
-- **Plan**: Read relevant docs/ and existing code. State what you will change and why.
-- **Implement**: One logical change per commit. Follow existing patterns.
-- **Verify**: Run `pytest`, `ruff check`, `mypy`. All must pass before considering done.
-- **Completion report**: Summarize what changed, what was tested, flag any deviations from the plan.
+**Context checks:**
+1. **Which phase?** — Only build what the current phase requires. Do not build ahead.
+2. **Crosses repo boundary?** — If it touches UI/auth/CRUD, it belongs in `totoro`. If it touches AI/ML logic, it belongs here.
+3. **Existing pattern?** — Find a similar file or module and follow its conventions.
+
+**File-level checks:**
+4. **What file(s) will change?** — Read them first.
+5. **What could break?** — Identify side effects across modules.
+6. **Is this the simplest change?** — Do not over-engineer.
+
+Then follow this cycle:
+1. **Plan** — If the task touches 3+ files or involves scaffolding, write a plan in chat under 20 lines. For tasks touching 1–2 files, skip the plan and go straight to implementation.
+2. **Implement** — Make the smallest change that works. One concern per commit.
+3. **Verify** — Run `pytest`, `ruff check`, `mypy`. All must pass before moving on.
+4. **Completion report** — 5 lines or less. What changed, what was tested, any deviations from the plan.
+
+**Token efficiency rules:**
+- Plans go in chat, not in separate files.
+- Do not repeat file contents back after creating or editing them.
+- Do not explain code you just wrote unless asked.
+- Do not list what you are about to do and then do it. Pick one: explain or execute.
+- Keep commit messages to one line. Add a body only if the change is non-obvious.
 
 See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 
