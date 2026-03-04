@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Context
 
-Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: intent parsing, place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, pgvector, Redis, Langfuse. Models: GPT-4o-mini (extraction/evals), Claude Sonnet 4.6 (orchestration), Voyage 3.5-lite (embeddings later). Deployed on Railway.
+Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: intent parsing, place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, pgvector, Redis, Langfuse. Models: GPT-4o-mini (extraction/evals), Claude Sonnet 4 (orchestration), Voyage 3.5-lite (embeddings later). Deployed on Railway.
 
 ## Key Directories
 
@@ -40,7 +40,7 @@ poetry run mypy src/                  # type check
 - **Config**: Non-secret config in `config/*.yaml`. Secrets via environment variables only (never `.env` files). `scripts/env-setup.sh` has the template.
 - **Provider abstraction**: `config/models.yaml` maps logical roles (intent_parser, orchestrator, embedder) to provider + model + params. Code never hardcodes model names — always reads from config.
 - **API versioning**: All FastAPI routes live under `/v1/` prefix to match the product repo convention.
-- **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via four HTTP endpoints (see `docs/api-contract.md`). Never import from or depend on the product repo.
+- **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via two HTTP endpoints (see `docs/api-contract.md`). Never import from or depend on the product repo.
 - **Pydantic everywhere**: Request/response schemas, LLM output parsing, internal data transfer — all Pydantic. No raw dicts crossing function boundaries.
 - **LangGraph for orchestration**: Agent workflows use LangGraph graphs, not raw chains.
 
@@ -82,6 +82,6 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **Current phase: 0.5.** Only Phase 0.5 and Phase 1 content applies. Do not build ahead.
 - **Git comment char is `;`** not `#`. Configured in this repo's git config. Commit messages and interactive rebase use `;` for comments.
 - **No `.env` files**: Secrets are exported in shell. If a command fails with missing API key, check that `scripts/env-setup.sh` values are exported.
-- **pgvector is shared**: The PostgreSQL + pgvector instance is owned by the product repo on Railway. This repo connects to it but does not manage migrations.
+- **pgvector is read-only**: The PostgreSQL + pgvector instance is owned by the product repo on Railway. This repo has read-only access for vector search and place/taste data. All writes (including embeddings) go through NestJS.
 - **Redis caching**: LLM responses are cached in Redis. When changing prompt templates or model config, consider cache invalidation.
 - **Langfuse tracing**: All LLM calls should be traced via Langfuse. Missing traces usually means the Langfuse callback handler wasn't attached.
