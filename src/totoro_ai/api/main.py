@@ -1,29 +1,28 @@
-from pathlib import Path
+from importlib.metadata import version as pkg_version
 
-import yaml
 from fastapi import APIRouter, FastAPI
 
-CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "app.yaml"
+from totoro_ai.core.config import load_yaml_config
 
-with CONFIG_PATH.open() as f:
-    _app_config: dict[str, str] = yaml.safe_load(f)
+_app_config = load_yaml_config("app.yaml")
+_version = pkg_version("totoro-ai")
 
 app = FastAPI(
     title=_app_config["name"],
-    version=_app_config["version"],
+    version=_version,
     description=_app_config["description"],
 )
 
-v1_router = APIRouter(prefix="/v1")
+router = APIRouter(prefix=_app_config["api_prefix"])
 
 
-@v1_router.get("/health")
+@router.get("/health")
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "name": _app_config["name"],
-        "version": _app_config["version"],
+        "version": _version,
     }
 
 
-app.include_router(v1_router)
+app.include_router(router)
