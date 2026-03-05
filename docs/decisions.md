@@ -14,6 +14,60 @@ Format:
 
 ---
 
+## ADR-013: SSE streaming as future consult response mode
+**Date:** 2026-03-05
+**Status:** accepted
+**Context:** The consult endpoint returns reasoning_steps in a synchronous JSON response. When the frontend needs to show agent thinking in real time, the API contract would need redesigning mid-build without a plan.
+**Decision:** Document SSE as a future response mode now. When needed, FastAPI streams reasoning steps as they complete. The synchronous mode remains the default. No implementation until the frontend requires it.
+**Consequences:** API contract is forward-compatible. NestJS will proxy the SSE stream when the time comes. No work needed today.
+
+---
+
+## ADR-012: reasoning_steps in consult response
+**Date:** 2026-03-05
+**Status:** accepted
+**Context:** When a bad recommendation comes back, there is no way to tell if intent parsing failed, retrieval missed the right place, or ranking scored incorrectly. The eval pipeline also needs per-step accuracy measurement.
+**Decision:** The consult response includes a `reasoning_steps` array. Each entry has a `step` identifier and a human-readable `summary` of what happened at that stage.
+**Consequences:** Per-step debugging and evaluation become possible. The product repo consumes and renders these steps. Both repos' API contract docs updated.
+
+---
+
+## ADR-011: Minimal tool registration per consult request
+**Date:** 2026-03-05
+**Status:** accepted
+**Context:** Each tool definition costs 100-300 tokens of static context per LLM call. Registering tools the agent never uses wastes tokens at scale.
+**Decision:** Only register tools the agent needs for the current task. Do not preload tools for future capabilities.
+**Consequences:** Saves 600-1,800 tokens per call when 6+ unused tools would otherwise be registered. Tool set must be evaluated per-request.
+
+---
+
+## ADR-010: Context budgeting between LangGraph nodes
+**Date:** 2026-03-05
+**Status:** accepted
+**Context:** A raw Google Places response is ~2,000-4,000 tokens. Passing it through validation, ranking, and response generation means paying for those tokens 3 times in 3 LLM calls.
+**Decision:** Each LangGraph node passes only the fields the next node needs. Extract relevant fields (name, address, price, distance, open status) and drop the rest.
+**Consequences:** 80-90% reduction in wasted tokens on forwarded data. Nodes must explicitly define their input/output contracts.
+
+---
+
+## ADR-009: Parallel LangGraph branches for retrieval and discovery
+**Date:** 2026-03-05
+**Status:** accepted
+**Context:** Retrieval (pgvector) and discovery (Google Places) are independent steps. Running sequentially wastes wall clock time against the 20s consult timeout.
+**Decision:** Steps 2 (retrieve saved places) and 3 (discover external candidates) run as parallel LangGraph branches. Results merge before validation.
+**Consequences:** ~43% latency reduction on those steps (7s sequential → 4s parallel). Frees ~3s of budget for ranking and response generation.
+
+---
+
+## ADR-008: extract-place is a workflow, not an agent
+**Date:** 2026-03-05
+**Status:** accepted
+**Context:** extract-place follows a fixed sequence: parse input, validate via Google Places, generate embedding, write to DB. No tool selection or reasoning loop needed.
+**Decision:** Implement extract-place as a sequential async function, not a LangGraph graph. Reserve LangGraph for consult where multi-step reasoning and tool selection are required.
+**Consequences:** Cuts implementation complexity roughly in half. Eliminates graph-specific debugging (state schema, node ordering, conditional edges) for this endpoint.
+
+---
+
 ## ADR-007: OpenAI embeddings first, Voyage later
 **Date:** 2026-03-04
 **Status:** accepted
