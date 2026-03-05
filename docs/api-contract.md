@@ -62,6 +62,8 @@ Extract and validate a place from raw user input. FastAPI parses the input, vali
 
 Recommend a place. FastAPI runs the full LangGraph agent pipeline autonomously: parse intent, retrieve saved places via pgvector, discover external candidates via Google Places API, validate, rank, and generate a response.
 
+This endpoint has two response modes. The default mode returns a synchronous JSON response. A future SSE (Server-Sent Events) mode will stream agent reasoning steps in real time before the final response. The SSE mode will be added when the frontend needs to show the agent's thinking process. Until then, all clients use the synchronous mode.
+
 **Request:**
 
 ```json
@@ -92,6 +94,24 @@ Recommend a place. FastAPI runs the full LangGraph agent pipeline autonomously: 
       "reasoning": "Known for rich tonkotsu broth. You haven't tried it yet but it matches your preferences.",
       "source": "discovered"
     }
+  ],
+  "reasoning_steps": [
+    {
+      "step": "intent_parsing",
+      "summary": "Parsed: cuisine=ramen, occasion=date night, area=Sukhumvit"
+    },
+    {
+      "step": "retrieval",
+      "summary": "Found 3 saved ramen places near Sukhumvit"
+    },
+    {
+      "step": "discovery",
+      "summary": "Found 5 external ramen restaurants via Google Places"
+    },
+    {
+      "step": "ranking",
+      "summary": "Ranked 8 candidates by taste fit, distance, and occasion match"
+    }
   ]
 }
 ```
@@ -105,7 +125,8 @@ Recommend a place. FastAPI runs the full LangGraph agent pipeline autonomously: 
 - `source` is `"saved"` (from user's collection) or `"discovered"` (external lookup via Google Places).
 - NestJS stores the recommendation in the recommendations table for history and analytics.
 - One HTTP call. The agent runs autonomously. No mid-pipeline callbacks to NestJS.
-- Additional fields (distance, price, open_status, confidence, photos) will be added in later phases. Design DTOs to tolerate extra fields.
+- `reasoning_steps` is an array of objects showing what the agent did at each stage. Each object has `step` (string identifier) and `summary` (human-readable description). Initially returned as part of the synchronous response. When SSE mode is added, these same steps will stream in real time before the final response.
+- Additional fields (distance, price, open_status, confidence, photos) will be added as needed. Design DTOs to tolerate extra fields.
 
 ---
 
