@@ -66,6 +66,8 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
+extract-place is a deterministic workflow, not an agent. It follows a fixed sequence of steps with one LLM call for parsing. No tool selection, no reasoning loop, no LangGraph.
+
 ```
 Raw input (URL, name, or description)
     │
@@ -91,6 +93,8 @@ FastAPI writes what it generates. NestJS receives a confirmation, not raw data t
 
 ## Data Flow: Consult (Recommend a Place)
 
+consult is an agent. It uses LangGraph for multi-step orchestration with tool selection and reasoning. Steps 2 and 3 run as parallel branches because they are independent of each other. Each step passes only the data the next step needs, not the full payload from prior steps. This keeps context tight and reduces token cost.
+
 ```
 Natural language query (e.g., "cheap dinner nearby")
     │
@@ -104,11 +108,13 @@ LangGraph Agent starts
     ├── Step 1: Parse intent
     │   GPT-4o-mini extracts cuisine, occasion, price, radius, constraints
     │
-    ├── Step 2: Retrieve saved places
+    ├── Step 2 (parallel branch A): Retrieve saved places
     │   Query pgvector for semantic similarity
     │
-    ├── Step 3: Discover external candidates
+    ├── Step 3 (parallel branch B): Discover external candidates
     │   Call Google Places API with location + category filters
+    │
+    ├── (branches merge)
     │
     ├── Step 4: Validate candidates
     │   Check open hours, live signals
@@ -138,7 +144,7 @@ All requests come from NestJS after auth verification. This repo never receives 
 | ------------- | ------------------ | ----------------------------------------- |
 | intent_parser | GPT-4o-mini        | Cheap, reliable for structured extraction |
 | orchestrator  | Claude Sonnet 4    | Strong reasoning for tool calling         |
-| embedder      | OpenAI (Phase 1-5) | Default start, swap to Voyage in Phase 6  |
+| embedder      | OpenAI text-embedding-3-small | Default; swappable to Voyage via config |
 | evaluator     | GPT-4o-mini        | Cost-effective for batch evals            |
 
 Model assignments are config-driven via config/models.yaml. No model names hardcoded in application code.
@@ -173,6 +179,13 @@ Used for:
 - Session context
 - Intermediate agent state
 
+## Design Principles
+
+- extract-place is a workflow. consult is an agent. These use different implementation patterns. Do not use LangGraph for extract-place.
+- The consult agent's tool set should be minimal. Only register tools the agent needs for the current task. Do not preload tools for future capabilities.
+- Each LangGraph node passes only the data the next node needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
+- Steps 2 (retrieve) and 3 (discover) in the consult pipeline run as parallel LangGraph branches. They are independent and their results merge before validation.
+
 ## Key Boundaries
 
 - One shared PostgreSQL instance. One schema owner (Prisma in product repo). Write ownership split by domain: FastAPI writes AI data, NestJS writes product data.
@@ -190,7 +203,7 @@ Used for:
 | Agent Framework | LangGraph             | Multi-step agent orchestration                 |
 | Chains          | LangChain             | Document loaders, retrievers, chains           |
 | LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                 |
-| Embeddings      | OpenAI (Phase 1-5)    | Swap to Voyage in Phase 6                      |
+| Embeddings      | OpenAI text-embedding-3-small | Swappable to Voyage via config          |
 | Monitoring      | Langfuse              | LLM monitoring and evaluation                  |
 | Cache           | Redis                 | LLM response caching, session, agent state     |
 | Database Client | SQLAlchemy or asyncpg | Read-write connection to PostgreSQL + pgvector |
