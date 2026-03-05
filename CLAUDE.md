@@ -48,38 +48,23 @@ See @.claude/rules/architecture.md for full constraints.
 
 ## Workflow
 
-Before implementing, ask clarifying questions if the task has ambiguity. Do not assume. Keep questions to 3 or fewer. If the task is fully scoped with no ambiguity, skip questions and start executing.
+Before implementing, ask clarifying questions if the task has ambiguity (3 or fewer). If fully scoped, skip questions and execute.
 
-Before touching code, answer six questions:
+Before touching code, answer:
 
-**Context checks:**
-1. **Which phase?** — Only build what the current phase requires. Do not build ahead.
-2. **Crosses repo boundary?** — If it touches UI/auth/CRUD, it belongs in `totoro`. If it touches AI/ML logic, it belongs here.
-3. **Existing pattern?** — Find a similar file or module and follow its conventions.
+1. **Crosses repo boundary?** — UI/auth/CRUD → `totoro`. AI/ML logic → here.
+2. **Existing pattern?** — Find a similar file or module and follow its conventions.
+3. **Simplest change?** — Do not over-engineer.
 
-**File-level checks:**
-4. **What file(s) will change?** — Read them first.
-5. **What could break?** — Identify side effects across modules.
-6. **Is this the simplest change?** — Do not over-engineer.
+Then: Plan (if 3+ files) → Implement → Verify (`pytest`, `ruff check`, `mypy`) → Completion report (5 lines max, flag any deviations from plan).
 
-Then follow this cycle:
-1. **Plan** — If the task touches 3+ files or involves scaffolding, write a plan in chat under 20 lines. For tasks touching 1–2 files, skip the plan and go straight to implementation.
-2. **Implement** — Make the smallest change that works. One concern per commit.
-3. **Verify** — Run `pytest`, `ruff check`, `mypy`. All must pass before moving on.
-4. **Completion report** — 5 lines or less. What changed, what was tested, any deviations from the plan.
-
-**Token efficiency rules:**
-- Plans go in chat, not in separate files.
-- Do not repeat file contents back after creating or editing them.
-- Do not explain code you just wrote unless asked.
-- Do not list what you are about to do and then do it. Pick one: explain or execute.
-- Keep commit messages to one line. Add a body only if the change is non-obvious.
+Token efficiency: plans go in chat, not files. Do not repeat file contents after editing. Do not explain code you just wrote unless asked. Pick one: explain or execute. Keep commit messages to one line unless non-obvious.
 
 See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 
 ## Notes
 
-- **Current phase: 0.5.** Only Phase 0.5 and Phase 1 content applies. Do not build ahead.
+- **Task-driven workflow.** Planning and prioritization happen outside this repo (ClickUp). Each task arrives scoped — execute it. No phase gates.
 - **Git comment char is `;`** not `#`. Configured in this repo's git config. Commit messages and interactive rebase use `;` for comments.
 - **No `.env` files**: Secrets are exported in shell. If a command fails with missing API key, check that `scripts/env-setup.sh` values are exported.
 - **Database write split**: Shared PostgreSQL instance on Railway. This repo writes AI data (places, embeddings, taste_model). NestJS writes product data (users, settings, recommendations). Schema owned by Prisma in product repo.
