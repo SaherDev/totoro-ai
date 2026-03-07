@@ -1,8 +1,9 @@
-# Architecture Decisions
+# Architecture Decisions — Totoro AI
 
 Log of architectural decisions. Add new entries at the top.
 
 Format:
+
 ```
 ## ADR-NNN: Title
 **Date:** YYYY-MM-DD\
@@ -15,6 +16,7 @@ Format:
 ---
 
 ## ADR-025: Langfuse callback handler on all LLM invocations
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Without tracing, there is no visibility into which LLM calls are slow, expensive, or producing bad outputs. Langfuse is already in the stack for monitoring and evaluation.\
@@ -24,6 +26,7 @@ Format:
 ---
 
 ## ADR-024: Redis caching layer for LLM responses
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Repeated identical LLM calls (e.g. same intent string, same place description) waste tokens and add latency. Redis is already in the stack owned exclusively by this repo.\
@@ -33,6 +36,7 @@ Format:
 ---
 
 ## ADR-023: HTTP error mapping from FastAPI to NestJS
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** NestJS acts on HTTP status codes from this service. Without a consistent error contract, the product repo cannot distinguish bad input from internal failures, leading to incorrect user-facing messages.\
@@ -42,6 +46,7 @@ Format:
 ---
 
 ## ADR-022: Google Places API client abstraction
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Google Places API is called in two contexts: validating extracted places (extract-place workflow) and discovering nearby candidates (consult agent). Without abstraction, both callers would duplicate HTTP setup, auth, and error handling.\
@@ -51,6 +56,7 @@ Format:
 ---
 
 ## ADR-021: LangGraph graph for consult agent orchestration
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** The consult pipeline has six steps with a parallel branch (retrieve + discover) and conditional logic. A sequential async function cannot express the parallel branch or the per-node data contracts cleanly.\
@@ -60,6 +66,7 @@ Format:
 ---
 
 ## ADR-020: Provider abstraction layer — config-driven LLM and embedding instantiation
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Application code must never hardcode model names or provider-specific imports. `config/models.yaml` already defines logical roles but nothing reads it to produce LLM objects yet.\
@@ -69,6 +76,7 @@ Format:
 ---
 
 ## ADR-019: FastAPI Depends() for database session and Redis client
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Endpoints for extract-place and consult both need a database connection and Redis client. Without dependency injection, each handler would manage its own connections, making testing and connection pooling harder.\
@@ -78,6 +86,7 @@ Format:
 ---
 
 ## ADR-018: Separate router modules for extract-place and consult
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Both endpoints are currently absent from the codebase. Placing them in `main.py` alongside the health check would conflate app bootstrap with business logic and make each endpoint harder to test in isolation.\
@@ -87,6 +96,7 @@ Format:
 ---
 
 ## ADR-017: Pydantic schemas for extract-place and consult request and response
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** FastAPI validates request bodies and serializes response bodies. Without explicit Pydantic models, validation is implicit and the API contract has no enforceable shape in code.\
@@ -96,6 +106,7 @@ Format:
 ---
 
 ## ADR-016: models.yaml logical-role-to-provider mapping
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** The codebase must never hardcode model names. Provider switching must be a config change, not a code change. `config/models.yaml` was introduced as the single source of truth for this mapping.\
@@ -105,6 +116,7 @@ Format:
 ---
 
 ## ADR-015: YAML config loader for non-secret settings
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Non-secret settings (app metadata, model assignments) must live in version-controlled files. Secrets must never appear in config files. A loader that knows where to find config files prevents hardcoded paths throughout the codebase.\
@@ -114,6 +126,7 @@ Format:
 ---
 
 ## ADR-014: `/v1` API prefix via APIRouter loaded from app.yaml
+
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** The API contract requires all endpoints under `/v1/`. The prefix must not be hardcoded in route decorators so it can be changed in one place if the versioning scheme changes.\
@@ -123,6 +136,7 @@ Format:
 ---
 
 ## ADR-013: SSE streaming as future consult response mode
+
 **Date:** 2026-03-05\
 **Status:** accepted\
 **Context:** The consult endpoint returns reasoning_steps in a synchronous JSON response. When the frontend needs to show agent thinking in real time, the API contract would need redesigning mid-build without a plan.\
@@ -132,6 +146,7 @@ Format:
 ---
 
 ## ADR-012: reasoning_steps in consult response
+
 **Date:** 2026-03-05\
 **Status:** accepted\
 **Context:** When a bad recommendation comes back, there is no way to tell if intent parsing failed, retrieval missed the right place, or ranking scored incorrectly. The eval pipeline also needs per-step accuracy measurement.\
@@ -141,6 +156,7 @@ Format:
 ---
 
 ## ADR-011: Minimal tool registration per consult request
+
 **Date:** 2026-03-05\
 **Status:** accepted\
 **Context:** Each tool definition costs 100-300 tokens of static context per LLM call. Registering tools the agent never uses wastes tokens at scale.\
@@ -150,6 +166,7 @@ Format:
 ---
 
 ## ADR-010: Context budgeting between LangGraph nodes
+
 **Date:** 2026-03-05\
 **Status:** accepted\
 **Context:** A raw Google Places response is ~2,000-4,000 tokens. Passing it through validation, ranking, and response generation means paying for those tokens 3 times in 3 LLM calls.\
@@ -159,6 +176,7 @@ Format:
 ---
 
 ## ADR-009: Parallel LangGraph branches for retrieval and discovery
+
 **Date:** 2026-03-05\
 **Status:** accepted\
 **Context:** Retrieval (pgvector) and discovery (Google Places) are independent steps. Running sequentially wastes wall clock time against the 20s consult timeout.\
@@ -168,6 +186,7 @@ Format:
 ---
 
 ## ADR-008: extract-place is a workflow, not an agent
+
 **Date:** 2026-03-05\
 **Status:** accepted\
 **Context:** extract-place follows a fixed sequence: parse input, validate via Google Places, generate embedding, write to DB. No tool selection or reasoning loop needed.\
@@ -177,6 +196,7 @@ Format:
 ---
 
 ## ADR-007: OpenAI embeddings first, Voyage later
+
 **Date:** 2026-03-04\
 **Status:** accepted\
 **Context:** Need an embedding provider for place similarity search starting Phase 3.\
@@ -186,6 +206,7 @@ Format:
 ---
 
 ## ADR-006: Python >=3.11,<3.13
+
 **Date:** 2026-03-04\
 **Status:** accepted\
 **Context:** Need a Python version constraint for pyproject.toml.\
@@ -195,6 +216,7 @@ Format:
 ---
 
 ## ADR-005: Single config/models.yaml over split per-provider
+
 **Date:** 2026-03-04\
 **Status:** accepted\
 **Context:** Need a config structure for the provider abstraction layer.\
@@ -204,6 +226,7 @@ Format:
 ---
 
 ## ADR-004: pytest in tests/ over co-located
+
 **Date:** 2026-03-04\
 **Status:** accepted\
 **Context:** Need to decide where test files live.\
@@ -213,6 +236,7 @@ Format:
 ---
 
 ## ADR-003: Ruff + mypy over black/flake8
+
 **Date:** 2026-03-04\
 **Status:** accepted\
 **Context:** Need linting and formatting tooling.\
@@ -222,6 +246,7 @@ Format:
 ---
 
 ## ADR-002: Hybrid directory structure
+
 **Date:** 2026-03-04\
 **Status:** accepted\
 **Context:** Need to organize modules inside `src/totoro_ai/`.\
@@ -231,6 +256,7 @@ Format:
 ---
 
 ## ADR-001: src layout over flat layout
+
 **Date:** 2026-03-04\
 **Status:** accepted\
 **Context:** Need to choose Python package layout.\
