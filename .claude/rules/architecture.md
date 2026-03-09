@@ -26,7 +26,7 @@
 
 - UI, frontend, auth, user management, CRUD operations
 - Product data writes — users, settings, recommendations belong to NestJS
-- Database migrations — Prisma in the product repo manages all schema changes
+- Database migrations for product tables — Prisma in the product repo owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
 - Payment, notifications, or any product feature logic
 
 ## Database Access
@@ -35,8 +35,8 @@
 - FastAPI writes: places, embeddings, taste_model
 - FastAPI reads: all tables as needed
 - NestJS writes: users, user_settings, recommendations (product data)
-- Schema owned by Prisma in product repo. If a migration changes tables this repo writes to, FastAPI must adapt.
-- Database client: SQLAlchemy or asyncpg
+- Migration ownership split by domain: Alembic in this repo owns places, embeddings, taste_model. Prisma in product repo owns users, user_settings, recommendations. Never run Prisma migrations against AI tables.
+- Database client: SQLAlchemy async + asyncpg
 - Redis is owned exclusively by this repo. NestJS does not connect to Redis.
 
 ## Provider Abstraction
