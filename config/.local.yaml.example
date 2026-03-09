@@ -2,33 +2,48 @@
 # Copy this file to .local.yaml and fill in your actual values
 # This file is gitignored and never committed
 
+# Environment
+environment: development
+
 # Database Connection
 database:
-  url: postgresql://user:password@localhost:5432/totoro_dev
+  url: postgresql://totoro:totoro_local@localhost:5432/totoro_dev?schema=public
 
 # LLM Provider Keys
 openai:
-  api_key: sk-xxxxxxxxxxxxx
+  api_key: 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
+  base_url: https://api.openai.com/v1
 
 anthropic:
-  api_key: sk-ant-xxxxxxxxxxxxx
+  api_key: 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
+  base_url: https://api.anthropic.com
 
 # Embedding Provider
 voyage:
-  api_key: pa-xxxxxxxxxxxxx
+  api_key: your-voyage-api-key
 
 # Google Places API
 google_places:
-  api_key: AIzaSyxxxxxxxxxxxxx
+  api_key: AIzaSyDaTMVvIMtaVAsOMIe8j8m6ZifV3ZLqNU0
+  base_url: https://maps.googleapis.com/maps/api
 
-# Langfuse (optional, for tracing)
+# Slack Alerts
+slack:
+  webhook_url: https://hooks.slack.com/services/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
+
+# Langfuse (for tracing)
 langfuse:
-  secret_key: sk-lf-xxxxxxxxxxxxx
-  public_key: pk-lf-xxxxxxxxxxxxx
+  secret_key: your-langfuse-secret-key
+  public_key: your-langfuse-public-key
 
-# Redis (optional, for caching)
+# Redis (for caching)
 redis:
   url: redis://localhost:6379
 
-# Optional: Port Override (from config/dev.yaml by default)
-# port: 8000
+# Feature Flags
+feature_flags:
+  enable_external_places: true
+  enable_slack_alerts: false
+
+# Port
+port: 8000
