@@ -48,17 +48,17 @@ See @.claude/rules/architecture.md for full constraints.
 
 ## Workflow
 
-Before implementing, ask clarifying questions if the task has ambiguity (3 or fewer). If fully scoped, skip questions and execute.
+See `.claude/workflows.md` for the complete 5-step token-efficient workflow (ADR-028):
 
-Before touching code, answer:
+1. **Clarify** — If ambiguous (3+ unknowns), ask 5 questions. Record answers in chat.
+2. **Plan** — If 3+ files or crosses repo boundary, create `docs/plans/YYYY-MM-DD-<feature>.md` with phases and checklist.
+3. **Implement** — Follow plan checklist, write code, commit per `.claude/rules/git.md`.
+4. **Verify** — Run verify commands from plan (`pytest`, `ruff check`, `mypy`), all must pass.
+5. **Complete** — Mark task done. Update task status only.
 
-1. **Crosses repo boundary?** — UI/auth/CRUD → `totoro`. AI/ML logic → here.
-2. **Existing pattern?** — Find a similar file or module and follow its conventions.
-3. **Simplest change?** — Do not over-engineer.
+**Constitution Check:** Verify plan aligns with `docs/decisions.md` (see `.claude/constitution.md`).
 
-Then: Plan (if 3+ files) → Implement → Verify (`pytest`, `ruff check`, `mypy`) → Completion report (5 lines max, flag any deviations from plan).
-
-Token efficiency: plans go in chat, not files. Do not repeat file contents after editing. Do not explain code you just wrote unless asked. Pick one: explain or execute. Keep commit messages to one line unless non-obvious.
+**Model assignments and token costs:** See `.claude/workflows.md` (source of truth).
 
 See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 
