@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-029: Consolidated config files into .local.yaml
+
+**Date:** 2026-03-09\
+**Status:** accepted\
+**Context:** Multiple config files (`app.yaml`, `models.yaml`) scattered across the config directory increased maintenance burden and file count. The Python `load_yaml_config` function already supported loading from config/, but required separate files for different concerns.\
+**Decision:** Consolidate all non-secret config into `config/.local.yaml`. For totoro-ai, merge `app.yaml` and `models.yaml` sections into `.local.yaml`. For totoro NestJS, add `api_prefix` to `.local.yaml` under the `app` section. Both services use a config service to load .local.yaml at startup: Python uses `load_yaml_config(".local.yaml")`, NestJS uses `@nestjs/config` ConfigModule.\
+**Consequences:** Single source of truth per repo for all non-secret config. Fewer files to maintain and track. Developers see all app config in one place. Changes to app metadata or model assignments go to one file. All repos follow the same consolidation pattern.
+
+---
+
 ## ADR-027: Secrets schema documentation via .example templates
 
 **Date:** 2026-03-09\
