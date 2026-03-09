@@ -1,0 +1,53 @@
+from datetime import datetime
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from totoro_ai.db.base import Base
+
+EMBEDDING_DIMENSIONS = 1536  # OpenAI text-embedding-3-small
+
+
+class Place(Base):
+    __tablename__ = "places"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    place_name: Mapped[str] = mapped_column(String, nullable=False)
+    address: Mapped[str] = mapped_column(String, nullable=False)
+    cuisine: Mapped[str | None] = mapped_column(String, nullable=True)
+    price_range: Mapped[str | None] = mapped_column(String, nullable=True)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    embeddings: Mapped[list["Embedding"]] = relationship("Embedding", back_populates="place", cascade="all, delete-orphan")
+
+
+class Embedding(Base):
+    __tablename__ = "embeddings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    place_id: Mapped[str] = mapped_column(String, ForeignKey("places.id", ondelete="CASCADE"), nullable=False, index=True)
+    vector: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
+    model_name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    place: Mapped["Place"] = relationship("Place", back_populates="embeddings")
+
+
+class TasteModel(Base):
+    __tablename__ = "taste_model"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    model_version: Mapped[str] = mapped_column(String, nullable=False)
+    parameters: Mapped[dict] = mapped_column(JSONB, nullable=False)  # type: ignore[type-arg]
+    performance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

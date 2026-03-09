@@ -1,0 +1,10 @@
+app:
+  name: totoro-ai
+  description: AI engine for Totoro
+  api_prefix: /v1
+
+database:
+  url: postgresql://postgres:postgres@localhost:5433/totoro_ai
+
+redis:
+  url: redis://localhost:6379

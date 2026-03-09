@@ -1,0 +1,53 @@
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import engine_from_config, pool
+
+from totoro_ai.core.config import load_yaml_config
+from totoro_ai.db.base import Base
+import totoro_ai.db.models  # noqa: F401 — registers models with Base
+
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = Base.metadata
+
+# Load DATABASE_URL from local config
+_local = load_yaml_config(".local.yaml")
+_url: str = _local["database"]["url"]
+# Alembic uses synchronous driver — strip +asyncpg if present
+if "+asyncpg" in _url:
+    _url = _url.replace("+asyncpg", "")
+config.set_main_option("sqlalchemy.url", _url)
+
+
+def run_migrations_offline() -> None:
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
