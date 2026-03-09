@@ -1,0 +1,34 @@
+# Local Secrets Configuration — FastAPI AI Service
+# Copy this file to .local.yaml and fill in your actual values
+# This file is gitignored and never committed
+
+# Database Connection
+database:
+  url: postgresql://user:password@localhost:5432/totoro_dev
+
+# LLM Provider Keys
+openai:
+  api_key: sk-xxxxxxxxxxxxx
+
+anthropic:
+  api_key: sk-ant-xxxxxxxxxxxxx
+
+# Embedding Provider
+voyage:
+  api_key: pa-xxxxxxxxxxxxx
+
+# Google Places API
+google_places:
+  api_key: AIzaSyxxxxxxxxxxxxx
+
+# Langfuse (optional, for tracing)
+langfuse:
+  secret_key: sk-lf-xxxxxxxxxxxxx
+  public_key: pk-lf-xxxxxxxxxxxxx
+
+# Redis (optional, for caching)
+redis:
+  url: redis://localhost:6379
+
+# Optional: Port Override (from config/dev.yaml by default)
+# port: 8000
