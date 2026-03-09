@@ -37,7 +37,7 @@ poetry run mypy src/                  # type check
 
 - **Naming**: snake_case everywhere. Pydantic models are PascalCase. Files match module name.
 - **Types**: All function signatures typed. Pydantic models for all LLM input/output schemas. `mypy --strict` is the target.
-- **Config**: Non-secret config in `config/*.yaml`. Secrets via environment variables only (never `.env` files). `scripts/env-setup.sh` has the template.
+- **Secrets management** (ADR-025, ADR-026, ADR-027): Per-repo local `config/.local.yaml` (gitignored). Copy `config/.local.yaml.example` and fill in your secrets — this file is never committed.
 - **Provider abstraction**: `config/models.yaml` maps logical roles (intent_parser, orchestrator, embedder) to provider + model + params. Code never hardcodes model names — always reads from config.
 - **API versioning**: All FastAPI routes live under `/v1/` prefix to match the product repo convention.
 - **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via two HTTP endpoints (see `docs/api-contract.md`). Never import from or depend on the product repo.
