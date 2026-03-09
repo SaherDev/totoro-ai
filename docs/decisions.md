@@ -15,6 +15,36 @@ Format:
 
 ---
 
+## ADR-027: Secrets schema documentation via .example templates
+
+**Date:** 2026-03-09\
+**Status:** accepted\
+**Context:** Each repo manages its own secrets locally, but developers need to know what keys and values are required. Without documentation, setup errors are common — missing environment variables cause runtime failures instead of clear setup instructions.\
+**Decision:** Every gitignored secrets file has a `.example` companion in the repo: `config/.local.yaml.example` (NestJS/FastAPI) and `.env.local.example` (Next.js). The `.example` files document all expected secret keys, their purpose, and format. Developers copy the `.example` file to create their local `.local.yaml` or `.env.local` and fill in their own values. The `.example` files are version-controlled; the actual files are gitignored.\
+**Consequences:** New developers can see exactly what secrets they need to provide. Setup instructions are self-documenting via the `.example` files. No secrets leak into git history. Changes to the secret schema require updating both the `.example` file and ADR-027 documentation.
+
+---
+
+## ADR-026: Deprecate centralized totoro-config for secrets management
+
+**Date:** 2026-03-09\
+**Status:** accepted (supersedes the centralized env-setup pattern)\
+**Context:** Secrets were previously managed centrally in the totoro-config repo via `.env.*` files and `scripts/env-setup.sh`. This created a dependency on totoro-config for every repo and made it hard to manage repo-specific secrets without external coordination.\
+**Decision:** Deprecate all secrets management in totoro-config. Each repo (totoro, totoro-ai) now owns its secrets locally via `config/.local.yaml` (backend services) or `.env.local` (Next.js frontend). The centralized env-setup.sh is no longer used. totoro-config becomes a non-dependency for development.\
+**Consequences:** Repos are independent — no external dependency for secrets. Developers can set up and run each repo in isolation. CI/CD must inject secrets as environment variables (existing patterns apply). The `.env.*` files and `env-setup.sh` are removed from totoro-config. Future repos follow the per-repo local secrets pattern by default.
+
+---
+
+## ADR-025: Per-repo local secrets management (NestJS/FastAPI YAML, Next.js env)
+
+**Date:** 2026-03-09\
+**Status:** accepted\
+**Context:** Secrets must be kept out of version control but developers need a clear, repeatable setup process. The previous centralized env-setup.sh approach created a single point of failure and made per-repo development harder.\
+**Decision:** Secrets are managed locally per repo: (1) **NestJS** (totoro/services/api) loads `config/.local.yaml` and merges it with environment-specific config from `config/dev.yml` or `config/prod.yml`; (2) **FastAPI** (totoro-ai) loads `config/.local.yaml` and merges with environment config; (3) **Next.js** (totoro/apps/web) loads `.env.local` via standard Next.js environment variable loading. All three use `.example` template files to document required keys. All `.local.yaml` and `.env.local` files are gitignored. Developers create their local files by copying the `.example` template and filling in their values.\
+**Consequences:** Secrets are decoupled from version control and source repos. Each repo can be run independently with local configuration. ConfigModule in NestJS loads both environment-specific and local config in the correct order (local overrides or augments base config). Next.js uses native `.env.local` support — no custom loader needed. CI/CD injects secrets as environment variables (not via local config files). Developers follow a consistent local setup pattern across all repos.
+
+---
+
 ## ADR-028: 5-Step Token-Efficient Workflow (Clarify → Plan → Implement → Verify → Complete)
 
 **Date:** 2026-03-09\
