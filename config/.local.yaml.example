@@ -4,7 +4,7 @@ app:
   api_prefix: /v1
 
 database:
-  url: postgresql://postgres:postgres@localhost:5433/totoro_ai
+  url: postgresql://postgres:postgres@localhost:5432/totoro
 
 redis:
   url: redis://localhost:6379
