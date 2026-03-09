@@ -1,8 +1,10 @@
 from importlib.metadata import version as pkg_version
 
 from fastapi import APIRouter, FastAPI
+from sqlalchemy import text
 
 from totoro_ai.core.config import load_yaml_config
+from totoro_ai.db.session import _get_session_factory
 
 _app_config = load_yaml_config(".local.yaml")["app"]
 _version = pkg_version("totoro-ai")
@@ -18,10 +20,19 @@ router = APIRouter(prefix=_app_config["api_prefix"])
 
 @router.get("/health")
 async def health() -> dict[str, str]:
+    db_status = "disconnected"
+    try:
+        async with _get_session_factory()() as session:
+            await session.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "name": _app_config["name"],
         "version": _version,
+        "db": db_status,
     }
 
 
