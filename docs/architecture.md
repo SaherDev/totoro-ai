@@ -61,7 +61,7 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 - Serve UI. No HTML, no templates, no static files.
 - Manage auth. The product repo validates users before calling.
-- Own database migrations. Prisma in the product repo manages all schema changes.
+- Own database migrations for product tables. Alembic in this repo manages migrations for places, embeddings, and taste_model only.
 - Write user records, settings, or recommendation history. Those are product data owned by NestJS.
 
 ## Data Flow: Extract a Place
@@ -167,7 +167,7 @@ Does not write:
 
 - users, user_settings, recommendations (product data owned by NestJS)
 
-Schema is defined by Prisma in the product repo. If a migration changes a table this repo writes to, FastAPI must adapt. Database client: SQLAlchemy or asyncpg.
+Schema for AI tables (places, embeddings, taste_model) is managed by Alembic in this repo. If Prisma changes a table this repo reads from (users, recommendations), FastAPI must adapt. Database client: SQLAlchemy async + asyncpg.
 
 ## Redis
 
@@ -188,7 +188,7 @@ Used for:
 
 ## Key Boundaries
 
-- One shared PostgreSQL instance. One schema owner (Prisma in product repo). Write ownership split by domain: FastAPI writes AI data, NestJS writes product data.
+- One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
 - Redis is FastAPI-only.
 - Google Places API is called directly by this repo as part of the AI pipeline.
 - All LLM and embedding provider calls happen in this repo only.
