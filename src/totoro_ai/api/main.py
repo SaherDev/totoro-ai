@@ -4,7 +4,7 @@ from fastapi import APIRouter, FastAPI
 
 from totoro_ai.core.config import load_yaml_config
 
-_app_config = load_yaml_config("app.yaml")
+_app_config = load_yaml_config(".local.yaml")["app"]
 _version = pkg_version("totoro-ai")
 
 app = FastAPI(

@@ -1,3 +1,0 @@
-name: Totoro AI
-description: AI engine for Totoro — intent parsing, place extraction, ranking, taste modeling
-api_prefix: /v1
