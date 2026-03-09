@@ -162,7 +162,7 @@ These values must stay in sync between both repos. A mismatch breaks the system.
 - embeddings
 - taste_model
 
-If Prisma changes the schema of these tables, FastAPI must adapt. Coordinate schema changes before running migrations.
+Alembic in totoro-ai owns migrations for these tables. Prisma never migrates these tables. If the schema changes, run the migration from totoro-ai only.
 
 ---
 

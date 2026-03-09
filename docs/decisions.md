@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-030: Database migration ownership split between Prisma and Alembic
+
+**Date:** 2026-03-09\
+**Status:** accepted\
+**Context:** Two services write to one shared PostgreSQL instance. Giving Prisma sole ownership of all migrations would require opening the product repo every time FastAPI evolves its AI table schemas. Two separate databases would force HTTP calls or data duplication mid-pipeline, adding latency to the consult agent.\
+**Decision:** Split migration ownership by domain. Prisma in the product repo owns and migrates users, user_settings, and recommendations. Alembic in the AI repo owns and migrates places, embeddings, and taste_model. Each tool touches only its own tables. No exceptions.\
+**Consequences:** Two migration tools in the system. Accepted because each repo stays autonomous within its domain. Schema changes to AI tables never require opening the product repo and vice versa.
+
+---
+
 ## ADR-029: Consolidated config files into .local.yaml
 
 **Date:** 2026-03-09\
