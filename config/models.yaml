@@ -1,18 +1,15 @@
-; Provider configuration for logical AI roles.
-; Code references roles (e.g. intent_parser), never model names directly.
-; Swapping a model means changing this file, not code.
+# Model Selection — Committed to git, tracked for evaluations
+# Do not put secrets in this file. API keys go in .local.yaml
 
-roles:
+models:
   intent_parser:
     provider: openai
-    model: gpt-4o-mini
-    temperature: 0.0
+    name: gpt-4o-mini
 
   orchestrator:
     provider: anthropic
-    model: claude-sonnet-4-6-20250514
-    temperature: 0.2
+    name: claude-sonnet-4
 
   embedder:
     provider: voyage
-    model: voyage-3.5-lite
+    name: voyage-3.5-lite
