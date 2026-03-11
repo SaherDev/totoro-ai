@@ -56,6 +56,8 @@ See `.claude/workflows.md` for the complete 5-step token-efficient workflow (ADR
 4. **Verify** — Run verify commands from plan (`pytest`, `ruff check`, `mypy`), all must pass.
 5. **Complete** — Mark task done. Update task status only.
 
+**IMPORTANT: Read `docs/decisions.md` FIRST — before planning, before implementing, before any architectural discussion.** Every ADR is a binding constraint. If your approach contradicts a decision, stop and flag it. This is the first thing you do, not a later verification step.
+
 **Constitution Check:** Verify plan aligns with `docs/decisions.md` (see `.claude/constitution.md`).
 
 **Model assignments and token costs:** See `.claude/workflows.md` (source of truth).
