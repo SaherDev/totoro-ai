@@ -35,16 +35,6 @@ Format:
 
 ---
 
-## ADR-026: Per-repo local secrets (FastAPI reads config/.local.yaml)
-
-**Date:** 2026-03-09\
-**Status:** accepted\
-**Context:** Secrets must never be stored in version control. Each service needs a simple way to manage its own secrets without external dependencies.\
-**Decision:** FastAPI reads secrets from `config/.local.yaml` (gitignored, never committed). Developers create this file manually and populate it with their own secret values. No template files, no other files needed. NestJS and Next.js manage secrets in their own `.env.local` files.\
-**Consequences:** Simple local setup — create the file and fill in values. CI/CD injects secrets as environment variables at deploy time.
-
----
-
 ## ADR-028: 5-Step Token-Efficient Workflow (Clarify → Plan → Implement → Verify → Complete)
 
 **Date:** 2026-03-09\
@@ -52,6 +42,20 @@ Format:
 **Context:** Previous workflow was unclear about when to use agents, causing token waste through unnecessary subagent dispatches and review loops. Needed a standardized approach that scales from simple 1-file tasks to complex multi-repo changes.\
 **Decision:** Adopt 5-step workflow with specific Claude model per step: (1) **Clarify** (Haiku) — If ambiguous, ask 5 questions; (2) **Plan** (Sonnet) — If 3+ files, create docs/plans/*.md with phases + Constitution Check against docs/decisions.md; (3) **Implement** (Haiku/Sonnet per complexity) — Follow plan checklist, write code, commit; (4) **Verify** (Haiku) — Run commands, all must pass; (5) **Complete** (Haiku) — Mark task done. See `.claude/workflows.md` for flow, `.claude/constitution.md` for check process.\
 **Consequences:** Average task cost reduced from 250K to 13-18K tokens (~95% savings). Clear decision points on when to plan vs implement. Constitution Check catches architectural violations early (in Plan phase, not Implement phase). Plan doc becomes single source of truth for implementation. Workflow applies consistently across all repos (totoro, totoro-ai, future repos).
+
+---
+
+## ADR-027: _(reserved — unused)_
+
+---
+
+## ADR-026: Per-repo local secrets (FastAPI reads config/.local.yaml)
+
+**Date:** 2026-03-09\
+**Status:** accepted\
+**Context:** Secrets must never be stored in version control. Each service needs a simple way to manage its own secrets without external dependencies.\
+**Decision:** FastAPI reads secrets from `config/.local.yaml` (gitignored, never committed). Developers create this file manually and populate it with their own secret values. No template files, no other files needed. NestJS and Next.js manage secrets in their own `.env.local` files.\
+**Consequences:** Simple local setup — create the file and fill in values. CI/CD injects secrets as environment variables at deploy time.
 
 ---
 
