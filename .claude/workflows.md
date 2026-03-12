@@ -167,9 +167,7 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 1. Update task status: ✓ COMPLETED
 2. Checklist: All items marked [X]
 3. Push branch: `git push origin <branch-name>`
-4. Merge branch into `dev` (squash or merge commit, your call)
-5. Delete branch after merge: `git branch -d <branch-name>`
-6. Optional: Add 2-3 line comment if complex
+4. Optional: Add 2-3 line comment if complex
 
 **No separate file created** — just update task status
 
