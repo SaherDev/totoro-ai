@@ -15,6 +15,26 @@ Format:
 
 ---
 
+## ADR-033: Behavioral Signal Tracking in the Recommendations Table
+
+**Date:** 2026-03-12\
+**Status:** accepted\
+**Context:** The current recommendations table stores query, data (the full response JSON), and timestamps. This is enough to replay what the system returned but not enough to measure if the system is performing well. The core evaluation metric for Totoro is first recommendation acceptance rate: did the user take the primary recommendation or not? Without storing that signal, there is no way to measure system quality over time, tune the ranking layer, or improve the taste model. Raw typo input has no analytical value and will not be stored. What matters is whether the corrected query produced a recommendation the user accepted.\
+**Decision:** Two fields are added to the recommendations table in the Prisma schema: (1) `accepted` (Boolean, nullable) — true if the user took the primary recommendation, false if they picked an alternative or dismissed, null if no feedback was captured; (2) `selected_place_id` (String, nullable) — the place_id of whichever recommendation the user acted on, whether primary or alternative. These fields are written by NestJS after the user signals a choice in the frontend. FastAPI does not write to this table. The frontend sends a lightweight feedback event to NestJS (a single PATCH or POST call) when the user taps a recommendation. NestJS updates the record. No new table is needed. The exact feedback UI mechanic (tap to confirm, explicit accept button, implicit signal from navigation) is an implementation decision deferred to Phase 4 when the agent UI is built.\
+**Consequences:** A Prisma migration adds accepted and selected_place_id to the recommendations table. NestJS needs a feedback endpoint to receive and write the user's choice after a consult response is displayed. The evaluation pipeline in Phase 6 reads accepted and selected_place_id to compute first recommendation acceptance rate across all users. Null values are valid and expected early on before enough users provide feedback. Queries with null accepted are excluded from accuracy calculations. This schema supports the portfolio claim: first recommendation acceptance rate measured across real user sessions.
+
+---
+
+## ADR-032: Spell Correction via Strategy Pattern for Easy Library Swapping
+
+**Date:** 2026-03-12\
+**Status:** accepted\
+**Context:** Users type casual, unstructured input in two places: the consult query ("cheep diner nerby") and the place sharing input ("fuji raman"). Typos in the consult query can cause the intent parser to misread structured constraints like price or cuisine. Typos in the place sharing input produce a drifted embedding vector, which hurts pgvector retrieval accuracy later. Three Python libraries were evaluated: symspellpy (MIT, free, 700k monthly PyPI downloads, 0.033ms per word at edit distance 2), pyspellchecker (MIT, free, word-by-word Levenshtein correction), and TextBlob (MIT, free, 70% accuracy, known to overcorrect proper nouns and place names). symspellpy is the fastest and most accurate of the three for short multi-word inputs. Correction belongs in FastAPI only. The frontend must not correct spelling because it breaks the conversational feel of the product. NestJS must not correct spelling because it is an auth and routing layer only. Future support for other languages requires different libraries and dictionaries — the implementation must be swappable without changing endpoint handlers.\
+**Decision:** A `SpellCorrector` abstract base class defines the contract: `correct(text: str, language: str) -> str`. Implementations wrap different libraries: `SymSpellCorrector` (default, wraps symspellpy), `PySpellCheckerCorrector` (wraps pyspellchecker), future language-specific variants. The active corrector is loaded at FastAPI startup from `config/.local.yaml` under `spell_correction.provider` (e.g., `symspell`, `pyspellchecker`). Both endpoint handlers call `spell_corrector.correct(text, language)` at the start, where language defaults to user's locale from the database. Raw input travels untouched from Next.js through NestJS to FastAPI. FastAPI corrects it silently. The corrected text is what gets embedded, stored in places.place_name, and stored in recommendations.query. The LLM system prompt for intent parsing also includes an explicit instruction to interpret input regardless of spelling as a second layer of tolerance. Google Places API fuzzy matching acts as a third layer for place name typos during validation.\
+**Consequences:** A new module `src/totoro_ai/core/spell_correction/` defines `SpellCorrector` base class and concrete implementations. The factory function in `src/totoro_ai/providers/spell_correction.py` reads `config/.local.yaml` and instantiates the active corrector. symspellpy is the initial default in Poetry dependencies. Swapping to a different library requires only a YAML config change and the library dependency installed. Adding support for Thai or Arabic means implementing a new `SpellCorrector` subclass with the appropriate dictionary — endpoint handlers need no changes. The strategy pattern isolates library specifics from business logic.
+
+---
+
 ## ADR-031: Agent Skills Integration in Development Workflow
 
 **Date:** 2026-03-12\
