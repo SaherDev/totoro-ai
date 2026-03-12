@@ -164,10 +164,11 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 
 **Process:**
 
-1. Update task status: ✓ COMPLETED
-2. Checklist: All items marked [X]
-3. Push branch: `git push origin <branch-name>`
-4. Optional: Add 2-3 line comment if complex
+1. Note ClickUp task ID (e.g., `#86c8m8gj6`)
+2. Update task status: ✓ COMPLETED
+3. Checklist: All items marked [X]
+4. Push branch: `git push origin <branch-name>`
+5. Optional: Add 2-3 line comment if complex
 
 **No separate file created** — just update task status
 
