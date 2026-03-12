@@ -13,6 +13,7 @@ Use this workflow for all tasks. Each step uses a specific Claude model to minim
 **Cost:** ~2K tokens
 
 **Template:**
+
 ```
 Q1: [question]
 Options: A) [option], B) [option], C) [option]
@@ -37,7 +38,20 @@ Recommended: B - [brief reason]
 **When:** 3+ files OR crosses repo boundary
 **Cost:** ~8K tokens
 
+### Branch Setup (before planning)
+
+1. Confirm you are on `dev`: `git branch --show-current`
+2. Pull latest: `git pull origin dev`
+3. Generate branch name from task type:
+   - Spec-kit task: `<number>-<feature-name>` (e.g., `001-nx-monorepo-setup`)
+   - Manual feature: `feature/<short-description>` (e.g., `feature/clerk-auth`)
+   - Bug fix: `fix/<short-description>` (e.g., `fix/prisma-migration-order`)
+4. Checkout: `git checkout -b <branch-name>`
+
+> Scope examples: see `.claude/rules/git.md`
+
 **Template:**
+
 ```markdown
 # [Feature Name] Implementation Plan
 
@@ -62,6 +76,7 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 ## Phase 1: [Name]
 
 **Checklist:**
+
 - [ ] Task 1.1: [description]
 - [ ] Task 1.2: [description]
 
@@ -74,6 +89,7 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 ## Phase 2: [Name]
 
 **Checklist:**
+
 - [ ] Task 2.1: [description]
 - [ ] Task 2.2: [description]
 
@@ -104,6 +120,7 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 **Cost:** ~2K tokens (Haiku) or ~8K tokens (Sonnet)
 
 **Process:**
+
 1. Follow the plan checklist
 2. For each phase:
    - [ ] Write test (if applicable)
@@ -113,6 +130,7 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 3. No separate files created (just code + commits)
 
 **Model Selection:**
+
 - **Haiku:** Templates, configs, straightforward changes, deletions
 - **Sonnet:** Complex algorithms, multi-step logic, architecture changes
 
@@ -125,6 +143,7 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 **Cost:** ~500 tokens
 
 **Checklist:**
+
 - [ ] Run verify commands from plan (e.g., `pnpm nx affected -t test,lint`)
 - [ ] All tests pass
 - [ ] All lint passes
@@ -144,9 +163,13 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 **Cost:** ~100 tokens
 
 **Process:**
+
 1. Update task status: ✓ COMPLETED
 2. Checklist: All items marked [X]
-3. Optional: Add 2-3 line comment if complex
+3. Push branch: `git push origin <branch-name>`
+4. Merge branch into `dev` (squash or merge commit, your call)
+5. Delete branch after merge: `git branch -d <branch-name>`
+6. Optional: Add 2-3 line comment if complex
 
 **No separate file created** — just update task status
 
@@ -154,11 +177,11 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 
 ## Token Cost Summary
 
-| Task Complexity | Clarify | Plan | Implement | Verify | Complete | **Total** |
-|-----------------|---------|------|-----------|--------|----------|-----------|
-| **Simple** (1-2 files) | 2K | SKIP | 2K (Haiku) | 0.5K | 0.1K | **~4.5K** |
-| **Normal** (3+ files) | 2K | 8K | 2K (Haiku) | 0.5K | 0.1K | **~12.5K** |
-| **Complex** (multi-repo, logic) | 2K | 8K | 8K (Sonnet) | 0.5K | 0.1K | **~18.5K** |
+| Task Complexity                 | Clarify | Plan | Implement   | Verify | Complete | **Total**  |
+| ------------------------------- | ------- | ---- | ----------- | ------ | -------- | ---------- |
+| **Simple** (1-2 files)          | 2K      | SKIP | 2K (Haiku)  | 0.5K   | 0.1K     | **~4.5K**  |
+| **Normal** (3+ files)           | 2K      | 8K   | 2K (Haiku)  | 0.5K   | 0.1K     | **~12.5K** |
+| **Complex** (multi-repo, logic) | 2K      | 8K   | 8K (Sonnet) | 0.5K   | 0.1K     | **~18.5K** |
 
 **Old approach (multi-subagent):** ~250K tokens per task
 **New approach:** ~13K average tokens per task
@@ -171,6 +194,7 @@ If any violation: ❌ ERROR — Do not proceed (create new ADR to supersede)
 See `.claude/constitution.md` for full process.
 
 **Quick version:**
+
 1. Open `docs/decisions.md`
 2. List ADRs related to your feature
 3. For each ADR, verify: Does plan comply?
@@ -178,6 +202,7 @@ See `.claude/constitution.md` for full process.
 5. To override: Create new ADR explaining supersession
 
 Common ADRs to check:
+
 - ADR-001: Nx (monorepo tool locked)
 - ADR-003: YAML config (format locked)
 - ADR-004: Clerk (auth locked)
