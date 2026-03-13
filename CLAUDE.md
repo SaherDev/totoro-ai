@@ -15,7 +15,7 @@ Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine.
   - `eval/` — evaluation harnesses and datasets
 - `tests/` — pytest tests mirroring src structure
 - `config/` — YAML configuration (models.yaml for provider switching, non-secret settings)
-- `scripts/` — utility scripts (env-setup.sh template for secrets)
+- `scripts/` — utility scripts
 - `docs/` — operational docs: architecture, API contract, decisions log
 
 See @.claude/rules/architecture.md for repo boundaries and coding constraints.

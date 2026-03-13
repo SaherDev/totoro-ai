@@ -64,8 +64,7 @@ No raw dicts cross function or module boundaries. All inputs/outputs use Pydanti
 ## V. Configuration Rules
 
 - Non-secret config → `config/app.yaml`, `config/models.yaml`
-- Secrets → environment variables only (no `.env` files)
-- Template → `scripts/env-setup.sh`
+- Secrets → local file `config/.local.yaml` (gitignored, created locally by developers)
 - Config loaded via `load_yaml_config(name)` — never hardcoded paths
 
 ## VI. Database Write Ownership
