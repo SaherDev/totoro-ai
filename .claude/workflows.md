@@ -243,6 +243,27 @@ Cost: ~13K tokens
 
 ---
 
+## Spec-kit Alternative Workflow
+
+For larger or less defined features, spec-kit can replace Steps 1–2:
+
+| Spec-kit Command | Replaces | When |
+|------------------|----------|------|
+| `speckit.clarify` | Step 1 (Clarify) | Feature has unclear requirements |
+| `speckit.specify` | Step 2 start | Write structured feature spec |
+| `speckit.plan` | Step 2 middle | Generate implementation plan from spec |
+| `speckit.tasks` | Step 2 end | Break plan into ordered tasks.md |
+| `speckit.analyze` | Step 2 check | Verify spec/plan/tasks are consistent |
+| `speckit.constitution` | Constitution Check | Validate plan against ADRs |
+| `speckit.implement` | Step 3 (Implement) | Execute tasks from tasks.md |
+| `speckit.taskstoissues` | Step 5 (Complete) | Convert tasks to GitHub issues |
+
+**When to use spec-kit:** Large features with multiple unknowns, cross-cutting changes, or when a structured spec is needed before implementation.
+
+**When to use the simple workflow:** Small, well-scoped tasks (1–3 files, clear requirements). The simple workflow is faster and sufficient for most day-to-day work.
+
+---
+
 ## Key Principles
 
 ✅ **Haiku by default** — Use Sonnet only when logic is complex
