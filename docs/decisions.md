@@ -15,6 +15,67 @@ Format:
 
 ---
 
+## ADR-039: Protocol abstraction for all swappable dependencies
+
+**Date:** 2026-03-14\
+**Status:** accepted\
+**Context:** Totoro-ai depends on multiple external systems: LLM providers (OpenAI, Anthropic), embedding models (OpenAI, Voyage), place discovery sources (FSQ local, Google Places), spell correction libraries (symspellpy, pyspellchecker), caching backends (Redis, in-memory), database clients (SQLAlchemy, asyncpg), and any future AI model providers. Without a consistent rule, some dependencies get abstracted and others get hardcoded, creating an inconsistent codebase where swapping one provider is easy and swapping another requires touching business logic. The pattern has already been applied case by case in ADR-020 (LLM and embedding providers), ADR-032 (spell correction), and ADR-038 (place discovery). This ADR makes it a system-wide rule.\
+**Decision:** Any dependency that meets one or more of these criteria must be abstracted behind a Python Protocol: (1) has more than one possible implementation now or in the future, (2) is an external system that could be swapped for cost, performance, or availability reasons, (3) needs to be mockable in tests without hitting a real service. This covers but is not limited to: LLM providers, embedding models, place discovery sources, spell correction libraries, caching backends, database repository implementations, external API clients (Google Places, Foursquare, any future data provider), and evaluation model providers. Concrete implementations live in src/totoro_ai/providers/ for cross-cutting dependencies or in the relevant core/ module for domain-specific ones. Service layers, agent nodes, and LangGraph graphs depend on the Protocol only. No concrete class is imported directly in business logic. Active implementation is selected at startup from config/.local.yaml. Swapping any dependency requires a config change and a new implementation class — never a change to business logic.\
+**Consequences:** Every new external dependency introduced must be evaluated against the three criteria above before implementation begins. If it qualifies, a Protocol is defined first, then the concrete implementation. Existing dependencies not yet abstracted (Redis cache, database repositories, Google Places client) are brought into compliance as their modules are built. This rule is a Constitution Check item — any plan that introduces a concrete external dependency directly into service or agent code must be flagged and revised before implementation starts.
+
+---
+
+## ADR-038: Provider abstraction for place discovery
+
+**Date:** 2026-03-14\
+**Status:** superseded\
+**Context:** The consult pipeline needs to discover candidate places from multiple sources — a local FSQ OS Places dataset loaded into PostgreSQL, and Google Places API for gap-filling and live enrichment. Without an abstraction, the discovery step couples directly to a specific data source, making it hard to swap or combine sources later.\
+**Decision:** Implement a PlaceProvider Protocol in totoro-ai with two implementations: FsqLocalProvider (queries fsq_places table via PostGIS + pgvector) and GooglePlacesProvider (calls Google Places API). A PlaceDiscoveryService orchestrates both — FSQ is always queried first, Google is the fallback when local results fall below a configurable threshold (min_local_candidates in config/ranking.yaml). Late enrichment via Google runs only on the final 3 candidates after ranking, not on all discovery results. Implementation pending Phase 3.\
+**Consequences:** The LangGraph discovery node calls one interface regardless of data source. Google API calls are bounded to 3 per consult maximum. Source tagging (fsq, google, fsq+google_enriched) flows through to the consult response. FSQ OS Places dataset loading into PostgreSQL is a Phase 3 prerequisite. Implementation pending.\
+**Superseded by:** ADR-039.
+
+---
+
+## ADR-037: Chain of Responsibility for candidate validation (deferred)
+
+**Date:** 2026-03-14\
+**Status:** deferred\
+**Context:** The consult pipeline Step 4 validates candidates against open hours and live signals. As more validation rules are added over time, a single validate_candidate() function will grow into a multi-condition block that is hard to test and extend. Each validation rule is independent and should be able to approve, flag, or reject a candidate without knowing about other rules.\
+**Decision:** Deferred. Apply the Chain of Responsibility pattern when Step 4 validators exceed 3 rules. Each validator will be a class implementing a validate(candidate) -> ValidationResult interface. Validators are chained at startup from config. A candidate passes through the full chain unless one validator rejects it outright. Until the threshold is reached, a single validate_candidates() function in the ranking module is acceptable.\
+**Consequences:** No implementation now. When the threshold is reached, refactor Step 4 into a chain of validator classes. Each rule becomes independently testable. Adding a new validation rule means adding a new class, not editing existing ones.
+
+---
+
+## ADR-036: Observer pattern for taste model updates via FastAPI background tasks
+
+**Date:** 2026-03-14\
+**Status:** accepted\
+**Context:** When a user saves a place, the taste model needs to update. If the extraction service calls the taste model service directly, two unrelated concerns are coupled in one function. A failure in taste model update would block the extraction response. The user does not need to wait for the taste model to update before receiving confirmation that their place was saved.\
+**Decision:** Place extraction emits a PlaceSaved event after writing to PostgreSQL. The taste model service subscribes and updates via a FastAPI BackgroundTask. The extraction service calls BackgroundTasks.add_task(update_taste_model, user_id, place_id) and returns immediately. The extraction service never imports from the taste model module directly. Implementation pending in Phase 3 when the taste model is built.\
+**Consequences:** Extraction and taste model updates are decoupled. Extraction response time is not affected by taste model complexity. A taste model update failure does not affect the user-facing extraction response. Background task failures must be logged and observable via Langfuse. Implementation pending Phase 3.
+
+---
+
+## ADR-035: Template Method pattern for LangGraph node base class
+
+**Date:** 2026-03-14\
+**Status:** accepted\
+**Context:** The consult pipeline has six LangGraph nodes. Each node receives state, does work, and returns updated state. Without a shared base class, Langfuse tracing and error handling must be added to each node individually. Any change to how tracing is attached or how errors are caught requires editing all six files.\
+**Decision:** All LangGraph nodes in the consult pipeline extend BaseAgentNode. The base class defines execute(state: AgentState) -> AgentState as the public interface. It wraps the call in a Langfuse span and catches exceptions, converting them to a structured error state. Subclasses implement _run(state: AgentState) -> AgentState which contains their step-specific logic. The base class never contains business logic. Implementation pending in src/totoro_ai/core/agent/base_node.py.\
+**Consequences:** Langfuse tracing and error handling are added once and inherited by all nodes. Adding a new node means subclassing BaseAgentNode and implementing _run only. Changes to tracing or error handling apply to all nodes from one file. Implementation pending.
+
+---
+
+## ADR-034: Facade pattern enforced on FastAPI route handlers
+
+**Date:** 2026-03-14\
+**Status:** accepted\
+**Context:** FastAPI route handlers for extract-place and consult are entry points into a multi-step pipeline. Without a constraint, Claude Code will inline database queries, Redis calls, and external API calls directly in route files when building quickly. This couples infrastructure to the HTTP layer and makes both harder to test.\
+**Decision:** Route handlers are facades. Each handler makes exactly one service call and returns the result. extract_place.py calls ExtractionService.run(raw_input, user_id) only. consult.py calls ConsultService.run(query, user_id, location) only. No SQLAlchemy, no Redis client, no Google Places API calls, no pgvector queries appear in any file under src/totoro_ai/api/routes/. All orchestration lives in the service layer under src/totoro_ai/core/.\
+**Consequences:** Route files stay under 30 lines. Infrastructure concerns are testable independently of HTTP routing. Violations of this rule must be flagged during Constitution Check in the Plan phase before implementation begins.
+
+---
+
 ## ADR-033: Behavioral Signal Tracking in the Recommendations Table
 
 **Date:** 2026-03-12\
