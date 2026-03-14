@@ -186,6 +186,33 @@ Used for:
 - Each LangGraph node passes only the data the next node needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
 - Steps 2 (retrieve) and 3 (discover) in the consult pipeline run as parallel LangGraph branches. They are independent and their results merge before validation.
 
+## Design Patterns
+
+These are structural constraints that define how the system is layered.
+They describe what lives where and what crosses which boundary.
+Behavioral and implementation patterns live in docs/decisions.md.
+
+### Facade — Route Handlers
+Route handlers are the HTTP entry point only. Each handler makes
+exactly one service call and returns the result. No SQLAlchemy,
+no Redis, no pgvector, no Google Places API calls appear inside
+src/totoro_ai/api/routes/. All orchestration lives in
+src/totoro_ai/core/.
+
+### Protocol — Swappable Dependencies
+Any external dependency lives behind a Python Protocol. Concrete
+implementations live in src/totoro_ai/providers/ for cross-cutting
+dependencies or inside the relevant src/totoro_ai/core/ module for
+domain-specific ones. Service layers, agent nodes, and LangGraph
+graphs import the Protocol only. Nothing in core/ imports a concrete
+provider class directly.
+
+### Repository — Database Access
+All SQLAlchemy code lives in three repository classes:
+PlaceRepository, EmbeddingRepository, TasteModelRepository.
+No ORM queries or raw SQL appear outside these classes. Service
+and agent layers call repository methods only.
+
 ## Key Boundaries
 
 - One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
