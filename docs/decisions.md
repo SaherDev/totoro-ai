@@ -15,24 +15,13 @@ Format:
 
 ---
 
-## ADR-039: Protocol abstraction for all swappable dependencies
+## ADR-038: Protocol abstraction for all swappable dependencies
 
 **Date:** 2026-03-14\
 **Status:** accepted\
-**Context:** Totoro-ai depends on multiple external systems: LLM providers (OpenAI, Anthropic), embedding models (OpenAI, Voyage), place discovery sources (FSQ local, Google Places), spell correction libraries (symspellpy, pyspellchecker), caching backends (Redis, in-memory), database clients (SQLAlchemy, asyncpg), and any future AI model providers. Without a consistent rule, some dependencies get abstracted and others get hardcoded, creating an inconsistent codebase where swapping one provider is easy and swapping another requires touching business logic. The pattern has already been applied case by case in ADR-020 (LLM and embedding providers), ADR-032 (spell correction), and ADR-038 (place discovery). This ADR makes it a system-wide rule.\
+**Context:** Totoro-ai depends on multiple external systems: LLM providers (OpenAI, Anthropic), embedding models (OpenAI, Voyage), place discovery sources (FSQ local, Google Places), spell correction libraries (symspellpy, pyspellchecker), caching backends (Redis, in-memory), database clients (SQLAlchemy, asyncpg), and any future AI model providers. Without a consistent rule, some dependencies get abstracted and others get hardcoded, creating an inconsistent codebase where swapping one provider is easy and swapping another requires touching business logic. The pattern has already been applied case by case in ADR-020 (LLM and embedding providers) and ADR-032 (spell correction). This ADR makes it a system-wide rule.\
 **Decision:** Any dependency that meets one or more of these criteria must be abstracted behind a Python Protocol: (1) has more than one possible implementation now or in the future, (2) is an external system that could be swapped for cost, performance, or availability reasons, (3) needs to be mockable in tests without hitting a real service. This covers but is not limited to: LLM providers, embedding models, place discovery sources, spell correction libraries, caching backends, database repository implementations, external API clients (Google Places, Foursquare, any future data provider), and evaluation model providers. Concrete implementations live in src/totoro_ai/providers/ for cross-cutting dependencies or in the relevant core/ module for domain-specific ones. Service layers, agent nodes, and LangGraph graphs depend on the Protocol only. No concrete class is imported directly in business logic. Active implementation is selected at startup from config/.local.yaml. Swapping any dependency requires a config change and a new implementation class — never a change to business logic.\
 **Consequences:** Every new external dependency introduced must be evaluated against the three criteria above before implementation begins. If it qualifies, a Protocol is defined first, then the concrete implementation. Existing dependencies not yet abstracted (Redis cache, database repositories, Google Places client) are brought into compliance as their modules are built. This rule is a Constitution Check item — any plan that introduces a concrete external dependency directly into service or agent code must be flagged and revised before implementation starts.
-
----
-
-## ADR-038: Provider abstraction for place discovery
-
-**Date:** 2026-03-14\
-**Status:** superseded\
-**Context:** The consult pipeline needs to discover candidate places from multiple sources — a local FSQ OS Places dataset loaded into PostgreSQL, and Google Places API for gap-filling and live enrichment. Without an abstraction, the discovery step couples directly to a specific data source, making it hard to swap or combine sources later.\
-**Decision:** Implement a PlaceProvider Protocol in totoro-ai with two implementations: FsqLocalProvider (queries fsq_places table via PostGIS + pgvector) and GooglePlacesProvider (calls Google Places API). A PlaceDiscoveryService orchestrates both — FSQ is always queried first, Google is the fallback when local results fall below a configurable threshold (min_local_candidates in config/ranking.yaml). Late enrichment via Google runs only on the final 3 candidates after ranking, not on all discovery results. Implementation pending Phase 3.\
-**Consequences:** The LangGraph discovery node calls one interface regardless of data source. Google API calls are bounded to 3 per consult maximum. Source tagging (fsq, google, fsq+google_enriched) flows through to the consult response. FSQ OS Places dataset loading into PostgreSQL is a Phase 3 prerequisite. Implementation pending.\
-**Superseded by:** ADR-039.
 
 ---
 
