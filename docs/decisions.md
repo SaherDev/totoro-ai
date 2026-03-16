@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-039: Per-LangGraph-step token and cost logging
+
+**Date:** 2026-03-16\
+**Status:** accepted\
+**Context:** ADR-010 defines context budgeting between nodes (trim fields per step), but there is no mechanism to measure actual token consumption per step during development. Without logging, you cannot validate that context pruning is working, detect when a single node exceeds budget, or build measurable portfolio claims like "Context pruning reduced token costs by 30% across 50 test queries." Phase 1 LLM Basics recommends per-step token tracking as foundational practice before optimization.\
+**Decision:** Every LangGraph node in the consult pipeline logs four metrics after execution: `input_tokens`, `output_tokens`, `model_used`, `cost_usd` (calculated). Logging happens inside the `BaseAgentNode` base class (ADR-035) via Langfuse span properties. Metrics are calculated and included in the response's `reasoning_steps` array (ADR-012) for observability. A `count_tokens(text: str, model: str)` helper function lives in `src/totoro_ai/core/utils/tokens.py` and is used to validate budget estimates during development.\
+**Consequences:** Developers see token flow per step during local testing. Langfuse dashboard shows cost breakdown by node and reveals expensive steps. Phase 6 evaluation can claim measured savings with evidence ("pruning reduced cost 30% across 50 test queries"). Expensive or runaway nodes are identified early during implementation.
+
+---
+
 ## ADR-038: Protocol abstraction for all swappable dependencies
 
 **Date:** 2026-03-14\
