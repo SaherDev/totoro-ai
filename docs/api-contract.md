@@ -178,6 +178,16 @@ Retrieve saved places matching a natural language memory fragment. Only searches
 
 ---
 
+## API Contract Summary
+
+| Endpoint               | Purpose                                     | NestJS Sends             | totoro-ai Returns                          |
+| ---------------------- | ------------------------------------------- | ------------------------ | ------------------------------------------ |
+| POST /v1/extract-place | Extract and validate a place from raw input | raw_input, user_id       | place_id, place metadata, confidence score |
+| POST /v1/consult       | Get a recommendation from natural language  | query, user_id, location | 1 primary + 2 alternatives with reasoning  |
+| POST /v1/recall        | Retrieve saved places matching memory       | query, user_id           | list of saved places matching query        |
+
+---
+
 ## Error Handling
 
 The AI service returns standard HTTP status codes:
