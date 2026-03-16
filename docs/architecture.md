@@ -144,7 +144,7 @@ All requests come from NestJS after auth verification. This repo never receives 
 | ------------- | ------------------ | ----------------------------------------- |
 | intent_parser | GPT-4o-mini        | Cheap, reliable for structured extraction |
 | orchestrator  | Claude Sonnet 4    | Strong reasoning for tool calling         |
-| embedder      | OpenAI text-embedding-3-small | Default; swappable to Voyage via config |
+| embedder      | Voyage 3.5-lite | 6.34% better retrieval quality than OpenAI; 1024-dimensional vectors |
 | evaluator     | GPT-4o-mini        | Cost-effective for batch evals            |
 
 Model assignments are config-driven via config/models.yaml. No model names hardcoded in application code.
@@ -230,7 +230,7 @@ and agent layers call repository methods only.
 | Agent Framework | LangGraph             | Multi-step agent orchestration                 |
 | Chains          | LangChain             | Document loaders, retrievers, chains           |
 | LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                 |
-| Embeddings      | OpenAI text-embedding-3-small | Swappable to Voyage via config          |
+| Embeddings      | Voyage 3.5-lite | 1024-dimensional vectors; 32k token context window          |
 | Monitoring      | Langfuse              | LLM monitoring and evaluation                  |
 | Cache           | Redis                 | LLM response caching, session, agent state     |
 | Database Client | SQLAlchemy or asyncpg | Read-write connection to PostgreSQL + pgvector |
