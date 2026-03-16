@@ -7,7 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from totoro_ai.db.base import Base
 
-EMBEDDING_DIMENSIONS = 1536  # OpenAI text-embedding-3-small
+EMBEDDING_DIMENSIONS = 1024  # Voyage 3.5-lite (ADR-040: chosen for 6.34% better retrieval quality)
 
 
 class Place(Base):
