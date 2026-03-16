@@ -1,3 +1,7 @@
+; Local configuration template. Copy to .local.yaml and fill in your actual values.
+; IMPORTANT: .local.yaml is gitignored. Never commit secrets.
+; See CLAUDE.md "Secrets management" section for setup instructions.
+
 app:
   name: totoro-ai
   description: AI engine for Totoro
@@ -8,3 +12,38 @@ database:
 
 redis:
   url: redis://localhost:6379
+
+; LLM and embedding provider API keys (ADR-020, ADR-026)
+; Fill in your actual keys. Leave placeholder strings for keys you don't have yet.
+providers:
+  ; OpenAI (intent parser + evals)
+  ; Get key: https://platform.openai.com/account/api-keys
+  ; Phase: 1 (required for intent parsing)
+  openai:
+    api_key: "sk-proj-..."
+
+  ; Anthropic (orchestrator)
+  ; Get key: https://console.anthropic.com/account/keys
+  ; Phase: 2 (required for consult agent)
+  anthropic:
+    api_key: "sk-ant-..."
+
+  ; Voyage AI (embeddings)
+  ; Get key: https://www.voyageai.com/account/api-keys
+  ; Phase: 2 (required for place embeddings)
+  ; Free tier: 200M tokens/month — you won't pay anything for this project
+  voyage:
+    api_key: "pa-..."
+
+  ; Google Places API (place validation and discovery)
+  ; Get key: https://developers.google.com/maps/documentation/places/web-service/get-api-key
+  ; Phase: 2 (required for extract-place and consult discovery step)
+  ; Enable: Places API, Geocoding API in Google Cloud Console
+  google:
+    api_key: "..."
+
+; Langfuse tracing (observability, optional in Phase 1, required Phase 3+)
+; Get key: https://cloud.langfuse.com/account/api-keys
+langfuse:
+  secret_key: "sk-lf-..."
+  public_key: "pk-lf-..."
