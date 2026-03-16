@@ -14,6 +14,7 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
                 │
                 │  POST /v1/extract-place
                 │  POST /v1/consult
+                │  POST /v1/recall
                 ▼
 ┌──────────────────────────────────────────────────────────┐
 │                totoro-ai (this repo)                      │
