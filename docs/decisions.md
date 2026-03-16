@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-040: Voyage 3.5-lite for embeddings with 1024-dimensional vectors
+
+**Date:** 2026-03-16\
+**Status:** accepted\
+**Context:** Retrieval quality directly determines taste model accuracy and consult recommendation quality. Voyage 3.5-lite outperforms OpenAI text-embedding-3-small by 6.34% on MTEB benchmark. Both cost $0.02/M tokens after free tier, but Voyage's free tier (200M tokens/month recurring) exceeds OpenAI's ($5 one-time credit). Voyage also supports flexible dimensions (256/512/1024/2048) vs OpenAI's fixed 1536, and a 32k token context window vs OpenAI's 8,192. For a portfolio project targeting 94% retrieval accuracy, the retrieval quality advantage is decisive.\
+**Decision:** Use Voyage 3.5-lite as the embedding model. Set pgvector column dimensions to 1024 (not 2048, to reduce query latency and storage cost while maintaining quality above the retrieval accuracy target). This choice is locked in before Phase 2 migrations run — changing dimensions mid-project requires re-embedding all saved places. Implement via the provider abstraction layer (ADR-020) so swapping remains possible in the future.\
+**Consequences:** Update `EMBEDDING_DIMENSIONS` constant from 1536 to 1024 in `src/totoro_ai/db/models.py`. Create new Alembic migration to set embeddings.vector column to 1024 dimensions before any place embeddings are written. Add `voyage-ai` SDK to `pyproject.toml`. Implement `VoyageEmbedder` class in provider layer. Update `config/models.yaml` with embedder role → voyage-3.5-lite mapping. Update `docs/architecture.md` to reflect Voyage as the embedder. Never use OpenAI for embeddings in this project.
+
+---
+
 ## ADR-039: Per-LangGraph-step token and cost logging
 
 **Date:** 2026-03-16\
