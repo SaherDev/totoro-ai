@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from typing import Protocol
 
 from fastapi import Request
 
@@ -13,28 +12,13 @@ from totoro_ai.api.schemas.consult import (
     ReasoningStep,
     SyncConsultResponse,
 )
+from totoro_ai.providers.llm import LLMClientProtocol
 
 # System prompt for the AI provider (orchestrator role)
 SYSTEM_PROMPT = (
     "You are Totoro, an AI place recommendation assistant. "
     "Answer the user's query helpfully and concisely."
 )
-
-
-class LLMClientProtocol(Protocol):
-    """Protocol for LLM client resolved via provider abstraction."""
-
-    def stream(self, system: str, user_message: str) -> AsyncGenerator[str, None]:
-        """Stream tokens from the LLM provider asynchronously.
-
-        Args:
-            system: System prompt for the LLM
-            user_message: User's query
-
-        Yields:
-            Individual tokens as they are generated
-        """
-        ...
 
 
 class ConsultService:
@@ -99,8 +83,11 @@ class ConsultService:
             SSE events: {"token": "..."} per AI token, then {"done": true}
         """
         try:
-            # Call LLM provider via abstraction - streams tokens one at a time
-            async for token in self._llm.stream(SYSTEM_PROMPT, query):
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": query},
+            ]
+            async for token in self._llm.stream(messages):
                 # Check if client disconnected before emitting token
                 if await request.is_disconnected():
                     break
