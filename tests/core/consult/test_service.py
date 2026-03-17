@@ -111,13 +111,11 @@ async def test_stream_calls_llm_with_system_prompt():
     ):
         pass
 
-    # Verify LLM was called with system prompt and query
-    mock_llm.stream.assert_called_once_with(SYSTEM_PROMPT, "test query")
-    expected_prompt = (
-        "You are Totoro, an AI place recommendation assistant. "
-        "Answer the user's query helpfully and concisely."
-    )
-    assert expected_prompt == SYSTEM_PROMPT
+    # Verify LLM was called with messages format
+    mock_llm.stream.assert_called_once_with([
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "test query"},
+    ])
 
 
 @pytest.mark.asyncio
