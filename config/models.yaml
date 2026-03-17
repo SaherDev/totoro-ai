@@ -1,0 +1,18 @@
+# Model configuration mapping logical roles to providers and models
+# ADR-020: Provider abstraction - code never hardcodes model names
+
+orchestrator:
+  provider: anthropic
+  model: claude-sonnet-4-6
+
+intent_parser:
+  provider: openai
+  model: gpt-4o-mini
+
+embedder:
+  provider: voyage
+  model: voyage-3.5-lite
+
+evaluator:
+  provider: openai
+  model: gpt-4o-mini

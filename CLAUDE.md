@@ -31,6 +31,10 @@ poetry run pytest -x                  # stop on first failure
 poetry run ruff check src/ tests/     # lint
 poetry run ruff format src/ tests/    # format
 poetry run mypy src/                  # type check
+docker compose up -d                  # start services (PostgreSQL, Redis) in detached mode
+docker compose up -d --build          # start services and rebuild images
+docker compose down                   # stop services
+docker compose down -v                # stop services and remove volumes
 ```
 
 ## Standards
@@ -76,3 +80,13 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **Redis caching**: LLM responses are cached in Redis. When changing prompt templates or model config, consider cache invalidation.
 - **Langfuse tracing**: All LLM calls should be traced via Langfuse. Missing traces usually means the Langfuse callback handler wasn't attached.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
+
+## Recent Changes
+
+- 001-consult-streaming: Added Python 3.11 + FastAPI, Starlette (StreamingResponse), pytest, httpx
+- 001-consult-streaming: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
+
+## Active Technologies
+
+- Python 3.11 + FastAPI, Starlette (StreamingResponse), pytest, httpx (001-consult-streaming)
+- N/A (Phase 1 stub — no DB or Redis access) (001-consult-streaming)
