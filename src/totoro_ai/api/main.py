@@ -3,6 +3,7 @@ from importlib.metadata import version as pkg_version
 from fastapi import APIRouter, FastAPI
 from sqlalchemy import text
 
+from totoro_ai.api.routes.consult import router as consult_router
 from totoro_ai.core.config import load_yaml_config
 from totoro_ai.db.session import _get_session_factory
 
@@ -36,4 +37,6 @@ async def health() -> dict[str, str]:
     }
 
 
+# Include routers
+router.include_router(consult_router, prefix="")
 app.include_router(router)
