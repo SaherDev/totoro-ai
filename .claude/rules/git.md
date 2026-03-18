@@ -70,3 +70,6 @@ Keep the subject line under 72 characters. Body is optional — use it for non-o
 3. When complete, merge branch into `dev` (squash or merge commit — your call per branch).
 4. When `dev` is stable and a feature set is complete, merge `dev` into `main`.
 5. Never push directly to `main`.
+
+> **`main` is production.** Merges into `main` are done manually by the repo owner only —
+> via a PR or squash merge. Claude Code never merges or pushes directly to `main`.
