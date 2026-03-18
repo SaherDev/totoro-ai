@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -14,9 +15,9 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# Load DATABASE_URL from local config
-_local = load_yaml_config(".local.yaml")
-_url: str = _local["database"]["url"]
+# DATABASE_URL env var takes precedence (used when running migrations against
+# a remote database, e.g. Railway production). Falls back to local YAML config.
+_url: str = os.environ.get("DATABASE_URL") or load_yaml_config(".local.yaml")["database"]["url"]
 # Alembic uses synchronous driver — strip +asyncpg if present
 if "+asyncpg" in _url:
     _url = _url.replace("+asyncpg", "")
