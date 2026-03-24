@@ -130,7 +130,7 @@ Format:
 **Date:** 2026-03-09 (revised 2026-03-24)\
 **Status:** accepted\
 **Context:** Non-secret config (app metadata, model roles, extraction weights) was previously merged into `config/.local.yaml` alongside secrets. This made non-secret tuning parameters (confidence weights, thresholds) gitignored and unversioned, meaning different environments could silently diverge and config could not be code-reviewed.\
-**Decision:** All non-secret config lives in committed `config/app.yaml` with three top-level keys: `app` (metadata), `models` (logical role → provider/model mapping), `extraction` (confidence weights and thresholds). `config/.local.yaml` (gitignored) holds only true secrets: provider API keys, database URL, Redis URL. Python reads non-secret config via `load_yaml_config("app.yaml")` and secrets via `load_yaml_config(".local.yaml")`.\
+**Decision:** All non-secret config lives in committed `config/app.yaml` with three top-level keys: `app` (metadata), `models` (logical role → provider/model mapping), `extraction` (confidence weights and thresholds). `config/.local.yaml` (gitignored) holds only true secrets: provider API keys, database URL, Redis URL. Python accesses non-secret config via `get_config() → AppConfig` singleton and secrets via `get_secrets() → SecretsConfig` singleton (both in `core/config.py`). `load_yaml_config()` is an internal loader — consumer code never calls it directly.\
 **Consequences:** Non-secret config is versioned, code-reviewable, and consistent across environments. Secrets remain gitignored. The clear boundary — `app.yaml` for config, `.local.yaml` for secrets — prevents future drift back into mixing the two.
 
 ---
@@ -254,7 +254,7 @@ Format:
 **Date:** 2026-03-07 (revised 2026-03-24)\
 **Status:** accepted\
 **Context:** The codebase must never hardcode model names. Provider switching must be a config change, not a code change.\
-**Decision:** `config/app.yaml` under the `models:` key maps logical roles — `intent_parser`, `orchestrator`, `embedder`, `evaluator` — to provider name, model identifier, and inference parameters. Read by `providers/llm.py` via `load_yaml_config("app.yaml")["models"]`. Current assignments: `intent_parser` → `openai/gpt-4o-mini`, `orchestrator` → `anthropic/claude-sonnet-4-6-20250514`, `embedder` → `voyage/voyage-3.5-lite`.\
+**Decision:** `config/app.yaml` under the `models:` key maps logical roles — `intent_parser`, `orchestrator`, `embedder`, `evaluator` — to provider name, model identifier, and inference parameters. Read by `providers/llm.py` via `get_config().models[role]` (singleton, no per-call file I/O). Current assignments: `intent_parser` → `openai/gpt-4o-mini`, `orchestrator` → `anthropic/claude-sonnet-4-6-20250514`, `embedder` → `voyage/voyage-3.5-lite`.\
 **Consequences:** Swapping any model requires one line change in `app.yaml`. Code that references model names by role rather than string literals is automatically correct after a config change. Adding a new role requires a new YAML entry and a new factory case in the provider layer.
 
 ---
@@ -264,8 +264,8 @@ Format:
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Non-secret settings (app metadata, model assignments) must live in version-controlled files. Secrets must never appear in config files. A loader that knows where to find config files prevents hardcoded paths throughout the codebase.\
-**Decision:** `src/totoro_ai/core/config.py` exposes `load_yaml_config(name: str) -> dict` and `find_project_root() -> Path`. `find_project_root()` walks up from `__file__` until it finds `pyproject.toml`. `load_yaml_config` reads from `<project_root>/config/<name>`. Non-secret config is loaded via `load_yaml_config("app.yaml")`; secrets via `load_yaml_config(".local.yaml")`.\
-**Consequences:** Config files are always found regardless of the working directory at runtime. Any module can call `load_yaml_config` without knowing the filesystem layout. Secrets must remain in environment variables — this loader never reads `.env` files.
+**Decision:** `src/totoro_ai/core/config.py` is the single config module. It exposes two public singletons: `get_config() → AppConfig` (loads `app.yaml` once, cached for process lifetime) and `get_secrets() → SecretsConfig` (loads `.local.yaml` or falls back to env vars once, cached for process lifetime). Internal helpers `load_yaml_config(name)` and `find_project_root()` are implementation details — consumer code never calls them. Config is injectable via FastAPI `Depends(get_config)` / `Depends(get_secrets)`, making it overridable in tests without filesystem I/O.\
+**Consequences:** Config is loaded exactly once per process. No per-request file I/O. Tests override config via `app.dependency_overrides`. The clear singleton API prevents ad-hoc `load_yaml_config` calls scattered through the codebase.
 
 ---
 
