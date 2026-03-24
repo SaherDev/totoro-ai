@@ -9,7 +9,7 @@ All other modules import from here. Nobody calls load_yaml_config() directly.
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import yaml
 from pydantic import BaseModel
@@ -136,6 +136,10 @@ class SecretsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class _SecretsSource(Protocol):
+    def load(self) -> dict[str, Any] | None: ...
+
+
 class _YamlFileSource:
     """Load secrets from config/.local.yaml (local dev)."""
 
@@ -193,7 +197,12 @@ def get_secrets() -> SecretsConfig:
     """
     global _secrets
     if _secrets is None:
-        yaml_source = _YamlFileSource(find_project_root() / "config" / ".local.yaml")
-        raw = yaml_source.load() or _EnvSource().load()
+        sources: list[_SecretsSource] = [
+            _YamlFileSource(find_project_root() / "config" / ".local.yaml"),
+            _EnvSource(),
+        ]
+        raw = next((r for s in sources if (r := s.load()) is not None), None)
+        if raw is None:
+            raise ValueError("No secrets source returned a configuration")
         _secrets = SecretsConfig(**raw)
     return _secrets
