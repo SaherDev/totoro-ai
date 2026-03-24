@@ -67,30 +67,39 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
-extract-place is a deterministic workflow, not an agent. It follows a fixed sequence of steps with one LLM call for parsing. No tool selection, no reasoning loop, no LangGraph.
+extract-place is a deterministic workflow, not an agent. It follows a fixed sequence of steps with one structured LLM extraction call per input type. No tool selection, no reasoning loop, no LangGraph.
 
 ```
-Raw input (URL, name, or description)
+Raw input (TikTok URL or plain text)
     │
     ▼
 POST /v1/extract-place
     │  Receives: raw_input, user_id
     │
-    ├── Parse input type (URL, name, description)
+    ├── Dispatch input to appropriate extractor
+    │   (TikTok extractor for TikTok URLs, PlainText extractor otherwise)
     │
-    ├── If URL: fetch page content, extract place data
-    │   If name/description: search Google Places API
+    ├── Extractor fetches content and runs structured LLM extraction
+    │   (TikTok: fetch caption via oEmbed API)
+    │   (PlainText: use raw input)
+    │   Produces: place_name, address, cuisine, price_range
     │
-    ├── Validate and enrich via Google Places API
+    ├── Validate extracted place via Google Places API
+    │   Query for exact match and calculate match quality
     │
-    ├── Generate embedding vector
+    ├── Compute confidence score
+    │   Base score from extraction + match quality modifier
+    │   Applied to extract-place logic
     │
-    ├── Write place record + embedding to PostgreSQL
+    ├── Decision: confidence determines action
+    │   High confidence → Save to PostgreSQL and return place_id
+    │   Mid-range confidence → Return extracted data, require user confirmation
+    │   Low confidence → Return error
     │
-    └── Return place_id, extracted metadata, and confidence score to NestJS
+    └── Return to NestJS: place_id (if saved), extracted data, confidence, decision_reason
 ```
 
-FastAPI writes what it generates. NestJS receives a confirmation, not raw data to persist.
+FastAPI writes only when high-confidence extraction occurs. If mid-range confidence, no write happens until user confirms. NestJS receives the result and decision flag, then decides whether to persist.
 
 ## Data Flow: Consult (Recommend a Place)
 
