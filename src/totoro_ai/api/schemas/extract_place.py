@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PlaceExtraction(BaseModel):
@@ -40,3 +40,9 @@ class ExtractPlaceResponse(BaseModel):
     source_url: str | None = Field(
         description="Original TikTok URL; None for plain text"
     )
+
+    @field_validator("confidence", mode="after")
+    @classmethod
+    def round_confidence(cls, v: float) -> float:
+        """Round confidence to 2 decimal places for clean JSON output."""
+        return round(v, 2)
