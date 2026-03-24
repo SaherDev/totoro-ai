@@ -13,13 +13,8 @@ from totoro_ai.api.schemas.consult import (
     ReasoningStep,
     SyncConsultResponse,
 )
+from totoro_ai.core.config import get_config
 from totoro_ai.providers.llm import LLMClientProtocol
-
-# System prompt for the AI provider (orchestrator role)
-SYSTEM_PROMPT = (
-    "You are Totoro, an AI place recommendation assistant. "
-    "Answer the user's query helpfully and concisely."
-)
 
 
 class ConsultService:
@@ -84,8 +79,11 @@ class ConsultService:
             SSE events: {"token": "..."} per AI token, then {"done": true}
         """
         try:
+            config = get_config()
+            system_prompt = config.system_prompts.consult
+
             messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
             ]
             async for token in self._llm.stream(messages):

@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import httpx
 
 from totoro_ai.api.schemas.extract_place import PlaceExtraction
+from totoro_ai.core.config import get_config
 from totoro_ai.core.extraction.confidence import ExtractionSource
 from totoro_ai.core.extraction.result import ExtractionResult
 from totoro_ai.providers.llm import InstructorClient
@@ -98,7 +99,7 @@ class TikTokExtractor:
     async def _fetch_tiktok_caption(self, url: str) -> str | None:
         """Fetch TikTok video metadata and extract caption.
 
-        Uses public oEmbed endpoint with 3-second timeout.
+        Uses public oEmbed endpoint with configurable timeout.
 
         Args:
             url: TikTok video URL
@@ -109,18 +110,21 @@ class TikTokExtractor:
         Raises:
             RuntimeError: On HTTP/timeout errors
         """
-        oembed_url = "https://www.tiktok.com/oembed"
+        config = get_config()
+        tiktok_config = config.external_services.tiktok_oembed
 
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    oembed_url,
+                    tiktok_config.base_url,
                     params={"url": url},
-                    timeout=3.0,
+                    timeout=tiktok_config.timeout_seconds,
                 )
                 response.raise_for_status()
         except httpx.TimeoutException as e:
-            raise RuntimeError(f"TikTok oEmbed timeout (3s): {e}") from e
+            raise RuntimeError(
+                f"TikTok oEmbed timeout ({tiktok_config.timeout_seconds}s): {e}"
+            ) from e
         except httpx.HTTPError as e:
             raise RuntimeError(f"TikTok oEmbed API error: {e}") from e
 

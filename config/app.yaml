@@ -60,3 +60,44 @@ extraction:
   thresholds:
     store_silently: 0.70
     require_confirmation: 0.30
+  # Place fields that can be updated on re-submission (upsert semantics)
+  mutable_fields:
+    - place_name
+    - address
+    - cuisine
+    - price_range
+    - lat
+    - lng
+    - source_url
+    - validated_at
+    - confidence
+    - source
+
+# ---------------------------------------------------------------------------
+# External services — URLs, timeouts, and request fields
+# ---------------------------------------------------------------------------
+external_services:
+  google_places:
+    base_url: https://maps.googleapis.com/maps/api/place/findplacefromtext/json
+    timeout_seconds: 5.0
+    request_fields:
+      - name
+      - formatted_address
+      - place_id
+      - geometry
+  tiktok_oembed:
+    base_url: https://www.tiktok.com/oembed
+    timeout_seconds: 3.0
+
+# ---------------------------------------------------------------------------
+# Embeddings configuration
+# ADR-040: Voyage 3.5-lite chosen for 6.34% better retrieval quality
+# ---------------------------------------------------------------------------
+embeddings:
+  dimensions: 1024
+
+# ---------------------------------------------------------------------------
+# LLM System Prompts
+# ---------------------------------------------------------------------------
+system_prompts:
+  consult: "You are Totoro, an AI place recommendation assistant. Answer the user's query helpfully and concisely."

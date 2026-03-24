@@ -81,12 +81,57 @@ class ExtractionThresholds(BaseModel):
 class ExtractionConfig(BaseModel):
     confidence_weights: ConfidenceWeights
     thresholds: ExtractionThresholds
+    mutable_fields: list[str] = [
+        "place_name",
+        "address",
+        "cuisine",
+        "price_range",
+        "lat",
+        "lng",
+        "source_url",
+        "validated_at",
+        "confidence",
+        "source",
+    ]
+
+
+class ExternalServiceConfig(BaseModel):
+    base_url: str
+    timeout_seconds: float
+
+
+class GooglePlacesConfig(ExternalServiceConfig):
+    request_fields: list[str] = ["name", "formatted_address", "place_id", "geometry"]
+
+
+class ExternalServicesConfig(BaseModel):
+    google_places: GooglePlacesConfig = GooglePlacesConfig(
+        base_url="https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
+        timeout_seconds=5.0,
+    )
+    tiktok_oembed: ExternalServiceConfig = ExternalServiceConfig(
+        base_url="https://www.tiktok.com/oembed", timeout_seconds=3.0
+    )
+
+
+class EmbeddingsConfig(BaseModel):
+    dimensions: int = 1024
+
+
+class SystemPromptsConfig(BaseModel):
+    consult: str = (
+        "You are Totoro, an AI place recommendation assistant. "
+        "Answer the user's query helpfully and concisely."
+    )
 
 
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
     extraction: ExtractionConfig
+    external_services: ExternalServicesConfig = ExternalServicesConfig()
+    embeddings: EmbeddingsConfig = EmbeddingsConfig()
+    system_prompts: SystemPromptsConfig = SystemPromptsConfig()
 
 
 _config: AppConfig | None = None

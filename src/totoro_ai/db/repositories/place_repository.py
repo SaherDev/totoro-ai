@@ -10,23 +10,10 @@ from typing import Protocol, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from totoro_ai.core.config import get_config
 from totoro_ai.db.models import Place
 
 logger = logging.getLogger(__name__)
-
-# Fields updated on upsert when (provider, external_id) pair is re-submitted
-MUTABLE_PLACE_FIELDS = (
-    "place_name",
-    "address",
-    "cuisine",
-    "price_range",
-    "lat",
-    "lng",
-    "source_url",
-    "validated_at",
-    "confidence",
-    "source",
-)
 
 
 class PlaceRepository(Protocol):
@@ -121,6 +108,9 @@ class SQLAlchemyPlaceRepository:
             RuntimeError: If save fails (includes provider, external_id in message)
         """
         try:
+            config = get_config()
+            mutable_fields = config.extraction.mutable_fields
+
             existing: Place | None = None
 
             # Only attempt dedup if external_id is not None
@@ -131,7 +121,7 @@ class SQLAlchemyPlaceRepository:
 
             if existing is not None:
                 # Update mutable fields on existing record
-                for field in MUTABLE_PLACE_FIELDS:
+                for field in mutable_fields:
                     setattr(existing, field, getattr(place, field))
                 await self._session.commit()
                 return existing

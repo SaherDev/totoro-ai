@@ -7,7 +7,7 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel
 
-from totoro_ai.core.config import get_secrets
+from totoro_ai.core.config import get_config, get_secrets
 
 
 class PlacesMatchQuality(str, Enum):
@@ -64,21 +64,27 @@ class GooglePlacesClient:
             PlacesMatchResult with match quality and details
 
         """
+        config = get_config()
+        places_config = config.external_services.google_places
+
         query = f"{name}"
         if location:
             query = f"{name} {location}"
 
+        # Build fields parameter from config
+        fields = ",".join(places_config.request_fields)
+
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(
-                    "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
+                    places_config.base_url,
                     params={
                         "input": query,
                         "inputtype": "textquery",
-                        "fields": "name,formatted_address,place_id,geometry",
+                        "fields": fields,
                         "key": self.api_key,
                     },
-                    timeout=5.0,
+                    timeout=places_config.timeout_seconds,
                 )
                 response.raise_for_status()
             except (httpx.HTTPError, httpx.TimeoutException) as e:
