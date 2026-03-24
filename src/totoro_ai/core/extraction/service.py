@@ -2,9 +2,6 @@
 
 from uuid import uuid4
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from totoro_ai.api.errors import ExtractionFailedNoMatchError
 from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
 from totoro_ai.core.config import ExtractionConfig
@@ -15,6 +12,7 @@ from totoro_ai.core.extraction.dispatcher import (
 )
 from totoro_ai.core.extraction.places_client import PlacesClient
 from totoro_ai.db.models import Place
+from totoro_ai.db.repositories import PlaceRepository
 
 
 class ExtractionService:
@@ -24,7 +22,7 @@ class ExtractionService:
         self,
         dispatcher: ExtractionDispatcher,
         places_client: PlacesClient,
-        db_session: AsyncSession,
+        place_repo: PlaceRepository,
         extraction_config: ExtractionConfig,
     ) -> None:
         """Initialize service with dependencies.
@@ -32,12 +30,12 @@ class ExtractionService:
         Args:
             dispatcher: ExtractionDispatcher for input routing
             places_client: PlacesClient for place validation
-            db_session: Database session (lifecycle managed by FastAPI Depends)
+            place_repo: PlaceRepository for place persistence (handles transactions)
             extraction_config: Confidence weights and decision thresholds
         """
         self._dispatcher = dispatcher
         self._places_client = places_client
-        self._db_session = db_session
+        self._place_repo = place_repo
         self._extraction_config = extraction_config
 
     async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
@@ -52,7 +50,7 @@ class ExtractionService:
            - ≤ require_confirmation → error
            - require_confirmation < score < store_silently → requires_confirmation=True
            - ≥ store_silently → check dedup, save, return with place_id
-        6. Dedup by google_place_id if match found
+        6. Dedup by (external_provider, external_id) if match found
         7. Write Place to database
 
         Args:
@@ -114,9 +112,9 @@ class ExtractionService:
             )
 
         # Step 6: Confidence ≥ store_silently — check deduplication
-        if places_match.google_place_id:
-            existing = await self._db_session.scalar(
-                select(Place).filter_by(google_place_id=places_match.google_place_id)
+        if places_match.external_id:
+            existing = await self._place_repo.get_by_provider(
+                places_match.external_provider, places_match.external_id
             )
 
             if existing:
@@ -140,13 +138,13 @@ class ExtractionService:
             lat=places_match.lat,
             lng=places_match.lng,
             source_url=result.source_url,
-            google_place_id=places_match.google_place_id,
+            external_provider=places_match.external_provider,
+            external_id=places_match.external_id,
             confidence=confidence,
             source=result.source.value,
         )
 
-        self._db_session.add(place)
-        await self._db_session.commit()
+        await self._place_repo.save(place)
 
         return ExtractPlaceResponse(
             place_id=place_id,

@@ -36,14 +36,17 @@ class TikTokExtractor:
         except Exception:
             return False
 
-    async def extract(self, raw_input: str) -> ExtractionResult | None:
+    async def extract(
+        self, raw_input: str, supplementary_text: str = ""
+    ) -> ExtractionResult | None:
         """Extract place from TikTok video caption.
 
         Fetches video metadata via oEmbed API, extracts caption text,
-        and runs LLM extraction on caption.
+        and runs LLM extraction on caption combined with optional user context.
 
         Args:
             raw_input: TikTok URL
+            supplementary_text: Optional user-provided context (text before/after URL)
 
         Returns:
             ExtractionResult with extracted place data and source=CAPTION,
@@ -57,7 +60,10 @@ class TikTokExtractor:
         if not caption:
             return None
 
-        # Extract structured place from caption using LLM
+        # Merge caption with supplementary text if provided
+        combined_text = " ".join(filter(None, [supplementary_text, caption]))
+
+        # Extract structured place from combined text using LLM
         try:
             extraction = await self._instructor_client.extract(
                 response_model=PlaceExtraction,
@@ -74,7 +80,7 @@ class TikTokExtractor:
                         "role": "user",
                         "content": (
                             "Extract restaurant information from this TikTok caption:"
-                            f"\n\n{caption}"
+                            f"\n\n{combined_text}"
                         ),
                     },
                 ],

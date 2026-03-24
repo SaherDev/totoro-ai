@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 003-fix-schema-repo-quality: Added Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, SQLAlchemy 2.0 async, Pydantic 2.10, Alembic 1.14, asyncpg, pytes
 - 002-extract-place: Added Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, Instructor 1.x (new), httpx 0.28 (promote to prod)
 
 - 001-consult-streaming: Added Python 3.11 + FastAPI, Starlette (StreamingResponse), pytest, httpx
-- 001-consult-streaming: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
 
 ## Active Technologies
-- Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, Instructor 1.x (new), httpx 0.28 (promote to prod) (002-extract-place)
-- PostgreSQL via asyncpg + SQLAlchemy async. Alembic migration adds 3 columns to `places`. (002-extract-place)
+- Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, SQLAlchemy 2.0 async, Pydantic 2.10, Alembic 1.14, asyncpg, pytes (003-fix-schema-repo-quality)
+- PostgreSQL via asyncpg + SQLAlchemy async. pgvector for embeddings. (003-fix-schema-repo-quality)
 

@@ -247,7 +247,7 @@ These values must stay in sync between both repos. A mismatch breaks the system.
 
 **Embedding dimensions:**
 
-- Current: 1536 (OpenAI text-embedding-3-small)
+- Current: 1024 (Voyage 3.5-lite)
 - The pgvector column definition in Prisma (product repo) must match the embedding model output in FastAPI (AI repo)
 - If the embedding model changes, both the Prisma migration and FastAPI config must update together
 

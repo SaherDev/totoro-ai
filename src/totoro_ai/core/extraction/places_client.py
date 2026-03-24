@@ -24,7 +24,8 @@ class PlacesMatchResult(BaseModel):
 
     match_quality: PlacesMatchQuality
     validated_name: str | None = None
-    google_place_id: str | None = None
+    external_provider: str = "google"  # set by the client implementation
+    external_id: str | None = None  # provider's own ID for the place
     lat: float | None = None
     lng: float | None = None
 
@@ -108,7 +109,8 @@ class GooglePlacesClient:
         return PlacesMatchResult(
             match_quality=match_quality,
             validated_name=matched_name,
-            google_place_id=first_match.get("place_id"),
+            external_provider="google",
+            external_id=first_match.get("place_id"),
             lat=location_data.get("lat"),
             lng=location_data.get("lng"),
         )
