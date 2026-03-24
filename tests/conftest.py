@@ -25,12 +25,15 @@ def setup_test_env() -> None:
 @pytest.fixture
 def mock_session() -> AsyncMock:
     """Provide a mocked AsyncSession for dependency injection."""
+    from unittest.mock import MagicMock
+
     session = AsyncMock()
-    # Default behavior: operations succeed
+    # Async methods
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
     session.scalar = AsyncMock(return_value=None)
-    session.add = AsyncMock()
+    # Synchronous method (not async)
+    session.add = MagicMock()
     return session
 
 
