@@ -45,17 +45,24 @@ class GooglePlacesClient:
 
     def __init__(self) -> None:
         """Initialize with API key from config or environment."""
-        # Try config first, then fall back to environment variable
         config = load_yaml_config(".local.yaml")
-        self.api_key = config.get("google", {}).get("api_key")
 
+        # Try multiple paths in config (supports both .local.yaml and env-based structures)
+        self.api_key = (
+            config.get("google", {}).get("api_key")
+            or config.get("providers", {}).get("google", {}).get("api_key")
+            or ""
+        )
+
+        # If config is empty, try environment variable (Google convention)
         if not self.api_key:
-            self.api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
+            self.api_key = os.environ.get("GOOGLE_API_KEY") or ""
 
         if not self.api_key:
             raise ValueError(
-                "Google Places API key not found in config/.local.yaml or "
-                "GOOGLE_PLACES_API_KEY environment variable"
+                "Google Places API key not found. Set one of:\n"
+                "  1. config/.local.yaml: google.api_key: YOUR_KEY\n"
+                "  2. Environment: export GOOGLE_API_KEY=YOUR_KEY"
             )
 
     async def validate_place(

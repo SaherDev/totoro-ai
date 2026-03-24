@@ -12,9 +12,7 @@ def find_project_root() -> Path:
         if (current / "pyproject.toml").exists():
             return current
         current = current.parent
-    raise FileNotFoundError(
-        "Could not find project root (no pyproject.toml found)"
-    )
+    raise FileNotFoundError("Could not find project root (no pyproject.toml found)")
 
 
 def load_yaml_config(name: str) -> dict[str, Any]:
@@ -37,8 +35,7 @@ def load_yaml_config(name: str) -> dict[str, Any]:
         return _config_from_env()
 
     raise FileNotFoundError(
-        f"Config not found at {config_path}. "
-        "Check your working directory."
+        f"Config not found at {config_path}. " "Check your working directory."
     )
 
 
@@ -60,9 +57,9 @@ def _config_from_env() -> dict[str, Any]:
             "url": os.environ.get("REDIS_URL", ""),
         },
         "providers": {
-            "openai":    {"api_key": os.environ.get("OPENAI_API_KEY")},
+            "openai": {"api_key": os.environ.get("OPENAI_API_KEY")},
             "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY")},
-            "voyage":    {"api_key": os.environ.get("VOYAGE_API_KEY")},
-            "google":    {"api_key": os.environ.get("GOOGLE_API_KEY")},
+            "voyage": {"api_key": os.environ.get("VOYAGE_API_KEY")},
+            "google": {"api_key": os.environ.get("GOOGLE_API_KEY")},
         },
     }
