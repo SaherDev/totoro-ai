@@ -1,8 +1,8 @@
 """Central config module — single source of truth for all app configuration.
 
 Two singletons:
-- get_config()   → AppConfig   from config/app.yaml (committed, non-secret)
-- get_secrets()  → SecretsConfig from config/.local.yaml or env vars (never committed)
+- get_config()   → AppConfig    from config/app.yaml (committed, non-secret)
+- get_secrets()  → SecretsConfig from config/.local.yaml → env vars (never committed)
 
 All other modules import from here. Nobody calls load_yaml_config() directly.
 """
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 
 # ---------------------------------------------------------------------------
-# Low-level loader (internal — use get_config / get_secrets instead)
+# Low-level YAML loader (internal — use get_config / get_secrets instead)
 # ---------------------------------------------------------------------------
 
 
@@ -31,49 +31,22 @@ def find_project_root() -> Path:
 
 
 def load_yaml_config(name: str) -> dict[str, Any]:
-    """Load a YAML config file from config/<name>.
-
-    For .local.yaml: falls back to environment variables when file is absent.
-    For all other files: file must exist.
-    """
+    """Load a YAML config file from config/<name>. File must exist."""
     config_path = find_project_root() / "config" / name
-    if config_path.exists():
-        try:
-            with config_path.open() as f:
-                result = yaml.safe_load(f)
-        except yaml.YAMLError as err:
-            raise ValueError(f"Invalid YAML in {config_path}: {err}") from err
-        if not isinstance(result, dict):
-            raise ValueError(f"Expected a YAML mapping in {config_path}, got {type(result).__name__}")
-        return result
-
-    if name == ".local.yaml":
-        return _secrets_from_env()
-
-    raise FileNotFoundError(
-        f"Config not found at {config_path}. Check your working directory."
-    )
-
-
-def _secrets_from_env() -> dict[str, Any]:
-    """Build SecretsConfig-compatible dict from environment variables.
-
-    Used in production (Railway) where config/.local.yaml is not present.
-    """
-    return {
-        "database": {
-            "url": os.environ["DATABASE_URL"],
-        },
-        "redis": {
-            "url": os.environ.get("REDIS_URL", ""),
-        },
-        "providers": {
-            "openai": {"api_key": os.environ.get("OPENAI_API_KEY")},
-            "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY")},
-            "voyage": {"api_key": os.environ.get("VOYAGE_API_KEY")},
-            "google": {"api_key": os.environ.get("GOOGLE_API_KEY")},
-        },
-    }
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Config not found at {config_path}. Check your working directory."
+        )
+    try:
+        with config_path.open() as f:
+            result = yaml.safe_load(f)
+    except yaml.YAMLError as err:
+        raise ValueError(f"Invalid YAML in {config_path}: {err}") from err
+    if not isinstance(result, dict):
+        raise ValueError(
+            f"Expected a YAML mapping in {config_path}, got {type(result).__name__}"
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -158,12 +131,69 @@ class SecretsConfig(BaseModel):
     providers: ProvidersConfig = ProvidersConfig()
 
 
+# ---------------------------------------------------------------------------
+# Secrets sources — tried in order by get_secrets()
+# ---------------------------------------------------------------------------
+
+
+class _YamlFileSource:
+    """Load secrets from config/.local.yaml (local dev)."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def load(self) -> dict[str, Any] | None:
+        """Return parsed YAML dict, or None if file does not exist."""
+        if not self._path.exists():
+            return None
+        try:
+            with self._path.open() as f:
+                result = yaml.safe_load(f)
+        except yaml.YAMLError as err:
+            raise ValueError(f"Invalid YAML in {self._path}: {err}") from err
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"Expected a YAML mapping in {self._path}, got {type(result).__name__}"
+            )
+        return result
+
+
+class _EnvSource:
+    """Load secrets from environment variables (Railway production)."""
+
+    def load(self) -> dict[str, Any]:
+        """Return secrets dict from env vars. DATABASE_URL is required."""
+        url = os.environ.get("DATABASE_URL")
+        if not url:
+            raise ValueError(
+                "DATABASE_URL environment variable is required but not set. "
+                "In local dev, create config/.local.yaml instead."
+            )
+        return {
+            "database": {"url": url},
+            "redis": {"url": os.environ.get("REDIS_URL", "")},
+            "providers": {
+                "openai": {"api_key": os.environ.get("OPENAI_API_KEY")},
+                "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY")},
+                "voyage": {"api_key": os.environ.get("VOYAGE_API_KEY")},
+                "google": {"api_key": os.environ.get("GOOGLE_API_KEY")},
+            },
+        }
+
+
 _secrets: SecretsConfig | None = None
 
 
 def get_secrets() -> SecretsConfig:
-    """Return the SecretsConfig singleton, loading .local.yaml (or env vars) on first call."""
+    """Return the SecretsConfig singleton.
+
+    Sources tried in order:
+    1. config/.local.yaml  (local dev)
+    2. Environment variables (Railway production)
+    """
     global _secrets
     if _secrets is None:
-        _secrets = SecretsConfig(**load_yaml_config(".local.yaml"))
+        yaml_source = _YamlFileSource(find_project_root() / "config" / ".local.yaml")
+        raw = yaml_source.load() or _EnvSource().load()
+        _secrets = SecretsConfig(**raw)
     return _secrets
