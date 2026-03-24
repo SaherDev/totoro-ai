@@ -35,11 +35,14 @@ class PlainTextExtractor:
         except Exception:
             return True  # Assume plain text on parse error
 
-    async def extract(self, raw_input: str) -> ExtractionResult | None:
+    async def extract(
+        self, raw_input: str, supplementary_text: str = ""
+    ) -> ExtractionResult | None:
         """Extract place from plain text using LLM.
 
         Args:
             raw_input: Plain text description of a place
+            supplementary_text: Unused for plain text (protocol compatibility)
 
         Returns:
             ExtractionResult with extracted place data and source=PLAIN_TEXT,

@@ -5,7 +5,9 @@
       "Bash(bash .specify/scripts/bash/update-agent-context.sh claude 2>&1)",
       "Bash(poetry run:*)",
       "Skill(code-review:code-review)",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "Bash(.specify/scripts/bash/setup-plan.sh --json)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks 2>&1)"
     ]
   }
 }

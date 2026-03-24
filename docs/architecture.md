@@ -70,18 +70,23 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 extract-place is a deterministic workflow, not an agent. It follows a fixed sequence of steps with one structured LLM extraction call per input type. No tool selection, no reasoning loop, no LangGraph.
 
 ```
-Raw input (TikTok URL or plain text)
+Raw input (URL + text, text-only, mixed formats)
     │
     ▼
 POST /v1/extract-place
     │  Receives: raw_input, user_id
     │
-    ├── Dispatch input to appropriate extractor
-    │   (TikTok extractor for TikTok URLs, PlainText extractor otherwise)
+    ├── Parse input to extract URL and supplementary context
+    │   Input parser handles: "text before URL text after", "URL only", "text only"
+    │   Produces: (url, supplementary_text, input_type)
+    │
+    ├── Dispatch to appropriate extractor
+    │   If URL detected: route to TikTok extractor (for TikTok URLs) or other URL extractors
+    │   If no URL: route to PlainText extractor
     │
     ├── Extractor fetches content and runs structured LLM extraction
-    │   (TikTok: fetch caption via oEmbed API)
-    │   (PlainText: use raw input)
+    │   (TikTok: fetch caption via oEmbed API + merge with supplementary_text)
+    │   (PlainText: use raw input text)
     │   Produces: place_name, address, cuisine, price_range
     │
     ├── Validate extracted place via Google Places API
@@ -100,6 +105,8 @@ POST /v1/extract-place
 ```
 
 FastAPI writes only when high-confidence extraction occurs. If mid-range confidence, no write happens until user confirms. NestJS receives the result and decision flag, then decides whether to persist.
+
+Input Parser (src/totoro_ai/core/extraction/input_parser.py) runs before dispatcher routing. It uses regex to detect URLs and extract user-provided context (text before/after the URL). For TikTok inputs, the supplementary text is merged with the video caption before LLM extraction, providing additional context for place identification. Langfuse logs the raw input and parsed components for audit trail and debugging.
 
 ## Data Flow: Consult (Recommend a Place)
 
@@ -223,9 +230,25 @@ PlaceRepository, EmbeddingRepository, TasteModelRepository.
 No ORM queries or raw SQL appear outside these classes. Service
 and agent layers call repository methods only.
 
+Each repository is defined as a Python Protocol (abstract interface)
+with a concrete SQLAlchemy implementation. For example, PlaceRepository
+defines two methods:
+- `get_by_provider(provider: str, external_id: str) -> Place | None`
+  Fetch a place by provider and external ID for deduplication.
+- `save(place: Place) -> Place`
+  Insert or update a place with explicit error recovery (try/except/rollback).
+
+The Protocol lives in src/totoro_ai/db/repositories/ alongside the
+concrete SQLAlchemyPlaceRepository implementation. Service layers
+depend on the Protocol only, not the concrete class. This allows
+testing with mock repositories and swapping implementations without
+touching service code. All database writes include try/except blocks
+with explicit rollback and structured error logging.
+
 ## Key Boundaries
 
 - One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
+- **Critical constraint**: Embedding vector dimensions must stay in sync across both repos (ADR-040). This repo uses Voyage 3.5-lite with 1024-dimensional embeddings. The pgvector column in the product repo's Prisma schema must be defined with dimension 1024. If the embedding model changes, both repos must update together to avoid vector dimension mismatches during similarity queries.
 - Redis is FastAPI-only.
 - Google Places API is called directly by this repo as part of the AI pipeline.
 - All LLM and embedding provider calls happen in this repo only.

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from totoro_ai.api.schemas.consult import ConsultRequest
+from totoro_ai.api.schemas.consult import ConsultRequest, SyncConsultResponse
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.providers import get_llm
 
@@ -22,7 +22,16 @@ def get_consult_service() -> ConsultService:
     return ConsultService(llm=get_llm("orchestrator"))
 
 
-@router.post("/consult")
+@router.post(
+    "/consult",
+    status_code=200,
+    responses={
+        200: {
+            "description": "Synchronous recommendation response (stream=false)",
+            "model": SyncConsultResponse,
+        },
+    },
+)
 async def consult(
     body: ConsultRequest,
     raw_request: Request,

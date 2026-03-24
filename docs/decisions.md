@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-041: Provider-agnostic place identity via (external_provider, external_id) pair
+
+**Date:** 2026-03-25\
+**Status:** accepted\
+**Context:** The original schema used a `google_place_id` column as the unique identifier for places. This locks place identity to a single provider — adding Yelp, Foursquare, or any future data source would either break uniqueness guarantees or require per-provider schema changes. The extraction pipeline is designed to support multiple place data sources (ADR-022, ADR-038), so the identity key must match.\
+**Decision:** Place identity is stored as a composite `(external_provider, external_id)` pair with a UniqueConstraint enforced at the database level. `external_provider` is a required, non-empty string identifying the data source (e.g. `"google"`, `"yelp"`). `external_id` is the provider's own identifier for the place. Re-submitting an existing `(external_provider, external_id)` pair triggers an upsert — all mutable place fields (name, address, category, metadata) are overwritten with the new values. Submissions with a null or empty `external_provider` are rejected at the API boundary with a 400 validation error before any database operation. The Alembic migration backfills all existing rows by setting `external_provider='google'` and copying the current `google_place_id` value into `external_id`, then drops the old column. No data loss is permitted.\
+**Consequences:** Any place data source can be added without schema changes — only a new `external_provider` string value is needed. The NestJS product repo reads and joins on this pair. The migration is a non-destructive backfill, safe to run against environments with existing data. Future provider integrations must supply a stable, non-empty provider identifier and are validated at the extraction boundary before reaching the repository layer.
+
+---
+
 ## ADR-040: Voyage 3.5-lite for embeddings with 1024-dimensional vectors
 
 **Date:** 2026-03-16\

@@ -3,5 +3,6 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "poetry run uvicorn totoro_ai.api.main:app --host \"::\" --port $PORT"
+healthcheckPath = "/v1/health"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
