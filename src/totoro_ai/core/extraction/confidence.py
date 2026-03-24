@@ -2,10 +2,8 @@
 
 from enum import Enum
 
-from totoro_ai.core.config import load_yaml_config
+from totoro_ai.core.config import ConfidenceWeights
 from totoro_ai.core.extraction.places_client import PlacesMatchQuality
-
-_weights = load_yaml_config("app.yaml").get("extraction", {}).get("confidence_weights", {})
 
 
 class ExtractionSource(str, Enum):
@@ -20,6 +18,7 @@ class ExtractionSource(str, Enum):
 def compute_confidence(
     source: ExtractionSource,
     match_quality: PlacesMatchQuality,
+    weights: ConfidenceWeights,
     corroborated: bool = False,
 ) -> float:
     """
@@ -30,38 +29,31 @@ def compute_confidence(
     Args:
         source: Extraction source enum
         match_quality: Places match quality (EXACT, FUZZY, CATEGORY_ONLY, NONE)
+        weights: Confidence weight config (base scores, modifiers, caps)
         corroborated: Whether extraction was validated by multiple sources
 
     Returns:
         Confidence score between 0.0 and 0.95
 
     """
-    base_scores = _weights.get("base_scores", {})
-    places_modifiers = _weights.get("places_modifiers", {})
-    multi_source_bonus = _weights.get("multi_source_bonus", 0.10)
-    max_score = _weights.get("max_score", 0.95)
-    none_cap = _weights.get("places_modifiers", {}).get("NONE_CAP", 0.30)
+    none_cap = weights.places_modifiers.get("NONE_CAP", 0.30)
 
     # Step 1: Base score from source
-    base = base_scores.get(source.value, 0.60)
+    base = weights.base_scores.get(source.value, 0.60)
 
     # Step 2: Places modifier
     if match_quality == PlacesMatchQuality.EXACT:
-        modifier = places_modifiers.get("EXACT", 0.20)
-        score = base + modifier
+        score = base + weights.places_modifiers.get("EXACT", 0.20)
     elif match_quality == PlacesMatchQuality.FUZZY:
-        modifier = places_modifiers.get("FUZZY", 0.15)
-        score = base + modifier
+        score = base + weights.places_modifiers.get("FUZZY", 0.15)
     elif match_quality == PlacesMatchQuality.CATEGORY_ONLY:
-        modifier = places_modifiers.get("CATEGORY_ONLY", 0.10)
-        score = base + modifier
+        score = base + weights.places_modifiers.get("CATEGORY_ONLY", 0.10)
     else:  # NONE
-        # Cap score when no Places match
         score = min(base, none_cap)
 
     # Step 3: Multi-source bonus (future enhancement)
     if corroborated:
-        score += multi_source_bonus
+        score += weights.multi_source_bonus
 
     # Step 4: Apply max cap
-    return min(score, max_score)
+    return min(score, weights.max_score)

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel
 
 
 def find_project_root() -> Path:
@@ -20,7 +21,7 @@ def load_yaml_config(name: str) -> dict[str, Any]:
 
     For .local.yaml: tries the file first (local dev), falls back to
     environment variables when the file is absent (Railway / production).
-    For all other files (e.g. models.yaml): file must exist.
+    For all other files (e.g. app.yaml): file must exist.
     """
     config_path = find_project_root() / "config" / name
     if config_path.exists():
@@ -43,13 +44,9 @@ def _config_from_env() -> dict[str, Any]:
     """Build .local.yaml config structure from environment variables.
 
     Used in production (Railway) where no YAML secrets file is present.
+    Only covers secrets — non-secret config lives in committed app.yaml.
     """
     return {
-        "app": {
-            "name": os.environ.get("APP_NAME", "totoro-ai"),
-            "description": os.environ.get("APP_DESCRIPTION", "AI engine for Totoro"),
-            "api_prefix": os.environ.get("APP_API_PREFIX", "/v1"),
-        },
         "database": {
             "url": os.environ["DATABASE_URL"],
         },
@@ -63,3 +60,56 @@ def _config_from_env() -> dict[str, Any]:
             "google": {"api_key": os.environ.get("GOOGLE_API_KEY")},
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Typed config models (ADR-015, ADR-016, ADR-029)
+# ---------------------------------------------------------------------------
+
+
+class AppMeta(BaseModel):
+    name: str
+    description: str
+    api_prefix: str
+
+
+class LLMRoleConfig(BaseModel):
+    provider: str
+    model: str
+    max_tokens: int = 1024
+    temperature: float = 1.0
+
+
+class ConfidenceWeights(BaseModel):
+    base_scores: dict[str, float]
+    places_modifiers: dict[str, float]
+    multi_source_bonus: float = 0.10
+    max_score: float = 0.95
+
+
+class ExtractionThresholds(BaseModel):
+    store_silently: float = 0.70
+    require_confirmation: float = 0.30
+
+
+class ExtractionConfig(BaseModel):
+    confidence_weights: ConfidenceWeights
+    thresholds: ExtractionThresholds
+
+
+class AppConfig(BaseModel):
+    app: AppMeta
+    models: dict[str, LLMRoleConfig]
+    extraction: ExtractionConfig
+
+
+# Singleton — loaded once at first call, reused for the process lifetime.
+_config: AppConfig | None = None
+
+
+def get_config() -> AppConfig:
+    """Return the app config singleton, loading app.yaml on first call."""
+    global _config
+    if _config is None:
+        _config = AppConfig(**load_yaml_config("app.yaml"))
+    return _config
