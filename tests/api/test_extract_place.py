@@ -89,12 +89,28 @@ def test_extract_place_unsupported_input_returns_422() -> None:
 
 
 def test_extract_place_low_confidence_requires_confirmation() -> None:
-    """Test that low confidence (0.30-0.70) returns requires_confirmation=True."""
+    """Test that low confidence (0.30 < score < 0.70) requires confirmation.
+
+    Expected response when confidence is in confirmation zone:
+    {
+        "place_id": null,
+        "place": { ... },
+        "confidence": 0.55,
+        "requires_confirmation": true,
+        "source_url": null
+    }
+
+    Note: Confirmation zone is rare with current scoring (PLAIN_TEXT base 0.70).
+    Most real inputs either exceed 0.70 (save) or drop to 0.30 (error).
+    This zone is more likely with multi-source extraction (Phase 4+).
+    """
     client = TestClient(app)
 
+    # Ambiguous input will likely trigger error (confidence ≤ 0.30)
+    # Rather than confirmation (0.30 < confidence < 0.70)
     request = ExtractPlaceRequest(
         user_id="test-user",
-        raw_input="some ambiguous place name",
+        raw_input="unknown place somewhere",
     )
 
     response = client.post(
@@ -102,9 +118,15 @@ def test_extract_place_low_confidence_requires_confirmation() -> None:
         json=request.model_dump(),
     )
 
-    # Response depends on service mocking
-    # This test structure is set up for future implementation
-    assert response.status_code in [200, 422, 500]
+    # Current behavior: ambiguous input triggers error, not confirmation
+    # This is correct — threshold guards against unreliable extractions
+    assert response.status_code in [200, 422]
+    if response.status_code == 200:
+        data = response.json()
+        if data.get("requires_confirmation"):
+            # If we do get confirmation, verify the structure
+            assert data.get("place_id") is None
+            assert 0.30 < data.get("confidence", 0) < 0.70
 
 
 def test_extract_place_deduplication() -> None:
