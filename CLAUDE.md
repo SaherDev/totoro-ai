@@ -73,7 +73,7 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 
 ## Notes
 
-- **Task-driven workflow.** Planning and prioritization happen outside this repo (ClickUp). Each task arrives scoped — execute it. No phase gates.
+- **Task-driven workflow.** Each task arrives scoped — execute it. No phase gates.
 - **Git comment char is `;`** not `#`. Configured in this repo's git config. Commit messages and interactive rebase use `;` for comments.
 - **No `.env` files**: Secrets live in `config/.local.yaml`. If a command fails with missing API key, check that `config/.local.yaml` has the correct values.
 - **Database write split**: Shared PostgreSQL instance on Railway. This repo writes AI data (places, embeddings, taste_model) and owns their migrations via Alembic. NestJS writes product data (users, settings, recommendations) and owns their migrations via Prisma. Never cross migration tool boundaries.

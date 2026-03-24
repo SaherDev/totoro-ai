@@ -13,4 +13,4 @@ Rules:
 - Keep the file under 150 lines. Move detailed standards to `.claude/rules/` files and reference them here.
 - Content that doesn't fit a section gets folded into the closest match (e.g., commit conventions → Standards, deployment → Notes, token efficiency → Workflow).
 - Do not add new top-level sections. If new content is needed, append it to the appropriate existing section.
-- No phase language. This project does not use phase gates or phase-based scoping. Work is task-by-task, feature-by-feature — planning and prioritization happen outside this repo (ClickUp). Each task arrives scoped; execute it.
+- No phase language. This project does not use phase gates or phase-based scoping. Work is task-by-task, feature-by-feature. Each task arrives scoped; execute it.

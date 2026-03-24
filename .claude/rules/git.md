@@ -33,7 +33,7 @@ main          ← stable only, merge when a feature/phase is complete and tested
 ## Commit Message Format
 
 ```
-type(scope): description #TASK_ID
+type(scope): description
 ```
 
 **Types:** `feat`, `fix`, `chore`, `docs`, `refactor`, `test`
@@ -49,14 +49,12 @@ type(scope): description #TASK_ID
 - `config` — Configuration and environment setup
 - For changes affecting multiple modules, prioritize the primary one
 
-**Task ID:** ClickUp task ID (e.g., `#abc123`) — optional if no task exists
-
 Examples:
 ```
 feat(intent): add cuisine extraction from free text
-fix(providers): handle timeout on OpenAI embedding calls #TASK-456
+fix(providers): handle timeout on OpenAI embedding calls
 test(ranking): add integration tests for score normalization
-chore(config): update models.yaml with provider mappings #TASK-789
+chore(config): update models.yaml with provider mappings
 refactor(embedding): simplify vector distance calculations
 docs(api): add endpoint documentation for consult endpoint
 ```
