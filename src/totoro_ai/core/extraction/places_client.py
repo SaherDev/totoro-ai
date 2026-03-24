@@ -8,6 +8,8 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel
 
+from totoro_ai.core.config import load_yaml_config
+
 
 class PlacesMatchQuality(str, Enum):
     """Quality of match against Google Places database."""
@@ -42,10 +44,19 @@ class GooglePlacesClient:
     """Google Places API client for place validation (ADR-022)."""
 
     def __init__(self) -> None:
-        """Initialize with API key from environment."""
-        self.api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
+        """Initialize with API key from config or environment."""
+        # Try config first, then fall back to environment variable
+        config = load_yaml_config(".local.yaml")
+        self.api_key = config.get("google", {}).get("api_key")
+
         if not self.api_key:
-            raise ValueError("GOOGLE_PLACES_API_KEY environment variable not set")
+            self.api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
+
+        if not self.api_key:
+            raise ValueError(
+                "Google Places API key not found in config/.local.yaml or "
+                "GOOGLE_PLACES_API_KEY environment variable"
+            )
 
     async def validate_place(
         self, name: str, location: str | None = None
