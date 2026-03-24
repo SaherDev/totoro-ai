@@ -36,9 +36,7 @@ class TestTikTokExtractor:
         assert not extractor.supports("123 Main St, New York, NY")
 
     @pytest.mark.asyncio
-    async def test_extract_successful(
-        self, mock_instructor_client: AsyncMock
-    ) -> None:
+    async def test_extract_successful(self, mock_instructor_client: AsyncMock) -> None:
         """Test successful extraction from TikTok caption."""
         from unittest.mock import MagicMock
 
@@ -57,7 +55,9 @@ class TestTikTokExtractor:
 
         with patch("httpx.AsyncClient") as mock_client_class:
             mock_response = MagicMock()
-            mock_response.json.return_value = {"title": "Best ramen I ever had! Fuji Ramen"}
+            mock_response.json.return_value = {
+                "title": "Best ramen I ever had! Fuji Ramen"
+            }
 
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client

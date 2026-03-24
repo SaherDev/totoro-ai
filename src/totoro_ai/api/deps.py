@@ -21,12 +21,14 @@ def build_dispatcher() -> ExtractionDispatcher:
     from totoro_ai.core.extraction.extractors.tiktok import TikTokExtractor
 
     instructor_client = get_instructor_client("intent_parser")
-    return ExtractionDispatcher([TikTokExtractor(instructor_client), PlainTextExtractor(instructor_client)])
+    return ExtractionDispatcher(
+        [TikTokExtractor(instructor_client), PlainTextExtractor(instructor_client)]
+    )
 
 
 async def get_extraction_service(
-    db_session: AsyncSession = Depends(get_session),  # type: ignore[assignment]
-    config: AppConfig = Depends(get_config),
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+    config: AppConfig = Depends(get_config),  # noqa: B008
 ) -> ExtractionService:
     """FastAPI dependency providing a fully wired ExtractionService.
 

@@ -13,8 +13,10 @@ class InputExtractor(Protocol):
         Extract structured place data from raw input.
 
         Returns:
-            ExtractionResult with extraction + source classification, or None on failure.
-            The extractor owns source classification; service never re-derives it.
+            ExtractionResult with extraction + source classification,
+            or None on failure. The extractor owns source classification;
+            service never re-derives it.
+
         """
         ...
 

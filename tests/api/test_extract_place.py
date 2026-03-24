@@ -19,7 +19,7 @@ def test_extract_place_success_saves_place() -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "title": "Best ramen I ever had! Fuji Ramen at 123 Main St",
-            "description": "Fuji Ramen restaurant"
+            "description": "Fuji Ramen restaurant",
         }
 
         mock_client = AsyncMock()
@@ -75,7 +75,9 @@ def test_extract_place_unsupported_input_returns_422() -> None:
         from totoro_ai.core.extraction.dispatcher import UnsupportedInputError
 
         mock_service = AsyncMock()
-        mock_service.run.side_effect = UnsupportedInputError("No extractor supports input")
+        mock_service.run.side_effect = UnsupportedInputError(
+            "No extractor supports input"
+        )
         mock_service_dep.return_value = mock_service
 
         response = client.post(
@@ -140,7 +142,7 @@ def test_extract_place_deduplication() -> None:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "title": "Another place I like",
-            "description": "Restaurant location"
+            "description": "Restaurant location",
         }
 
         mock_client = AsyncMock()

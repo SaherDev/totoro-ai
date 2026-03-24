@@ -7,12 +7,12 @@ import anthropic
 import instructor
 import openai
 from anthropic.types import MessageParam, TextBlock
+from instructor.core import IncompleteOutputException, InstructorRetryException
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
 from pydantic import BaseModel, ValidationError
 
 from totoro_ai.core.config import get_config, get_secrets
-
 
 # --- Protocol ---
 
@@ -114,14 +114,14 @@ class OpenAILLMClient:
 
     async def stream(self, messages: list[dict[str, str]]) -> AsyncGenerator[str, None]:
         typed = cast(list[ChatCompletionMessageParam], messages)
-        response: AsyncStream[ChatCompletionChunk] = (
-            await self._client.chat.completions.create(
-                model=self._model,
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-                messages=typed,
-                stream=True,
-            )
+        response: AsyncStream[
+            ChatCompletionChunk
+        ] = await self._client.chat.completions.create(
+            model=self._model,
+            max_tokens=self._max_tokens,
+            temperature=self._temperature,
+            messages=typed,
+            stream=True,
         )
         async for chunk in response:
             content = chunk.choices[0].delta.content
@@ -167,14 +167,14 @@ class InstructorClient:
             result = await self._client.chat.completions.create(
                 model=self._model,
                 response_model=response_model,
-                messages=messages,
+                messages=cast(list[Any], messages),
                 max_retries=max_retries,
             )
             return result
-        except instructor.IncompleteOutputException as e:
-            raise RuntimeError(f"Incomplete extraction: {e}")
-        except instructor.InstructorRetryException as e:
-            raise RuntimeError(f"Extraction failed after retries: {e}")
+        except IncompleteOutputException as e:
+            raise RuntimeError(f"Incomplete extraction: {e}") from e
+        except InstructorRetryException as e:
+            raise RuntimeError(f"Extraction failed after retries: {e}") from e
         except ValidationError:
             raise
 
@@ -243,7 +243,9 @@ def get_instructor_client(role: str) -> InstructorClient:
     role_config = get_config().models[role]
 
     if role_config.provider != "openai":
-        raise ValueError(f"Instructor only supports OpenAI provider, got: {role_config.provider}")
+        raise ValueError(
+            f"Instructor only supports OpenAI provider, got: {role_config.provider}"
+        )
 
     return InstructorClient(
         model=role_config.model,

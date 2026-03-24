@@ -9,10 +9,10 @@ from totoro_ai.core.extraction.places_client import PlacesMatchQuality
 class ExtractionSource(str, Enum):
     """Source of extraction — determines base confidence score."""
 
-    CAPTION = "CAPTION"        # TikTok oEmbed caption (current)
+    CAPTION = "CAPTION"  # TikTok oEmbed caption (current)
     PLAIN_TEXT = "PLAIN_TEXT"  # Plain text input (current)
-    SPEECH = "SPEECH"          # Whisper transcription (will be supported later)
-    OCR = "OCR"                # Frame OCR (will be supported later)
+    SPEECH = "SPEECH"  # Whisper transcription (will be supported later)
+    OCR = "OCR"  # Frame OCR (will be supported later)
 
 
 def compute_confidence(
