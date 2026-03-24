@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash .specify/scripts/bash/setup-plan.sh --json 2>&1)",
+      "Bash(bash .specify/scripts/bash/update-agent-context.sh claude 2>&1)",
+      "Bash(poetry run:*)"
+    ]
+  }
+}

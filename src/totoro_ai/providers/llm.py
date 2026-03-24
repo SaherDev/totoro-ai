@@ -4,10 +4,12 @@ from collections.abc import AsyncGenerator
 from typing import Any, Protocol, cast, runtime_checkable
 
 import anthropic
+import instructor
 import openai
 from anthropic.types import MessageParam, TextBlock
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
+from pydantic import BaseModel, ValidationError
 
 from totoro_ai.core.config import load_yaml_config
 
@@ -136,6 +138,56 @@ class OpenAILLMClient:
                 yield content
 
 
+class InstructorClient:
+    """Instructor-patched OpenAI client for structured extraction (ADR-020)."""
+
+    def __init__(self, model: str, api_key: str | None = None) -> None:
+        """Initialize Instructor client with OpenAI backend.
+
+        Args:
+            model: Model name (e.g., 'gpt-4o-mini')
+            api_key: OpenAI API key (uses env if None)
+        """
+        self._model = model
+        self._openai_client = openai.AsyncOpenAI(api_key=api_key)
+        self._client = instructor.from_openai(self._openai_client)
+
+    async def extract(
+        self,
+        response_model: type[BaseModel],
+        messages: list[dict[str, str]],
+        max_retries: int = 3,
+    ) -> BaseModel:
+        """Extract structured data using the specified response model.
+
+        Args:
+            response_model: Pydantic model for structured output
+            messages: Chat messages for the LLM
+            max_retries: Number of retries on Instructor exceptions
+
+        Returns:
+            Extracted data as instance of response_model
+
+        Raises:
+            ValidationError: If final output fails schema validation
+            RuntimeError: If extraction fails after max retries
+        """
+        try:
+            result = await self._client.chat.completions.create(
+                model=self._model,
+                response_model=response_model,
+                messages=messages,
+                max_retries=max_retries,
+            )
+            return result
+        except instructor.IncompleteOutputException as e:
+            raise RuntimeError(f"Incomplete extraction: {e}")
+        except instructor.InstructorRetryException as e:
+            raise RuntimeError(f"Extraction failed after retries: {e}")
+        except ValidationError:
+            raise
+
+
 # --- Factory ---
 
 
@@ -178,3 +230,34 @@ def get_llm(role: str) -> LLMClientProtocol:
         )
 
     raise ValueError(f"Unsupported provider: {provider}")
+
+
+def get_instructor_client(role: str) -> InstructorClient:
+    """Get Instructor-patched client for structured extraction.
+
+    Resolves provider and model from config/models.yaml based on role.
+    Currently only supports OpenAI provider.
+
+    Args:
+        role: Logical role (e.g., 'intent_parser')
+
+    Returns:
+        InstructorClient
+
+    Raises:
+        KeyError: If role not found in config
+        ValueError: If provider is not OpenAI
+    """
+    config: dict[str, Any] = load_yaml_config("models.yaml")
+    role_config: dict[str, Any] = config[role]
+
+    provider: str = role_config["provider"]
+    model: str = role_config["model"]
+
+    if provider != "openai":
+        raise ValueError(f"Instructor only supports OpenAI provider, got: {provider}")
+
+    local: dict[str, Any] = _load_local_config()
+    api_key: str | None = local.get("providers", {}).get("openai", {}).get("api_key")
+
+    return InstructorClient(model=model, api_key=api_key)
