@@ -9,6 +9,7 @@ from totoro_ai.api.errors import ExtractionFailedNoMatchError
 from totoro_ai.api.schemas.extract_place import (
     ExtractPlaceResponse,
 )
+from totoro_ai.core.config import load_yaml_config
 from totoro_ai.core.extraction.confidence import compute_confidence
 from totoro_ai.core.extraction.dispatcher import (
     ExtractionDispatcher,
@@ -96,8 +97,9 @@ class ExtractionService:
         )
 
         # Step 5: Apply thresholds
-        threshold_store = 0.70  # TODO: Read from config
-        threshold_require_confirm = 0.30  # TODO: Read from config
+        _thresholds = load_yaml_config("app.yaml").get("extraction", {}).get("thresholds", {})
+        threshold_store = _thresholds.get("store_silently", 0.70)
+        threshold_require_confirm = _thresholds.get("require_confirmation", 0.30)
 
         if confidence <= threshold_require_confirm:
             raise ExtractionFailedNoMatchError(

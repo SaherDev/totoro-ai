@@ -9,7 +9,7 @@ from totoro_ai.api.routes.extract_place import router as extract_place_router
 from totoro_ai.core.config import load_yaml_config
 from totoro_ai.db.session import _get_session_factory
 
-_app_config = load_yaml_config(".local.yaml")["app"]
+_app_config = load_yaml_config("app.yaml")["app"]
 _version = pkg_version("totoro-ai")
 
 app = FastAPI(

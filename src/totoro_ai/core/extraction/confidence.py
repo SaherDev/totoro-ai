@@ -34,7 +34,7 @@ def compute_confidence(
         Confidence score between 0.0 and 0.95
 
     """
-    config = load_yaml_config(".local.yaml")
+    config = load_yaml_config("app.yaml")
     weights = config.get("extraction", {}).get("confidence_weights", {})
 
     base_scores = weights.get("base_scores", {})

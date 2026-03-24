@@ -43,9 +43,9 @@
 
 All LLM and embedding calls go through the provider abstraction layer.
 
-- `config/models.yaml` defines logical roles → provider + model + params
+- `config/app.yaml` under `models:` defines logical roles → provider + model + params
 - Code references logical roles (e.g., `intent_parser`, `orchestrator`), never model names directly
-- Swapping a model means changing YAML config, not code
+- Swapping a model means changing `app.yaml` only — no code changes
 
 ## Coding Constraints
 

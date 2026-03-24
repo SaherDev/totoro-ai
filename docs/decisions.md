@@ -125,13 +125,13 @@ Format:
 
 ---
 
-## ADR-029: Consolidated config files into .local.yaml
+## ADR-029: Single committed app.yaml for all non-secret config
 
-**Date:** 2026-03-09\
+**Date:** 2026-03-09 (revised 2026-03-24)\
 **Status:** accepted\
-**Context:** Multiple config files (`app.yaml`, `models.yaml`) scattered across the config directory increased maintenance burden and file count. The Python `load_yaml_config` function already supported loading from config/, but required separate files for different concerns.\
-**Decision:** Consolidate all non-secret config into `config/.local.yaml`. For totoro-ai, merge `app.yaml` and `models.yaml` sections into `.local.yaml`. For totoro NestJS, add `api_prefix` to `.local.yaml` under the `app` section. Both services use a config service to load .local.yaml at startup: Python uses `load_yaml_config(".local.yaml")`, NestJS uses `@nestjs/config` ConfigModule.\
-**Consequences:** Single source of truth per repo for all non-secret config. Fewer files to maintain and track. Developers see all app config in one place. Changes to app metadata or model assignments go to one file. All repos follow the same consolidation pattern.
+**Context:** Non-secret config (app metadata, model roles, extraction weights) was previously merged into `config/.local.yaml` alongside secrets. This made non-secret tuning parameters (confidence weights, thresholds) gitignored and unversioned, meaning different environments could silently diverge and config could not be code-reviewed.\
+**Decision:** All non-secret config lives in committed `config/app.yaml` with three top-level keys: `app` (metadata), `models` (logical role → provider/model mapping), `extraction` (confidence weights and thresholds). `config/.local.yaml` (gitignored) holds only true secrets: provider API keys, database URL, Redis URL. Python reads non-secret config via `load_yaml_config("app.yaml")` and secrets via `load_yaml_config(".local.yaml")`.\
+**Consequences:** Non-secret config is versioned, code-reviewable, and consistent across environments. Secrets remain gitignored. The clear boundary — `app.yaml` for config, `.local.yaml` for secrets — prevents future drift back into mixing the two.
 
 ---
 
@@ -213,8 +213,8 @@ Format:
 
 **Date:** 2026-03-07\
 **Status:** accepted\
-**Context:** Application code must never hardcode model names or provider-specific imports. `config/models.yaml` already defines logical roles but nothing reads it to produce LLM objects yet.\
-**Decision:** A provider abstraction module reads `config/models.yaml` and returns initialized LangChain-compatible LLM and embedding objects keyed by logical role (e.g. `get_llm("intent_parser")`, `get_embedder()`). Implementation pending in `src/totoro_ai/providers/`. Swapping a model means changing `models.yaml` only — no code changes.\
+**Context:** Application code must never hardcode model names or provider-specific imports. `config/app.yaml` under `models:` defines logical roles.\
+**Decision:** A provider abstraction module reads `config/app.yaml["models"]` and returns initialized LLM and embedding objects keyed by logical role (e.g. `get_llm("intent_parser")`, `get_embedder()`). Implementation in `src/totoro_ai/providers/llm.py`. Swapping a model means changing `app.yaml` only — no code changes.\
 **Consequences:** All LLM and embedding calls go through the abstraction. Adding a new provider requires only a new case in the factory function and a YAML entry. Implementation pending.
 
 ---
@@ -249,13 +249,13 @@ Format:
 
 ---
 
-## ADR-016: models.yaml logical-role-to-provider mapping
+## ADR-016: app.yaml logical-role-to-provider mapping
 
-**Date:** 2026-03-07\
+**Date:** 2026-03-07 (revised 2026-03-24)\
 **Status:** accepted\
-**Context:** The codebase must never hardcode model names. Provider switching must be a config change, not a code change. `config/models.yaml` was introduced as the single source of truth for this mapping.\
-**Decision:** `config/models.yaml` maps three logical roles — `intent_parser`, `orchestrator`, `embedder` — to provider name, model identifier, and inference parameters. Read at startup by `core/config.py:load_yaml_config("models.yaml")`. Current assignments: `intent_parser` → `openai/gpt-4o-mini`, `orchestrator` → `anthropic/claude-sonnet-4-6-20250514`, `embedder` → `voyage/voyage-3.5-lite`.\
-**Consequences:** Swapping any model requires one line change in `models.yaml`. Code that references model names by role rather than string literals is automatically correct after a config change. Adding a new role requires a new YAML entry and a new factory case in the provider layer.
+**Context:** The codebase must never hardcode model names. Provider switching must be a config change, not a code change.\
+**Decision:** `config/app.yaml` under the `models:` key maps logical roles — `intent_parser`, `orchestrator`, `embedder`, `evaluator` — to provider name, model identifier, and inference parameters. Read by `providers/llm.py` via `load_yaml_config("app.yaml")["models"]`. Current assignments: `intent_parser` → `openai/gpt-4o-mini`, `orchestrator` → `anthropic/claude-sonnet-4-6-20250514`, `embedder` → `voyage/voyage-3.5-lite`.\
+**Consequences:** Swapping any model requires one line change in `app.yaml`. Code that references model names by role rather than string literals is automatically correct after a config change. Adding a new role requires a new YAML entry and a new factory case in the provider layer.
 
 ---
 
@@ -264,7 +264,7 @@ Format:
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Non-secret settings (app metadata, model assignments) must live in version-controlled files. Secrets must never appear in config files. A loader that knows where to find config files prevents hardcoded paths throughout the codebase.\
-**Decision:** `src/totoro_ai/core/config.py` exposes `load_yaml_config(name: str) -> dict` and `find_project_root() -> Path`. `find_project_root()` walks up from `__file__` until it finds `pyproject.toml`. `load_yaml_config` reads from `<project_root>/config/<name>`. Both `app.yaml` and `models.yaml` are loaded via this function.\
+**Decision:** `src/totoro_ai/core/config.py` exposes `load_yaml_config(name: str) -> dict` and `find_project_root() -> Path`. `find_project_root()` walks up from `__file__` until it finds `pyproject.toml`. `load_yaml_config` reads from `<project_root>/config/<name>`. Non-secret config is loaded via `load_yaml_config("app.yaml")`; secrets via `load_yaml_config(".local.yaml")`.\
 **Consequences:** Config files are always found regardless of the working directory at runtime. Any module can call `load_yaml_config` without knowing the filesystem layout. Secrets must remain in environment variables — this loader never reads `.env` files.
 
 ---

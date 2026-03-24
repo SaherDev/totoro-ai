@@ -14,7 +14,7 @@ Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine.
   - `providers/` — LLM/embedding provider abstraction (config-driven via YAML)
   - `eval/` — evaluation harnesses and datasets
 - `tests/` — pytest tests mirroring src structure
-- `config/` — YAML configuration (models.yaml for provider switching, non-secret settings)
+- `config/` — YAML configuration (`app.yaml` for all non-secret settings: app metadata, model roles, extraction config)
 - `scripts/` — utility scripts
 - `docs/` — operational docs: architecture, API contract, decisions log
 
@@ -42,7 +42,7 @@ docker compose down -v                # stop services and remove volumes
 - **Naming**: snake_case everywhere. Pydantic models are PascalCase. Files match module name.
 - **Types**: All function signatures typed. Pydantic models for all LLM input/output schemas. `mypy --strict` is the target.
 - **Secrets management** (ADR-026): Per-repo local `config/.local.yaml` (gitignored). Create the file and fill in your secrets — never committed. CI/CD injects secrets as environment variables at deploy time.
-- **Provider abstraction**: `config/models.yaml` maps logical roles (intent_parser, orchestrator, embedder) to provider + model + params. Code never hardcodes model names — always reads from config.
+- **Provider abstraction**: `config/app.yaml` under `models:` maps logical roles (intent_parser, orchestrator, embedder) to provider + model + params. Code never hardcodes model names — always reads from config.
 - **API versioning**: All FastAPI routes live under `/v1/` prefix to match the product repo convention.
 - **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via two HTTP endpoints (see `docs/api-contract.md`). Never import from or depend on the product repo.
 - **Pydantic everywhere**: Request/response schemas, LLM output parsing, internal data transfer — all Pydantic. No raw dicts crossing function boundaries.
@@ -75,7 +75,7 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 
 - **Task-driven workflow.** Each task arrives scoped — execute it. No phase gates.
 - **Git comment char is `;`** not `#`. Configured in this repo's git config. Commit messages and interactive rebase use `;` for comments.
-- **No `.env` files**: Secrets live in `config/.local.yaml`. If a command fails with missing API key, check that `config/.local.yaml` has the correct values.
+- **No `.env` files**: Secrets live in `config/.local.yaml` (gitignored). Non-secret config (app metadata, models, extraction weights) lives in `config/app.yaml` (committed). If a command fails with missing API key, check `config/.local.yaml`.
 - **Database write split**: Shared PostgreSQL instance on Railway. This repo writes AI data (places, embeddings, taste_model) and owns their migrations via Alembic. NestJS writes product data (users, settings, recommendations) and owns their migrations via Prisma. Never cross migration tool boundaries.
 - **Redis caching**: LLM responses are cached in Redis. When changing prompt templates or model config, consider cache invalidation.
 - **Langfuse tracing**: All LLM calls should be traced via Langfuse. Missing traces usually means the Langfuse callback handler wasn't attached.
