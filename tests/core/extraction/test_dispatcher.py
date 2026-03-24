@@ -24,7 +24,9 @@ class MockExtractor(InputExtractor):
         """Check if input contains support pattern."""
         return self.supports_pattern in raw_input
 
-    async def extract(self, raw_input: str) -> ExtractionResult | None:
+    async def extract(
+        self, raw_input: str, supplementary_text: str = ""
+    ) -> ExtractionResult | None:
         """Return mock extraction result."""
         return ExtractionResult(
             extraction=PlaceExtraction(
