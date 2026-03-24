@@ -53,13 +53,14 @@ The service layer catches `None` from `extract()` and raises `ExtractionFailedNo
 - Place found but name ratio < 0.80 → `CATEGORY_ONLY`
 - No result → `NONE`
 
-API key is read from `os.environ["GOOGLE_PLACES_API_KEY"]` — never from config files (FR-014).
+API key is read from `load_yaml_config(".local.yaml")`, never directly from `os.environ`. The application code has no knowledge of environment variables—all fallback handling is delegated to `config.py`, which loads from `.local.yaml` first, then falls back to environment variables if the file is missing. This separation ensures app code only depends on loaded config, not runtime environment details.
 
-**Rationale**: Text Search is the correct endpoint for name-based lookup. The `findplacefromtext` endpoint accepts a free-text query and returns the best match. String similarity provides a deterministic match quality without requiring an additional LLM call.
+**Rationale**: Text Search is the correct endpoint for name-based lookup. The `findplacefromtext` endpoint accepts a free-text query and returns the best match. String similarity provides a deterministic match quality without requiring an additional LLM call. Reading only from config preserves the abstraction boundary: app code never knows about environment variables, only about configuration objects.
 
 **Alternatives considered**:
 - Nearby Search — requires coordinates; not always available from caption text.
 - Place ID lookup — requires a known place ID, not applicable at extraction time.
+- Direct env var access in GooglePlacesClient — rejected, violates clean architecture; app should not know about environment variable names or fallback logic.
 
 ---
 
@@ -122,6 +123,19 @@ httpx = "^0.28"
 
 ---
 
-## 8. Constitution inconsistency (non-blocking)
+## 8. Claude Code harness config separation from application config
+
+**Decision**: `.claude/settings.local.json` is a Claude Code tool harness configuration file, not an application configuration file. The application has zero knowledge of this file and never reads it. It exists only to configure Claude Code's behavior during development (permissions, hooks, environment setup). This file is created by the harness at deployment time (e.g., on Railway when environments are available) to configure Claude Code permissions for that environment.
+
+**Boundary**:
+- Application config: `config/*.yaml` files only (read by `load_yaml_config()`)
+- Claude Code harness config: `.claude/settings.local.json`, `.claude/rules/`, `.claude/workflows.md` (Claude Code tool only, never read by app)
+- Environment variables: Handled by `config.py` as a fallback when `.local.yaml` is missing; app never reads environment directly
+
+**Rationale**: This separation ensures the application code and the development harness remain decoupled. The app doesn't leak implementation details about how the harness configures permissions or what environment it's running in. If `.claude/settings.local.json` is added to `.gitignore`, it won't affect the app — the app continues to work the same way.
+
+---
+
+## 9. Constitution inconsistency (non-blocking)
 
 The constitution (Section VI) states "Prisma in totoro owns all migrations." This contradicts ADR-030, CLAUDE.md, and the existing Alembic migration files already in the repo. The existing setup (Alembic for AI tables) is correct. The constitution text is stale on this point. No blocking action — proceed per ADR-030.
