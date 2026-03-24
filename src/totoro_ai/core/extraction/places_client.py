@@ -1,7 +1,6 @@
 """Google Places API client for place validation."""
 
 import difflib
-import os
 from enum import Enum
 from typing import Protocol
 
@@ -44,26 +43,17 @@ class GooglePlacesClient:
     """Google Places API client for place validation (ADR-022)."""
 
     def __init__(self) -> None:
-        """Initialize with API key from config or environment."""
+        """Initialize with API key from config."""
         config = load_yaml_config(".local.yaml")
 
         # Try multiple paths in config (supports both .local.yaml and env-based structures)
         self.api_key = (
             config.get("google", {}).get("api_key")
             or config.get("providers", {}).get("google", {}).get("api_key")
-            or ""
         )
 
-        # If config is empty, try environment variable (Google convention)
         if not self.api_key:
-            self.api_key = os.environ.get("GOOGLE_API_KEY") or ""
-
-        if not self.api_key:
-            raise ValueError(
-                "Google Places API key not found. Set one of:\n"
-                "  1. config/.local.yaml: google.api_key: YOUR_KEY\n"
-                "  2. Environment: export GOOGLE_API_KEY=YOUR_KEY"
-            )
+            raise ValueError("Google API key not configured in config/.local.yaml")
 
     async def validate_place(
         self, name: str, location: str | None = None
