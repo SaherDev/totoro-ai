@@ -1,8 +1,9 @@
-"""FastAPI dependencies for the extract-place endpoint (ADR-019)."""
+"""FastAPI dependencies for route handlers (ADR-019)."""
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from totoro_ai.core.config import AppConfig, get_config
 from totoro_ai.core.extraction.dispatcher import ExtractionDispatcher
 from totoro_ai.core.extraction.places_client import GooglePlacesClient
 from totoro_ai.core.extraction.service import ExtractionService
@@ -14,40 +15,27 @@ def build_dispatcher() -> ExtractionDispatcher:
     """Build ExtractionDispatcher with all configured extractors.
 
     Returns:
-        ExtractionDispatcher with TikTok and plain text extractors
-
-    Note:
-        Extractors are initialized with Instructor client.
-        Order matters: TikTok before plain text.
+        ExtractionDispatcher with TikTok and plain text extractors in priority order.
     """
-    # Import here to avoid circular imports
     from totoro_ai.core.extraction.extractors.plain_text import PlainTextExtractor
     from totoro_ai.core.extraction.extractors.tiktok import TikTokExtractor
 
     instructor_client = get_instructor_client("intent_parser")
-
-    tiktok = TikTokExtractor(instructor_client)
-    plain_text = PlainTextExtractor(instructor_client)
-
-    return ExtractionDispatcher([tiktok, plain_text])
+    return ExtractionDispatcher([TikTokExtractor(instructor_client), PlainTextExtractor(instructor_client)])
 
 
 async def get_extraction_service(
     db_session: AsyncSession = Depends(get_session),  # type: ignore[assignment]
+    config: AppConfig = Depends(get_config),
 ) -> ExtractionService:
-    """FastAPI dependency providing ExtractionService.
+    """FastAPI dependency providing a fully wired ExtractionService.
 
-    Args:
-        db_session: Database session from FastAPI dependency
-
-    Returns:
-        ExtractionService ready for use in route handlers
+    Config and session are injected — override get_config in tests to avoid
+    file I/O and control thresholds/weights without touching the filesystem.
     """
-    dispatcher = build_dispatcher()
-    places_client = GooglePlacesClient()
-
     return ExtractionService(
-        dispatcher=dispatcher,
-        places_client=places_client,
-        db_session_factory=lambda: db_session,
+        dispatcher=build_dispatcher(),
+        places_client=GooglePlacesClient(),
+        db_session=db_session,
+        extraction_config=config.extraction,
     )
