@@ -1,8 +1,11 @@
 """Pytest configuration and fixtures."""
 
 import os
+from unittest.mock import AsyncMock
 
 import pytest
+
+from totoro_ai.api.main import app
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -13,3 +16,27 @@ def setup_test_env() -> None:
     os.environ.setdefault("OPENAI_API_KEY", "sk-test-dummy")
     os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-dummy")
     os.environ.setdefault("VOYAGE_API_KEY", "voyage-test-dummy")
+    # Set dummy database URL to avoid connection attempts
+    os.environ.setdefault(
+        "DATABASE_URL", "postgresql+asyncpg://user:password@localhost/testdb"
+    )
+
+
+@pytest.fixture
+def mock_session() -> AsyncMock:
+    """Provide a mocked AsyncSession for dependency injection."""
+    session = AsyncMock()
+    # Default behavior: operations succeed
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    session.scalar = AsyncMock(return_value=None)
+    session.add = AsyncMock()
+    return session
+
+
+@pytest.fixture(autouse=True)
+def override_session_dependency(mock_session: AsyncMock) -> None:
+    """Override the get_session dependency for all tests."""
+    from totoro_ai.api import deps
+
+    app.dependency_overrides[deps.get_session] = lambda: mock_session
