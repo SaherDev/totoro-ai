@@ -1,9 +1,23 @@
+"""Central config module — single source of truth for all app configuration.
+
+Two singletons:
+- get_config()   → AppConfig   from config/app.yaml (committed, non-secret)
+- get_secrets()  → SecretsConfig from config/.local.yaml or env vars (never committed)
+
+All other modules import from here. Nobody calls load_yaml_config() directly.
+"""
+
 import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel
+
+
+# ---------------------------------------------------------------------------
+# Low-level loader (internal — use get_config / get_secrets instead)
+# ---------------------------------------------------------------------------
 
 
 def find_project_root() -> Path:
@@ -17,34 +31,34 @@ def find_project_root() -> Path:
 
 
 def load_yaml_config(name: str) -> dict[str, Any]:
-    """Load a YAML config file.
+    """Load a YAML config file from config/<name>.
 
-    For .local.yaml: tries the file first (local dev), falls back to
-    environment variables when the file is absent (Railway / production).
-    For all other files (e.g. app.yaml): file must exist.
+    For .local.yaml: falls back to environment variables when file is absent.
+    For all other files: file must exist.
     """
     config_path = find_project_root() / "config" / name
     if config_path.exists():
         try:
             with config_path.open() as f:
-                result: dict[str, Any] = yaml.safe_load(f)
-                return result
+                result = yaml.safe_load(f)
         except yaml.YAMLError as err:
             raise ValueError(f"Invalid YAML in {config_path}: {err}") from err
+        if not isinstance(result, dict):
+            raise ValueError(f"Expected a YAML mapping in {config_path}, got {type(result).__name__}")
+        return result
 
     if name == ".local.yaml":
-        return _config_from_env()
+        return _secrets_from_env()
 
     raise FileNotFoundError(
-        f"Config not found at {config_path}. " "Check your working directory."
+        f"Config not found at {config_path}. Check your working directory."
     )
 
 
-def _config_from_env() -> dict[str, Any]:
-    """Build .local.yaml config structure from environment variables.
+def _secrets_from_env() -> dict[str, Any]:
+    """Build SecretsConfig-compatible dict from environment variables.
 
-    Used in production (Railway) where no YAML secrets file is present.
-    Only covers secrets — non-secret config lives in committed app.yaml.
+    Used in production (Railway) where config/.local.yaml is not present.
     """
     return {
         "database": {
@@ -63,7 +77,7 @@ def _config_from_env() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Typed config models (ADR-015, ADR-016, ADR-029)
+# AppConfig — non-secret config from config/app.yaml
 # ---------------------------------------------------------------------------
 
 
@@ -103,13 +117,53 @@ class AppConfig(BaseModel):
     extraction: ExtractionConfig
 
 
-# Singleton — loaded once at first call, reused for the process lifetime.
 _config: AppConfig | None = None
 
 
 def get_config() -> AppConfig:
-    """Return the app config singleton, loading app.yaml on first call."""
+    """Return the AppConfig singleton, loading app.yaml on first call."""
     global _config
     if _config is None:
         _config = AppConfig(**load_yaml_config("app.yaml"))
     return _config
+
+
+# ---------------------------------------------------------------------------
+# SecretsConfig — secrets from config/.local.yaml or environment variables
+# ---------------------------------------------------------------------------
+
+
+class ProviderKey(BaseModel):
+    api_key: str | None = None
+
+
+class ProvidersConfig(BaseModel):
+    openai: ProviderKey = ProviderKey()
+    anthropic: ProviderKey = ProviderKey()
+    voyage: ProviderKey = ProviderKey()
+    google: ProviderKey = ProviderKey()
+
+
+class DatabaseConfig(BaseModel):
+    url: str
+
+
+class RedisConfig(BaseModel):
+    url: str = ""
+
+
+class SecretsConfig(BaseModel):
+    database: DatabaseConfig
+    redis: RedisConfig = RedisConfig()
+    providers: ProvidersConfig = ProvidersConfig()
+
+
+_secrets: SecretsConfig | None = None
+
+
+def get_secrets() -> SecretsConfig:
+    """Return the SecretsConfig singleton, loading .local.yaml (or env vars) on first call."""
+    global _secrets
+    if _secrets is None:
+        _secrets = SecretsConfig(**load_yaml_config(".local.yaml"))
+    return _secrets
