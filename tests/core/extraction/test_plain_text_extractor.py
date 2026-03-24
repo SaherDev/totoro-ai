@@ -34,12 +34,12 @@ class TestPlainTextExtractor:
         assert not extractor.supports("http://example.com")
         assert not extractor.supports("https://www.google.com")
 
-    def test_rejects_other_urls(self) -> None:
-        """Test that supports() returns False for non-HTTP URLs."""
+    def test_accepts_non_http_schemes(self) -> None:
+        """Test that supports() returns True for non-HTTP/HTTPS schemes (treated as plain text)."""
         extractor = PlainTextExtractor(AsyncMock(spec=InstructorClient))
 
-        # Non-HTTP schemes should also be rejected if they look like URLs
-        assert extractor.supports("ftp://example.com") is False or True  # Depends on urlparse behavior
+        # ftp:// is not http/https so PlainTextExtractor accepts it as plain text
+        assert extractor.supports("ftp://example.com")
 
     @pytest.mark.asyncio
     async def test_extract_successful(

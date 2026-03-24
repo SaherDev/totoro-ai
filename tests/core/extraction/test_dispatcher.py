@@ -40,17 +40,17 @@ class MockExtractor(InputExtractor):
 class TestExtractionDispatcher:
     """Test suite for ExtractionDispatcher."""
 
-    def test_dispatch_to_first_matching_extractor(self) -> None:
-        """Test that first extractor's supports() match wins."""
+    async def test_dispatch_to_first_matching_extractor(self) -> None:
+        """Test that dispatch() routes to the extractor that supports the input."""
         first = MockExtractor("first", "tiktok", ExtractionSource.CAPTION)
-        second = MockExtractor("second", "text", ExtractionSource.PLAIN_TEXT)
+        second = MockExtractor("second", "plain", ExtractionSource.PLAIN_TEXT)
 
         dispatcher = ExtractionDispatcher([first, second])
 
-        # "https://tiktok.com/..." matches first extractor
-        # Test would need async support
-        assert first.supports("https://tiktok.com/v/123")
-        assert not second.supports("https://tiktok.com/v/123")
+        # "tiktok" matches first but not second
+        result = await dispatcher.dispatch("https://tiktok.com/v/123")
+        assert result is not None
+        assert result.source == ExtractionSource.CAPTION
 
     async def test_dispatcher_raises_unsupported_input(self) -> None:
         """Test UnsupportedInputError when no extractor matches."""

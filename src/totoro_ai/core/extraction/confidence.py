@@ -5,6 +5,8 @@ from enum import Enum
 from totoro_ai.core.config import load_yaml_config
 from totoro_ai.core.extraction.places_client import PlacesMatchQuality
 
+_weights = load_yaml_config("app.yaml").get("extraction", {}).get("confidence_weights", {})
+
 
 class ExtractionSource(str, Enum):
     """Source of extraction — determines base confidence score."""
@@ -34,14 +36,11 @@ def compute_confidence(
         Confidence score between 0.0 and 0.95
 
     """
-    config = load_yaml_config("app.yaml")
-    weights = config.get("extraction", {}).get("confidence_weights", {})
-
-    base_scores = weights.get("base_scores", {})
-    places_modifiers = weights.get("places_modifiers", {})
-    multi_source_bonus = weights.get("multi_source_bonus", 0.10)
-    max_score = weights.get("max_score", 0.95)
-    none_cap = weights.get("places_modifiers", {}).get("NONE_CAP", 0.30)
+    base_scores = _weights.get("base_scores", {})
+    places_modifiers = _weights.get("places_modifiers", {})
+    multi_source_bonus = _weights.get("multi_source_bonus", 0.10)
+    max_score = _weights.get("max_score", 0.95)
+    none_cap = _weights.get("places_modifiers", {}).get("NONE_CAP", 0.30)
 
     # Step 1: Base score from source
     base = base_scores.get(source.value, 0.60)
