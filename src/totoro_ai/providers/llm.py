@@ -194,7 +194,7 @@ class InstructorClient:
 def get_llm(role: str) -> LLMClientProtocol:
     """Get LLM client for the specified role.
 
-    Resolves provider and model from config/models.yaml based on role.
+    Resolves provider and model from config/app.yaml under the 'models' key.
 
     Args:
         role: Logical role (e.g., 'orchestrator', 'intent_parser')
@@ -206,7 +206,7 @@ def get_llm(role: str) -> LLMClientProtocol:
         KeyError: If role not found in config
         ValueError: If provider is unsupported
     """
-    config: dict[str, Any] = load_yaml_config("models.yaml")
+    config: dict[str, Any] = load_yaml_config("app.yaml")["models"]
     role_config: dict[str, Any] = config[role]
 
     provider: str = role_config["provider"]
@@ -235,7 +235,7 @@ def get_llm(role: str) -> LLMClientProtocol:
 def get_instructor_client(role: str) -> InstructorClient:
     """Get Instructor-patched client for structured extraction.
 
-    Resolves provider and model from config/models.yaml based on role.
+    Resolves provider and model from config/app.yaml under the 'models' key.
     Currently only supports OpenAI provider.
 
     Args:
@@ -248,7 +248,7 @@ def get_instructor_client(role: str) -> InstructorClient:
         KeyError: If role not found in config
         ValueError: If provider is not OpenAI
     """
-    config: dict[str, Any] = load_yaml_config("models.yaml")
+    config: dict[str, Any] = load_yaml_config("app.yaml")["models"]
     role_config: dict[str, Any] = config[role]
 
     provider: str = role_config["provider"]

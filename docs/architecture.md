@@ -157,7 +157,7 @@ All requests come from NestJS after auth verification. This repo never receives 
 | embedder      | Voyage 3.5-lite | 6.34% better retrieval quality than OpenAI; 1024-dimensional vectors |
 | evaluator     | GPT-4o-mini        | Cost-effective for batch evals            |
 
-Model assignments are config-driven via config/models.yaml. No model names hardcoded in application code.
+Model assignments are config-driven via `config/app.yaml` under the `models:` key. No model names hardcoded in application code.
 
 ## Database Access
 
