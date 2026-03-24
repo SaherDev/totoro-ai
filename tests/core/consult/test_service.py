@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from totoro_ai.api.schemas.consult import Location, SyncConsultResponse
-from totoro_ai.core.consult.service import SYSTEM_PROMPT, ConsultService
+from totoro_ai.core.config import get_config
+from totoro_ai.core.consult.service import ConsultService
 
 
 @pytest.mark.asyncio
@@ -111,10 +112,14 @@ async def test_stream_calls_llm_with_system_prompt():
     ):
         pass
 
+    # Get system prompt from config
+    config = get_config()
+    system_prompt = config.system_prompts.consult
+
     # Verify LLM was called with messages format
     mock_llm.stream.assert_called_once_with(
         [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": "test query"},
         ]
     )
