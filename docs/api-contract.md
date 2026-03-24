@@ -17,14 +17,29 @@ All requests come from NestJS after auth verification. totoro-ai never receives 
 
 ## POST /v1/extract-place
 
-Extract and validate a place from raw user input (ADR-017, ADR-018). Accepts TikTok URLs or plain text, validates via Google Places API, and returns either a saved place record or a candidate requiring user confirmation.
+Extract and validate a place from raw user input (ADR-017, ADR-018). Accepts TikTok URLs (with optional descriptive text), plain text descriptions, or mixed formats (text + URL in any order). Validates via Google Places API and returns either a saved place record or a candidate requiring user confirmation.
 
 **Request:**
 
 ```json
 {
   "user_id": "string",
-  "raw_input": "https://www.tiktok.com/@foodie/video/123"
+  "raw_input": "https://www.tiktok.com/@foodie/video/123 amazing ramen shop"
+}
+```
+
+Alternative formats:
+```json
+{
+  "user_id": "string",
+  "raw_input": "amazing ramen shop https://www.tiktok.com/@foodie/video/123"
+}
+```
+
+```json
+{
+  "user_id": "string",
+  "raw_input": "amazing ramen shop"
 }
 ```
 
@@ -82,12 +97,16 @@ Extract and validate a place from raw user input (ADR-017, ADR-018). Accepts Tik
 
 **Notes:**
 
-- **Phase 2 support**: TikTok URLs and plain text only. Instagram/generic URLs are Phase 3.
-- **Extraction**: For TikTok URLs, the system fetches the caption via oEmbed (3-second timeout). For plain text, the text is passed directly to the LLM.
+- **Input formats**: Supports TikTok URLs, plain text, and hybrid formats (URL + descriptive text in any order). Parser extracts URL and merges surrounding text as supplementary context.
+- **Phase 2 support**: TikTok URLs, plain text, and hybrid inputs. Instagram/generic URLs are Phase 3.
+- **Extraction**:
+  - **TikTok URLs**: System fetches the caption via oEmbed (3-second timeout), then merges any supplementary text from raw_input before LLM extraction. Example: "amazing ramen https://tiktok.com/.../123" → LLM sees "amazing ramen + oEmbed caption".
+  - **Plain text**: Text is passed directly to the LLM.
+  - **Hybrid (URL + text)**: Text before and after the URL is combined and passed to the LLM alongside the URL or caption.
 - **Validation**: Extracted place name is validated against Google Places API. Match quality (EXACT, FUZZY, CATEGORY_ONLY, NONE) feeds into confidence scoring.
 - **Confidence threshold**: ≥ 0.70 saves automatically; 0.30-0.70 requires user confirmation; ≤ 0.30 returns error.
 - **Embeddings**: NOT generated in this endpoint (ADR-040). Embeddings are handled separately.
-- **Deduplication**: If a `google_place_id` match exists, the existing Place record is returned without a new write.
+- **Deduplication**: If a `(external_provider, external_id)` match exists, the existing Place record is returned without a new write (ADR-041).
 - **Timeout**: Total budget 10s; TikTok oEmbed timeout 3s; remaining budget covers LLM extraction and Places validation.
 - `source_url`: Original TikTok URL (populated for TikTok input); `null` for plain text.
 - `cuisine` and `price_range`: Nullable — may be `null` if LLM cannot determine them.
