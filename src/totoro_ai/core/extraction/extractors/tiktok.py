@@ -64,11 +64,18 @@ class TikTokExtractor:
                 messages=[
                     {
                         "role": "system",
-                        "content": "Extract restaurant details from the text. Fill in as many fields as possible. If information is missing, use null.",
+                        "content": (
+                            "Extract restaurant details from the text. "
+                            "Fill in as many fields as possible. "
+                            "If information is missing, use null."
+                        ),
                     },
                     {
                         "role": "user",
-                        "content": f"Extract restaurant information from this TikTok caption:\n\n{caption}",
+                        "content": (
+                            "Extract restaurant information from this TikTok caption:"
+                            f"\n\n{caption}"
+                        ),
                     },
                 ],
             )
@@ -107,9 +114,9 @@ class TikTokExtractor:
                 )
                 response.raise_for_status()
         except httpx.TimeoutException as e:
-            raise RuntimeError(f"TikTok oEmbed timeout (3s): {e}")
+            raise RuntimeError(f"TikTok oEmbed timeout (3s): {e}") from e
         except httpx.HTTPError as e:
-            raise RuntimeError(f"TikTok oEmbed API error: {e}")
+            raise RuntimeError(f"TikTok oEmbed API error: {e}") from e
 
         data = response.json()
         return data.get("title") or None

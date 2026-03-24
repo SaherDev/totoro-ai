@@ -14,7 +14,6 @@ from typing import Any, Protocol
 import yaml
 from pydantic import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # Low-level YAML loader (internal — use get_config / get_secrets instead)
 # ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 """Consult service for place recommendations with streaming and sync modes."""
+
 from __future__ import annotations
 
 import json

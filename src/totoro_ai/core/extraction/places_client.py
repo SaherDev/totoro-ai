@@ -13,10 +13,10 @@ from totoro_ai.core.config import get_secrets
 class PlacesMatchQuality(str, Enum):
     """Quality of match against Google Places database."""
 
-    EXACT = "EXACT"                 # Name similarity ≥ 0.95
-    FUZZY = "FUZZY"                 # Name similarity ≥ 0.80
-    CATEGORY_ONLY = "CATEGORY_ONLY" # Place found, name similarity < 0.80
-    NONE = "NONE"                   # No match found
+    EXACT = "EXACT"  # Name similarity ≥ 0.95
+    FUZZY = "FUZZY"  # Name similarity ≥ 0.80
+    CATEGORY_ONLY = "CATEGORY_ONLY"  # Place found, name similarity < 0.80
+    NONE = "NONE"  # No match found
 
 
 class PlacesMatchResult(BaseModel):
@@ -81,7 +81,7 @@ class GooglePlacesClient:
                 )
                 response.raise_for_status()
             except (httpx.HTTPError, httpx.TimeoutException) as e:
-                raise RuntimeError(f"Google Places API error: {e}")
+                raise RuntimeError(f"Google Places API error: {e}") from e
 
         data = response.json()
 
@@ -94,7 +94,9 @@ class GooglePlacesClient:
         location_data = geometry.get("location", {})
 
         # Compute name similarity
-        similarity = difflib.SequenceMatcher(None, name.lower(), matched_name.lower()).ratio()
+        similarity = difflib.SequenceMatcher(
+            None, name.lower(), matched_name.lower()
+        ).ratio()
 
         if similarity >= 0.95:
             match_quality = PlacesMatchQuality.EXACT

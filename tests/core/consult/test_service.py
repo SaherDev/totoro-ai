@@ -112,10 +112,12 @@ async def test_stream_calls_llm_with_system_prompt():
         pass
 
     # Verify LLM was called with messages format
-    mock_llm.stream.assert_called_once_with([
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": "test query"},
-    ])
+    mock_llm.stream.assert_called_once_with(
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "test query"},
+        ]
+    )
 
 
 @pytest.mark.asyncio

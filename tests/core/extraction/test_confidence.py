@@ -8,7 +8,12 @@ from totoro_ai.core.extraction.places_client import PlacesMatchQuality
 
 _weights = ConfidenceWeights(
     base_scores={"CAPTION": 0.70, "PLAIN_TEXT": 0.70, "SPEECH": 0.60, "OCR": 0.55},
-    places_modifiers={"EXACT": 0.20, "FUZZY": 0.15, "CATEGORY_ONLY": 0.10, "NONE_CAP": 0.30},
+    places_modifiers={
+        "EXACT": 0.20,
+        "FUZZY": 0.15,
+        "CATEGORY_ONLY": 0.10,
+        "NONE_CAP": 0.30,
+    },
     multi_source_bonus=0.10,
     max_score=0.95,
 )
@@ -111,4 +116,7 @@ class TestComputeConfidence:
                         weights=_weights,
                         corroborated=corroborated,
                     )
-                    assert 0.0 <= score <= 0.95, f"Score {score} out of range for {source}, {quality}, {corroborated}"
+                    assert 0.0 <= score <= 0.95, (
+                        f"Score {score} out of range for"
+                        f" {source}, {quality}, {corroborated}"
+                    )

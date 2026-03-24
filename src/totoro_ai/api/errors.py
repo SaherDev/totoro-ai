@@ -50,9 +50,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    def general_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
+    def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """Handle unhandled exceptions → 500 Internal Server Error."""
         return JSONResponse(
             status_code=500,

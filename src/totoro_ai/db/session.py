@@ -1,14 +1,19 @@
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from totoro_ai.core.config import get_secrets
 
-_engine = None
-_session_factory = None
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def _get_engine():  # type: ignore[no-untyped-def]
+def _get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         url = get_secrets().database.url

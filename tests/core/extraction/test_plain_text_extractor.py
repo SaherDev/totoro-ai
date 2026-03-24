@@ -35,16 +35,14 @@ class TestPlainTextExtractor:
         assert not extractor.supports("https://www.google.com")
 
     def test_accepts_non_http_schemes(self) -> None:
-        """Test that supports() returns True for non-HTTP/HTTPS schemes (treated as plain text)."""
+        """Test supports() returns True for non-HTTP/HTTPS schemes."""
         extractor = PlainTextExtractor(AsyncMock(spec=InstructorClient))
 
         # ftp:// is not http/https so PlainTextExtractor accepts it as plain text
         assert extractor.supports("ftp://example.com")
 
     @pytest.mark.asyncio
-    async def test_extract_successful(
-        self, mock_instructor_client: AsyncMock
-    ) -> None:
+    async def test_extract_successful(self, mock_instructor_client: AsyncMock) -> None:
         """Test successful extraction from plain text."""
         from totoro_ai.api.schemas.extract_place import PlaceExtraction
 

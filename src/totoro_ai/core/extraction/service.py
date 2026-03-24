@@ -40,9 +40,7 @@ class ExtractionService:
         self._db_session = db_session
         self._extraction_config = extraction_config
 
-    async def run(
-        self, raw_input: str, user_id: str
-    ) -> ExtractPlaceResponse:
+    async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
         """Extract and save (or confirm) a place from raw input.
 
         Pipeline:
@@ -103,7 +101,7 @@ class ExtractionService:
 
         if confidence <= thresholds.require_confirmation:
             raise ExtractionFailedNoMatchError(
-                f"Confidence too low: {confidence:.2f} ≤ {thresholds.require_confirmation}"
+                f"Confidence too low: {confidence:.2f} ≤ {thresholds.require_confirmation}"  # noqa: E501
             )
 
         if confidence < thresholds.store_silently:

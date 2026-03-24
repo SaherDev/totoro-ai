@@ -15,7 +15,7 @@ router = APIRouter()
 @router.post("/extract-place", response_model=ExtractPlaceResponse)
 async def extract_place(
     request: ExtractPlaceRequest,
-    service: ExtractionService = Depends(get_extraction_service),
+    service: ExtractionService = Depends(get_extraction_service),  # noqa: B008
 ) -> ExtractPlaceResponse:
     """Extract and save (or confirm) a place from raw input.
 
