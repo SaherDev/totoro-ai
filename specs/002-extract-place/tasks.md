@@ -293,7 +293,7 @@ When confidence is low (0.30–0.70), the system returns a candidate place witho
 
 ---
 
-- [ ] T025 [US3] Extend API tests for confirmation flow
+- [X] T025 [US3] Extend API tests for confirmation flow
 
   **File**: `tests/api/test_extract_place.py` (extend T022)
   **Task**: Add test cases:
@@ -378,12 +378,12 @@ docker compose up -d
 
 ### Definition of Done
 
-- [ ] All tasks completed (checkboxes above)
-- [ ] All tests pass (`pytest -x`)
-- [ ] Code passes linting (`ruff check`)
-- [ ] Code passes type checking (`mypy src/`)
-- [ ] Database migration applied (`alembic upgrade head`)
-- [ ] Commit message follows format: `feat(extraction): implement place extraction endpoint (002-extract-place)`
+- [X] All tasks completed (checkboxes above)
+- [X] All tests pass (`pytest -x`) — 40 tests passing
+- [X] Code passes linting (`ruff check`)
+- [X] Code passes type checking (`mypy src/`)
+- [X] Database migration applied (`alembic upgrade head`)
+- [X] Endpoint tested in Bruno — confirmed working with plain text input
 
 ---
 
