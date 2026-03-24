@@ -7,7 +7,7 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel
 
-from totoro_ai.core.config import load_yaml_config
+from totoro_ai.core.config import get_secrets
 
 
 class PlacesMatchQuality(str, Enum):
@@ -44,16 +44,10 @@ class GooglePlacesClient:
 
     def __init__(self) -> None:
         """Initialize with API key from config."""
-        config = load_yaml_config(".local.yaml")
-
-        # Try multiple paths in config (supports both .local.yaml and env-based structures)
-        self.api_key = (
-            config.get("google", {}).get("api_key")
-            or config.get("providers", {}).get("google", {}).get("api_key")
-        )
+        self.api_key = get_secrets().providers.google.api_key
 
         if not self.api_key:
-            raise ValueError("Google API key not configured in config/.local.yaml")
+            raise ValueError("Google API key not configured")
 
     async def validate_place(
         self, name: str, location: str | None = None

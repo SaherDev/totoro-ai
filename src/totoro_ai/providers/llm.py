@@ -11,16 +11,7 @@ from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
 from pydantic import BaseModel, ValidationError
 
-from totoro_ai.core.config import load_yaml_config
-
-
-def _load_local_config() -> dict[str, Any]:
-    """Load config/.local.yaml secrets, returning empty dict if missing."""
-    try:
-        result: dict[str, Any] = load_yaml_config(".local.yaml")
-        return result
-    except FileNotFoundError:
-        return {}
+from totoro_ai.core.config import get_config, get_secrets
 
 
 # --- Protocol ---
@@ -206,27 +197,28 @@ def get_llm(role: str) -> LLMClientProtocol:
         KeyError: If role not found in config
         ValueError: If provider is unsupported
     """
-    config: dict[str, Any] = load_yaml_config("app.yaml")["models"]
-    role_config: dict[str, Any] = config[role]
+    role_config = get_config().models[role]
+    secrets = get_secrets()
 
-    provider: str = role_config["provider"]
-    model: str = role_config["model"]
-    max_tokens: int = role_config.get("max_tokens", 1024)
-    temperature: float = role_config.get("temperature", 1.0)
-
-    local: dict[str, Any] = _load_local_config()
-    providers_cfg: dict[str, Any] = local.get("providers", {})
+    provider = role_config.provider
+    model = role_config.model
+    max_tokens = role_config.max_tokens
+    temperature = role_config.temperature
 
     if provider == "anthropic":
-        api_key: str | None = providers_cfg.get("anthropic", {}).get("api_key")
         return AnthropicLLMClient(
-            model=model, max_tokens=max_tokens, temperature=temperature, api_key=api_key
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            api_key=secrets.providers.anthropic.api_key,
         )
 
     if provider == "openai":
-        api_key = providers_cfg.get("openai", {}).get("api_key")
         return OpenAILLMClient(
-            model=model, max_tokens=max_tokens, temperature=temperature, api_key=api_key
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            api_key=secrets.providers.openai.api_key,
         )
 
     raise ValueError(f"Unsupported provider: {provider}")
@@ -248,16 +240,12 @@ def get_instructor_client(role: str) -> InstructorClient:
         KeyError: If role not found in config
         ValueError: If provider is not OpenAI
     """
-    config: dict[str, Any] = load_yaml_config("app.yaml")["models"]
-    role_config: dict[str, Any] = config[role]
+    role_config = get_config().models[role]
 
-    provider: str = role_config["provider"]
-    model: str = role_config["model"]
+    if role_config.provider != "openai":
+        raise ValueError(f"Instructor only supports OpenAI provider, got: {role_config.provider}")
 
-    if provider != "openai":
-        raise ValueError(f"Instructor only supports OpenAI provider, got: {provider}")
-
-    local: dict[str, Any] = _load_local_config()
-    api_key: str | None = local.get("providers", {}).get("openai", {}).get("api_key")
-
-    return InstructorClient(model=model, api_key=api_key)
+    return InstructorClient(
+        model=role_config.model,
+        api_key=get_secrets().providers.openai.api_key,
+    )
