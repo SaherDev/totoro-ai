@@ -162,11 +162,19 @@ This endpoint has two response modes. The default mode returns a synchronous JSO
     },
     {
       "step": "discovery",
-      "summary": "Found 5 external ramen restaurants via Google Places"
+      "summary": "Searching 38 restaurants within 1.2km"
+    },
+    {
+      "step": "validation",
+      "summary": "24 places open now"
     },
     {
       "step": "ranking",
       "summary": "Ranked 8 candidates by taste fit, distance, and occasion match"
+    },
+    {
+      "step": "completion",
+      "summary": "Found your match"
     }
   ]
 }
@@ -181,8 +189,9 @@ This endpoint has two response modes. The default mode returns a synchronous JSO
 - `source` is `"saved"` (from user's collection) or `"discovered"` (external lookup via Google Places).
 - NestJS stores the recommendation in the recommendations table for history and analytics.
 - One HTTP call. The agent runs autonomously. No mid-pipeline callbacks to NestJS.
-- `reasoning_steps` is an array of objects showing what the agent did at each stage. Each object has `step` (string identifier) and `summary` (human-readable description). Initially returned as part of the synchronous response. When SSE mode is added, these same steps will stream in real time before the final response.
-- Additional fields (distance, price, open_status, confidence, photos) will be added as needed. Design DTOs to tolerate extra fields.
+- `reasoning_steps` is an array of objects showing what the agent did at each stage. Each object has `step` (string identifier) and `summary` (human-readable description). Initially returned as part of the synchronous response. When SSE mode is added, these same steps will stream in real time before the final response. Step summaries must carry real counts from the pipeline, not generic text.
+- `photos` is required. The primary recommendation card requires a full-width 16:9 hero photo URL. Each alternative requires a 1:1 square photo URL.
+- Additional fields (distance, price, open_status, confidence) will be added as needed. Design DTOs to tolerate extra fields.
 
 ---
 
@@ -219,6 +228,7 @@ Retrieve saved places matching a natural language memory fragment. Only searches
       "cuisine": "ramen",
       "price_range": "low",
       "source_url": "https://www.tiktok.com/@foodie/video/123",
+      "saved_at": "2026-02-12T14:30:00Z",
       "match_reason": "Saved from TikTok, tagged ramen"
     }
   ],
@@ -229,6 +239,7 @@ Retrieve saved places matching a natural language memory fragment. Only searches
 **Notes:**
 
 - `user_id` is injected by NestJS from the Clerk auth token. The frontend request body does NOT include `user_id`.
+- `saved_at`: ISO 8601 timestamp when the user saved this place. Used to display provenance as "Saved from TikTok · Feb 12 · Bangkok".
 - Phase 1: NestJS stub returns 501 Not Implemented. Phase 3 will forward to totoro-ai.
 - Error handling follows the same table as `/v1/consult`.
 
