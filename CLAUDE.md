@@ -44,7 +44,7 @@ docker compose down -v                # stop services and remove volumes
 - **Secrets management** (ADR-026): Per-repo local `config/.local.yaml` (gitignored). Create the file and fill in your secrets — never committed. CI/CD injects secrets as environment variables at deploy time.
 - **Provider abstraction**: `config/app.yaml` under `models:` maps logical roles (intent_parser, orchestrator, embedder) to provider + model + params. Code never hardcodes model names — always reads from config.
 - **API versioning**: All FastAPI routes live under `/v1/` prefix to match the product repo convention.
-- **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via two HTTP endpoints (see `docs/api-contract.md`). Never import from or depend on the product repo.
+- **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via three HTTP endpoints (POST /v1/extract-place, POST /v1/consult, POST /v1/recall) (see `docs/api-contract.md`). Never import from or depend on the product repo.
 - **Pydantic everywhere**: Request/response schemas, LLM output parsing, internal data transfer — all Pydantic. No raw dicts crossing function boundaries.
 - **LangGraph for orchestration**: Agent workflows use LangGraph graphs, not raw chains.
 - **Code quality** — single responsibility, `Depends()` only (no construction inside functions), abstract base class over if/match on provider, repository pattern for all DB access, no duplication (extract to `app/utils/`), new behavior = new class not an edit. Violations must be fixed before presenting code.

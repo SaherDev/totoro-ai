@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-042: Cold start thresholds — UX milestone vs. personalization switch
+
+**Date:** 2026-03-25\
+**Status:** accepted\
+**Context:** Two research documents define different numeric thresholds. The UI flows doc and UX research define 5 saves as the cold start celebration trigger. The taste model research defines 10 interactions as the personalization algorithm switch. These are two different things and must never be conflated.\
+**Decision:** 5 saves = UX celebration milestone only. The "Your taste profile is ready" screen and taste chip confirmation flow fire at 5 saves. This is a motivational moment, not a functional claim about personalization quality. 10 interactions = internal personalization switch. The ranking layer moves from Phase 1 (60% cluster-popular / 20% content-based / 20% exploration) to Phase 2 (full collaborative filtering) at 10 interactions. This transition is invisible to the user. No UI element references the 10-interaction threshold.\
+**Consequences:** Any UI copy, empty state, or celebration screen referencing personalization readiness uses the 5-save threshold. Any taste model implementation, ranking weight, or phase routing logic uses the 10-interaction threshold. The two thresholds are never mixed in the same layer.
+
+---
+
 ## ADR-041: Provider-agnostic place identity via (external_provider, external_id) pair
 
 **Date:** 2026-03-25\
