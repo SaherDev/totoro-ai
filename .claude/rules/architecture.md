@@ -4,7 +4,7 @@
 
 - **totoro** (product repo): Nx monorepo, Next.js, NestJS, Prisma, PostgreSQL + pgvector. Handles UI, auth (Clerk), CRUD, and product data writes.
 - **totoro-ai** (this repo): Pure Python. All AI/ML logic. Writes AI-generated data (places, embeddings, taste_model) to PostgreSQL.
-- Communication: HTTP only. The product repo calls this repo's FastAPI endpoints (`/v1/extract-place`, `/v1/consult`).
+- Communication: HTTP only. The product repo calls this repo's FastAPI endpoints (`POST /v1/extract-place`, `POST /v1/consult`, `POST /v1/recall`).
 - This repo never imports from, depends on, or assumes anything about the product repo's internals.
 
 ## What This Repo Owns

@@ -152,6 +152,7 @@ The agent runs the full pipeline autonomously. No mid-pipeline callbacks to Nest
 | ---------------------- | ------------------------ | ------------------------------------------ |
 | POST /v1/extract-place | raw_input, user_id       | place_id, place metadata, confidence score |
 | POST /v1/consult       | query, user_id, location | 1 primary + 2 alternatives with reasoning  |
+| POST /v1/recall        | query, user_id           | list of saved places matching query        |
 
 All requests come from NestJS after auth verification. This repo never receives requests directly from the frontend.
 
