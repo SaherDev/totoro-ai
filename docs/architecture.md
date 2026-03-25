@@ -146,6 +146,32 @@ LangGraph Agent starts
 
 The agent runs the full pipeline autonomously. No mid-pipeline callbacks to NestJS.
 
+## Intent Classification
+
+Every submission from the input bar is classified into one of three intents before
+any pipeline runs. Classification happens in FastAPI as the first step of request
+handling — not in NestJS, not in the frontend.
+
+Intent types:
+- consult — natural language intent query ("cheap dinner nearby", "good ramen for a date")
+- recall — memory fragment referencing a saved place ("that ramen place from TikTok")
+- save — URL or place name ("tiktok.com/@foodie/video/123", "Fuji Ramen Bangkok")
+
+Classification rules:
+- URL detected via urllib.parse → always save
+- Contains memory language ("that", "I saved", "from TikTok/Instagram") → recall
+- Everything else → consult
+- Default when uncertain → consult
+
+NestJS routes the request to the correct FastAPI endpoint based on intent.
+The frontend never sees the classification. The response shape tells the user
+what happened.
+
+Empty state rule: the system always returns something. At zero saves, a consult
+query returns nearby popular options. A recall with no matches returns the closest
+consult result with a note that nothing was found in saves. Never return a
+zero-result response.
+
 ## API Contract
 
 | Endpoint               | Request                  | Response                                   |

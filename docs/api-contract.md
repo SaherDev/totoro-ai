@@ -55,6 +55,7 @@ Alternative formats:
     "price_range": "low"
   },
   "confidence": 0.90,
+  "status": "resolved",
   "requires_confirmation": false,
   "source_url": "https://www.tiktok.com/@foodie/video/123"
 }
@@ -72,26 +73,46 @@ Alternative formats:
     "price_range": null
   },
   "confidence": 0.55,
+  "status": "resolved",
   "requires_confirmation": true,
   "source_url": null
 }
 ```
 
+**Response (Unresolved — confidence ≤ 0.30 or invalid URL):**
+
+```json
+{
+  "place_id": null,
+  "place": {
+    "place_name": null,
+    "address": null,
+    "cuisine": null,
+    "price_range": null
+  },
+  "confidence": 0.20,
+  "status": "unresolved",
+  "requires_confirmation": false,
+  "source_url": "https://www.tiktok.com/@foodie/video/123"
+}
+```
+
+Low confidence extractions (confidence ≤ 0.30) and invalid URLs are never rejected. The place is saved with `status: "unresolved"` and queued for background reprocessing. The response returns HTTP 200. The product repo surfaces this to the user as a pending save, not an error. The system retries extraction in the background.
+
 **Error Responses:**
 
-| Status | Error Type | Trigger |
-|--------|-----------|---------|
-| 400 | `bad_request` | `raw_input` is empty |
-| 422 | `unsupported_input` | Non-TikTok URL in Phase 2 |
-| 422 | `extraction_failed_no_match` | Confidence ≤ 0.30 (no Places match) |
-| 500 | `extraction_error` | TikTok oEmbed timeout, Places API failure, or DB write failure |
+| Status | Error Type           | Trigger                                                        |
+| ------ | -------------------- | -------------------------------------------------------------- |
+| 400    | `bad_request`        | `raw_input` is empty                                           |
+| 422    | `unsupported_input`  | Non-TikTok URL in Phase 2                                      |
+| 500    | `extraction_error`   | TikTok oEmbed timeout, Places API failure, or DB write failure |
 
 **Error Response Body:**
 
 ```json
 {
-  "error_type": "extraction_failed_no_match",
-  "detail": "Could not identify place from input. Confidence too low."
+  "error_type": "bad_request",
+  "detail": "raw_input is required and cannot be empty."
 }
 ```
 
@@ -104,7 +125,7 @@ Alternative formats:
   - **Plain text**: Text is passed directly to the LLM.
   - **Hybrid (URL + text)**: Text before and after the URL is combined and passed to the LLM alongside the URL or caption.
 - **Validation**: Extracted place name is validated against Google Places API. Match quality (EXACT, FUZZY, CATEGORY_ONLY, NONE) feeds into confidence scoring.
-- **Confidence threshold**: ≥ 0.70 saves automatically; 0.30-0.70 requires user confirmation; ≤ 0.30 returns error.
+- **Confidence threshold**: ≥ 0.70 saves automatically with `status: "resolved"`; 0.30–0.70 requires user confirmation with `status: "resolved"`; ≤ 0.30 saves as unresolved with `status: "unresolved"` and queues for background retry. Never returns an error for low confidence.
 - **Embeddings**: NOT generated in this endpoint (ADR-040). Embeddings are handled separately.
 - **Deduplication**: If a `(external_provider, external_id)` match exists, the existing Place record is returned without a new write (ADR-041).
 - **Timeout**: Total budget 10s; TikTok oEmbed timeout 3s; remaining budget covers LLM extraction and Places validation.
