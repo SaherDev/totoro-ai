@@ -274,7 +274,7 @@ Format:
 **Date:** 2026-03-07 (revised 2026-03-24)\
 **Status:** accepted\
 **Context:** The codebase must never hardcode model names. Provider switching must be a config change, not a code change.\
-**Decision:** `config/app.yaml` under the `models:` key maps logical roles — `intent_parser`, `orchestrator`, `embedder`, `evaluator` — to provider name, model identifier, and inference parameters. Read by `providers/llm.py` via `get_config().models[role]` (singleton, no per-call file I/O). Current assignments: `intent_parser` → `openai/gpt-4o-mini`, `orchestrator` → `anthropic/claude-sonnet-4-6-20250514`, `embedder` → `voyage/voyage-3.5-lite`.\
+**Decision:** `config/app.yaml` under the `models:` key maps logical roles — `intent_parser`, `orchestrator`, `embedder`, `evaluator` — to provider name, model identifier, and inference parameters. Read by `providers/llm.py` via `get_config().models[role]` (singleton, no per-call file I/O). Current assignments: `intent_parser` → `openai/gpt-4o-mini`, `orchestrator` → `anthropic/claude-sonnet-4-6`, `embedder` → `voyage/voyage-3.5-lite`.\
 **Consequences:** Swapping any model requires one line change in `app.yaml`. Code that references model names by role rather than string literals is automatically correct after a config change. Adding a new role requires a new YAML entry and a new factory case in the provider layer.
 
 ---
