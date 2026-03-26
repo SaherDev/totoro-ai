@@ -57,6 +57,8 @@ class ConsultService:
         intent_parts = []
         if intent.cuisine:
             intent_parts.append(f"cuisine={intent.cuisine}")
+        if intent.venue_type:
+            intent_parts.append(f"venue_type={intent.venue_type}")
         if intent.occasion:
             intent_parts.append(f"occasion={intent.occasion}")
         if intent.price_range:
@@ -70,7 +72,7 @@ class ConsultService:
         # Step 3: Helper to build step summaries with fallbacks
         def _build_summary(step_name: str) -> str:
             """Build step summary with intent-derived values and fallbacks."""
-            cuisine = intent.cuisine or "restaurants"
+            place_type = intent.cuisine or intent.venue_type or "restaurants"
             location_context = "nearby"
             if location:
                 location_context = f"near you (lat {location.lat}, lng {location.lng})"
@@ -80,15 +82,15 @@ class ConsultService:
             summaries = {
                 "intent_parsing": intent_summary,
                 "retrieval": (
-                    f"Looking for {cuisine} places you've saved near "
+                    f"Looking for {place_type} places you've saved near "
                     f"{location_context}"
                 ),
                 "discovery": (
-                    f"Searching for {cuisine} restaurants within "
+                    f"Searching for {place_type} within "
                     f"{radius:.1f}km of your location"
                 ),
-                "validation": f"Checking which {cuisine} spots are open now",
-                "ranking": f"Comparing {cuisine} options for {occasion}",
+                "validation": f"Checking which {place_type} are open now",
+                "ranking": f"Comparing {place_type} for {occasion}",
                 "completion": "Found your match",
             }
             return summaries.get(step_name, "Processing...")

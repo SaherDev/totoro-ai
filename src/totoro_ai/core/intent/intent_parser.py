@@ -13,6 +13,10 @@ class ParsedIntent(BaseModel):
     cuisine: str | None = None
     """Cuisine type (e.g., 'ramen', 'sushi'), or None if not specified."""
 
+    venue_type: str | None = None
+    """Venue type (e.g., 'club', 'bar', 'lounge'), or None if not
+    specified."""
+
     occasion: str | None = None
     """Context/occasion (e.g., 'date night', 'quick lunch'), or None if
     not specified."""
@@ -55,7 +59,9 @@ class IntentParser:
 
         system_prompt = (
             "You are an intent extraction assistant. Extract structured "
-            "intent from a restaurant or place recommendation query. "
+            "intent from place recommendation queries (restaurants, clubs, "
+            "bars, etc.). Extract cuisine (e.g., ramen, pizza) and/or "
+            "venue_type (e.g., club, bar, lounge, cafe). "
             "Return null for fields not mentioned."
         )
 
