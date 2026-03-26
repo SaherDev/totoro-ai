@@ -116,6 +116,63 @@ async def test_consult_service_returns_consult_response():
 
 
 @pytest.mark.asyncio
+async def test_consult_service_with_venue_type() -> None:
+    """Test consult() uses venue_type when cuisine is not specified."""
+    mock_llm = AsyncMock()
+    mock_response = {
+        "primary": {
+            "place_name": "Levels Club",
+            "address": "Sukhumvit Soi 11, Bangkok",
+            "reasoning": "Great rooftop club for a date",
+        },
+        "alternatives": [
+            {
+                "place_name": "Brick Bar",
+                "address": "Khaosan Rd, Bangkok",
+                "reasoning": "Cozy underground bar",
+            },
+            {
+                "place_name": "The Club",
+                "address": "Khaosan Rd, Bangkok",
+                "reasoning": "Lively club with great music",
+            },
+        ],
+    }
+    mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
+    service = ConsultService(llm=mock_llm)
+
+    with patch("totoro_ai.core.consult.service.IntentParser") as mock_parser_class:
+        mock_parser = AsyncMock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse = AsyncMock(
+            return_value=ParsedIntent(
+                cuisine=None,
+                venue_type="club",
+                occasion="date night",
+                price_range=None,
+                radius=None,
+                constraints=[],
+            )
+        )
+
+        result = await service.consult(
+            user_id="test-user",
+            query="good club for a date night",
+            location=Location(lat=13.7563, lng=100.5018),
+        )
+
+        assert isinstance(result, ConsultResponse)
+        assert result.primary.place_name == "Levels Club"
+        assert result.primary.photos is not None
+        assert len(result.alternatives) == 2
+
+        # Verify venue_type is used in reasoning steps (not "restaurants")
+        assert "club" in result.reasoning_steps[0].summary
+        assert "club" in result.reasoning_steps[1].summary
+        assert "club" in result.reasoning_steps[3].summary
+
+
+@pytest.mark.asyncio
 async def test_consult_service_without_location():
     """Test consult() works without location and uses fallback context."""
     mock_llm = AsyncMock()
