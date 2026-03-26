@@ -29,7 +29,7 @@ models:
 
   orchestrator:
     provider: anthropic
-    model: claude-sonnet-4-6-20250514
+    model: claude-sonnet-4-6
     max_tokens: 1024
     temperature: 0.7
 
@@ -88,6 +88,14 @@ external_services:
   tiktok_oembed:
     base_url: https://www.tiktok.com/oembed
     timeout_seconds: 3.0
+
+# ---------------------------------------------------------------------------
+# Consult service configuration — Phase 2: structured output only
+# ---------------------------------------------------------------------------
+consult:
+  max_alternatives: 2
+  placeholder_photo_url: "https://placehold.co/800x450.webp"
+  response_timeout_seconds: 10
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration

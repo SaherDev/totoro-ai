@@ -1,49 +1,174 @@
 """Unit tests for ConsultService."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from totoro_ai.api.schemas.consult import Location, SyncConsultResponse
+from totoro_ai.api.schemas.consult import ConsultResponse, Location
 from totoro_ai.core.config import get_config
 from totoro_ai.core.consult.service import ConsultService
+from totoro_ai.core.intent.intent_parser import ParsedIntent
 
 
 @pytest.mark.asyncio
-async def test_consult_service_returns_sync_response():
-    """Test that consult() returns SyncConsultResponse with correct structure."""
+async def test_consult_service_returns_consult_response():
+    """Test consult() returns ConsultResponse with reasoning steps and
+    intent-derived summaries."""
     mock_llm = AsyncMock()
+    mock_response = {
+        "primary": {
+            "place_name": "Ramen Yokocho",
+            "address": "123 Sukhumvit Road, Bangkok",
+            "reasoning": "Perfect ramen spot for a romantic date night",
+        },
+        "alternatives": [
+            {
+                "place_name": "Tonkotsu House",
+                "address": "456 Sukhumvit Road, Bangkok",
+                "reasoning": "Great tonkotsu broth, cozy atmosphere",
+            },
+            {
+                "place_name": "Ramen Ya Osaka",
+                "address": "789 Sukhumvit Road, Bangkok",
+                "reasoning": "Authentic Osaka-style ramen",
+            },
+        ],
+    }
+    mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
     service = ConsultService(llm=mock_llm)
 
-    result = await service.consult(
-        user_id="test-user",
-        query="test query",
-        location=Location(lat=0.0, lng=0.0),
-    )
+    with patch("totoro_ai.core.consult.service.IntentParser") as mock_parser_class:
+        mock_parser = AsyncMock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse = AsyncMock(
+            return_value=ParsedIntent(
+                cuisine="ramen",
+                occasion="date night",
+                price_range=None,
+                radius=None,
+                constraints=[],
+            )
+        )
 
-    assert isinstance(result, SyncConsultResponse)
-    assert result.primary is not None
-    assert result.primary.place_name == "Stub Place"
-    assert result.primary.address == "123 Test St"
-    assert len(result.reasoning_steps) == 2
-    assert result.reasoning_steps[0].step == "intent_parsing"
-    assert result.reasoning_steps[1].step == "ranking"
+        result = await service.consult(
+            user_id="test-user",
+            query="good ramen for a date night",
+            location=Location(lat=13.7563, lng=100.5018),
+        )
+
+        assert isinstance(result, ConsultResponse)
+        assert result.primary is not None
+        assert result.primary.place_name == "Ramen Yokocho"
+        assert result.primary.address == "123 Sukhumvit Road, Bangkok"
+        assert (
+            "date night" in result.primary.reasoning.lower()
+            or "ramen" in result.primary.reasoning.lower()
+        )
+        assert result.primary.photos is not None
+        assert len(result.primary.photos) > 0
+
+        # Verify exactly 2 alternatives from LLM
+        assert len(result.alternatives) == 2
+        assert result.alternatives[0].place_name == "Tonkotsu House"
+        assert result.alternatives[1].place_name == "Ramen Ya Osaka"
+        for alt in result.alternatives:
+            assert alt.photos is not None
+            assert len(alt.photos) > 0
+
+        # Verify 6 reasoning steps in correct order
+        assert len(result.reasoning_steps) == 6
+        expected_steps = [
+            "intent_parsing",
+            "retrieval",
+            "discovery",
+            "validation",
+            "ranking",
+            "completion",
+        ]
+        for i, expected_step in enumerate(expected_steps):
+            assert result.reasoning_steps[i].step == expected_step
+
+        # Verify step summaries contain intent-derived values
+        # (not "deferred" or phase language)
+        # Step 0: intent_parsing should show parsed fields
+        assert "Parsed:" in result.reasoning_steps[0].summary
+        assert "ramen" in result.reasoning_steps[0].summary
+        assert "date night" in result.reasoning_steps[0].summary
+
+        # Step 1: retrieval - should mention ramen and location context
+        assert "ramen" in result.reasoning_steps[1].summary
+        assert "saved" in result.reasoning_steps[1].summary.lower()
+
+        # Step 2: discovery - should mention ramen, location, and radius
+        assert "ramen" in result.reasoning_steps[2].summary
+        assert "km" in result.reasoning_steps[2].summary
+
+        # Step 3: validation - should mention ramen
+        assert "ramen" in result.reasoning_steps[3].summary
+
+        # Step 4: ranking - should mention ramen and occasion
+        assert "ramen" in result.reasoning_steps[4].summary
+        assert "date night" in result.reasoning_steps[4].summary
+
+        # Step 5: completion - should be completion text
+        assert result.reasoning_steps[5].step == "completion"
 
 
 @pytest.mark.asyncio
 async def test_consult_service_without_location():
-    """Test consult() works without location parameter."""
+    """Test consult() works without location and uses fallback context."""
     mock_llm = AsyncMock()
+    mock_response = {
+        "primary": {
+            "place_name": "Mario's Pizza",
+            "address": "456 Main St, Your City",
+            "reasoning": "Delicious pizza with fresh ingredients",
+        },
+        "alternatives": [
+            {
+                "place_name": "Bella Napoli",
+                "address": "789 Main St, Your City",
+                "reasoning": "Authentic Neapolitan pizza",
+            },
+            {
+                "place_name": "Pizza House",
+                "address": "321 Main St, Your City",
+                "reasoning": "Classic pizza selections",
+            },
+        ],
+    }
+    mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
     service = ConsultService(llm=mock_llm)
 
-    result = await service.consult(
-        user_id="test-user",
-        query="test query",
-    )
+    with patch("totoro_ai.core.consult.service.IntentParser") as mock_parser_class:
+        mock_parser = AsyncMock()
+        mock_parser_class.return_value = mock_parser
+        mock_parser.parse = AsyncMock(
+            return_value=ParsedIntent(
+                cuisine="pizza",
+                occasion=None,
+                price_range=None,
+                radius=None,
+                constraints=[],
+            )
+        )
 
-    assert isinstance(result, SyncConsultResponse)
-    assert result.primary.place_name == "Stub Place"
+        result = await service.consult(
+            user_id="test-user",
+            query="good pizza",
+        )
+
+        assert isinstance(result, ConsultResponse)
+        assert result.primary is not None
+        assert result.primary.place_name == "Mario's Pizza"
+        assert result.primary.address == "456 Main St, Your City"
+
+        # Verify step summaries use fallback location ("nearby")
+        # when not provided
+        assert len(result.reasoning_steps) == 6
+        assert "nearby" in result.reasoning_steps[1].summary
+        assert "pizza" in result.reasoning_steps[1].summary
 
 
 @pytest.mark.asyncio
