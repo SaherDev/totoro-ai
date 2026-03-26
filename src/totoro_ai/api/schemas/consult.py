@@ -1,6 +1,6 @@
 """Request and response schemas for POST /v1/consult endpoint."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Location(BaseModel):
@@ -26,6 +26,7 @@ class PlaceResult(BaseModel):
     address: str
     reasoning: str
     source: str  # "saved" | "discovered"
+    photos: list[str] = Field(min_length=1)
 
 
 class ReasoningStep(BaseModel):
@@ -35,8 +36,8 @@ class ReasoningStep(BaseModel):
     summary: str
 
 
-class SyncConsultResponse(BaseModel):
-    """Response body for POST /v1/consult in synchronous mode."""
+class ConsultResponse(BaseModel):
+    """Response body for POST /v1/consult."""
 
     primary: PlaceResult
     alternatives: list[PlaceResult]

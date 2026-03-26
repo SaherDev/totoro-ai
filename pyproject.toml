@@ -25,6 +25,7 @@ redis = {version = "^5.0", extras = ["asyncio"]}
 greenlet = "^3.3.2"
 instructor = "^1.0"
 httpx = "^0.28"
+langfuse = "^2.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -56,3 +57,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 strict = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "langfuse"
+ignore_missing_imports = true

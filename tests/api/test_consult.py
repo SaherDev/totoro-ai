@@ -47,7 +47,7 @@ async def test_streaming_endpoint_returns_event_stream():
 
 @pytest.mark.asyncio
 async def test_synchronous_endpoint_returns_json():
-    """Test POST /v1/consult without stream returns JSON response."""
+    """Test POST /v1/consult returns JSON with photos and reasoning steps."""
     from totoro_ai.api.main import app
 
     async with httpx.AsyncClient(
@@ -56,6 +56,28 @@ async def test_synchronous_endpoint_returns_json():
         # Mock the LLM provider
         with patch("totoro_ai.api.routes.consult.get_llm") as mock_get_llm:
             mock_llm = AsyncMock()
+            mock_response = {
+                "primary": {
+                    "place_name": "Test Restaurant",
+                    "address": "123 Test St",
+                    "reasoning": "Great test place",
+                },
+                "alternatives": [
+                    {
+                        "place_name": "Alt 1",
+                        "address": "456 Test Ave",
+                        "reasoning": "Good alternative",
+                    },
+                    {
+                        "place_name": "Alt 2",
+                        "address": "789 Test Blvd",
+                        "reasoning": "Another option",
+                    },
+                ],
+            }
+            mock_llm.complete = AsyncMock(
+                return_value=json.dumps(mock_response)
+            )
             mock_get_llm.return_value = mock_llm
 
             response = await client.post(
@@ -75,6 +97,31 @@ async def test_synchronous_endpoint_returns_json():
             assert "alternatives" in data
             assert "reasoning_steps" in data
 
+            # Verify photos are present and non-empty in primary
+            assert "photos" in data["primary"]
+            assert isinstance(data["primary"]["photos"], list)
+            assert len(data["primary"]["photos"]) > 0
+
+            # Verify exactly 2 alternatives
+            assert len(data["alternatives"]) == 2
+            for alt in data["alternatives"]:
+                assert "photos" in alt
+                assert isinstance(alt["photos"], list)
+                assert len(alt["photos"]) > 0
+
+            # Verify 6 reasoning steps in correct order
+            assert len(data["reasoning_steps"]) == 6
+            expected_steps = [
+                "intent_parsing",
+                "retrieval",
+                "discovery",
+                "validation",
+                "ranking",
+                "completion",
+            ]
+            for i, expected_step in enumerate(expected_steps):
+                assert data["reasoning_steps"][i]["step"] == expected_step
+
 
 @pytest.mark.asyncio
 async def test_synchronous_endpoint_without_stream_field():
@@ -87,6 +134,28 @@ async def test_synchronous_endpoint_without_stream_field():
         # Mock the LLM provider
         with patch("totoro_ai.api.routes.consult.get_llm") as mock_get_llm:
             mock_llm = AsyncMock()
+            mock_response = {
+                "primary": {
+                    "place_name": "Test Restaurant",
+                    "address": "123 Test St",
+                    "reasoning": "Great test place",
+                },
+                "alternatives": [
+                    {
+                        "place_name": "Alt 1",
+                        "address": "456 Test Ave",
+                        "reasoning": "Good alternative",
+                    },
+                    {
+                        "place_name": "Alt 2",
+                        "address": "789 Test Blvd",
+                        "reasoning": "Another option",
+                    },
+                ],
+            }
+            mock_llm.complete = AsyncMock(
+                return_value=json.dumps(mock_response)
+            )
             mock_get_llm.return_value = mock_llm
 
             response = await client.post(

@@ -4,7 +4,7 @@
 
 ## Project Context
 
-Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: intent parsing, place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, pgvector, Redis, Langfuse. Models: GPT-4o-mini (extraction/evals), Claude Sonnet 4 (orchestration), Voyage 3.5-lite (embeddings later). Deployed on Railway.
+Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: intent parsing, place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, Instructor, pgvector, Redis, Langfuse. Models: GPT-4o-mini (intent parsing, extraction, evals), Claude Sonnet 4 (orchestration), Voyage 3.5-lite (embeddings). SDKs: OpenAI SDK, Anthropic SDK. Deployed on Railway.
 
 ## Key Directories
 
@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 004-consult-structured-output: Added Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, Pydantic 2.10, Instructor 1.x, OpenAI SDK (via instructor), Langfuse (new dep), httpx 0.28
 - 003-fix-schema-repo-quality: Added Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, SQLAlchemy 2.0 async, Pydantic 2.10, Alembic 1.14, asyncpg, pytes
 - 002-extract-place: Added Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, Instructor 1.x (new), httpx 0.28 (promote to prod)
 
-- 001-consult-streaming: Added Python 3.11 + FastAPI, Starlette (StreamingResponse), pytest, httpx
 
 ## Active Technologies
-- Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, SQLAlchemy 2.0 async, Pydantic 2.10, Alembic 1.14, asyncpg, pytes (003-fix-schema-repo-quality)
-- PostgreSQL via asyncpg + SQLAlchemy async. pgvector for embeddings. (003-fix-schema-repo-quality)
+- Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, Pydantic 2.10, Instructor 1.x, OpenAI SDK (via instructor), Langfuse (new dep), httpx 0.28 (004-consult-structured-output)
+- N/A — Phase 2 writes no data to DB (004-consult-structured-output)
 

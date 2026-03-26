@@ -125,6 +125,12 @@ class SystemPromptsConfig(BaseModel):
     )
 
 
+class ConsultConfig(BaseModel):
+    max_alternatives: int = 2
+    placeholder_photo_url: str = "https://placehold.co/800x450.webp"
+    response_timeout_seconds: int = 10
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -132,6 +138,7 @@ class AppConfig(BaseModel):
     external_services: ExternalServicesConfig = ExternalServicesConfig()
     embeddings: EmbeddingsConfig = EmbeddingsConfig()
     system_prompts: SystemPromptsConfig = SystemPromptsConfig()
+    consult: ConsultConfig = ConsultConfig()
 
 
 _config: AppConfig | None = None
