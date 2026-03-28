@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-043: Domain event dispatcher for decoupled background task scheduling
+
+**Date:** 2026-03-28\
+**Status:** accepted\
+**Context:** When a user saves a place, accepts, or rejects a recommendation, the taste model needs to update. These side effects must not block the HTTP response and must not couple service modules to each other or to FastAPI internals.\
+**Decision:** Services dispatch named domain events (PlaceSaved, RecommendationAccepted, RecommendationRejected). An EventDispatcher receives the event, looks up the registered handler, and runs it as a background task after the response is sent. Services never schedule background tasks directly and never import from each other. The handler registry is defined in one place at the API wiring layer.\
+**Consequences:** Adding a new signal means defining an event, writing a handler, and registering it in one place — no changes to existing services or route handlers. Background task failures must be logged to the app logger and traced via Langfuse so silent drops are visible in production. Currently wired: save, accepted, rejected. Deferred: ignored, repeat_visit, search_accepted (signal types defined in the enum now, handlers registered when their triggers are built).
+
+---
+
 ## ADR-042: Cold start thresholds — UX milestone vs. personalization switch
 
 **Date:** 2026-03-25\
