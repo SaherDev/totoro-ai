@@ -46,6 +46,7 @@ Current binding decisions:
 - **ADR-023**: HTTP error mapping: 400 bad input, 422 unparseable/no results, 500 internal failure
 - **ADR-024**: Redis LLM response cache keyed by hash of (role, prompt, model, temperature)
 - **ADR-025**: Langfuse callback handler attached to every LLM and embedding call — no call goes untraced
+- **ADR-044**: Prompt injection mitigation — every LLM call injecting retrieved content must use: (1) defensive system prompt instruction, (2) XML `<context>` tags around retrieved data, (3) Pydantic output validation via Instructor. Constitution Check item for Node 6 and any future content-injecting node.
 
 ## III. Provider Abstraction (NON-NEGOTIABLE)
 
