@@ -52,7 +52,7 @@ def upgrade() -> None:
     op.create_table('embeddings',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('place_id', sa.String(), nullable=False),
-    sa.Column('vector', Vector(1024), nullable=False),  # Voyage 3.5-lite (ADR-040)
+    sa.Column('vector', Vector(1024), nullable=False),  # Voyage 4-lite (ADR-040)
     sa.Column('model_name', sa.String(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['place_id'], ['places.id'], ondelete='CASCADE'),

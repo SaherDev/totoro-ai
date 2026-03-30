@@ -53,7 +53,7 @@ Model names are never hardcoded in code. Always reference logical roles:
 
 - `intent_parser` → currently `openai/gpt-4o-mini`
 - `orchestrator` → currently `anthropic/claude-sonnet-4-6`
-- `embedder` → currently `voyage/voyage-3.5-lite`
+- `embedder` → currently `voyage/voyage-4-lite`
 
 Swapping a model = one line change in `config/models.yaml`. No code changes.
 
