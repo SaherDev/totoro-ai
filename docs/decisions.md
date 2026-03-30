@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-045: Hybrid search for recall via pgvector + FTS + RRF
+
+**Date:** 2026-03-31
+**Status:** accepted
+**Context:** The recall endpoint must surface saved places matching a natural language query. Pure vector search misses exact keyword matches; pure full-text search misses semantic matches. Combining both with Reciprocal Rank Fusion (RRF) covers both failure modes and ensures robust retrieval across diverse query phrasing.
+**Decision:** Recall search uses a single SQL CTE combining two parallel branches: (1) pgvector cosine similarity search on the embeddings table, ranked by distance; (2) PostgreSQL `to_tsvector`/`plainto_tsquery` full-text search on `place_name || ' ' || COALESCE(cuisine, '')`, ranked by ts_rank. Results are merged via RRF with k=60 (Cormack et al. 2009 standard). The `match_reason` field is derived from boolean flags indicating which method(s) matched, not from an LLM. When the embedding service is unreachable, the query falls back to text-only search and returns HTTP 200 (graceful degradation). No embedding failure produces a 5xx error.
+**Consequences:** (1) RecallRepository holds raw SQL; changes to search logic require SQL edits in one place. (2) GIN index on FTS vector deferred — query-time FTS is sufficient for collections under 1,000 places per user. (3) Embedding failures are logged but never escalate to the caller; fallback to text-only ensures availability over recall quality. (4) No new Alembic migration required; feature uses existing places and embeddings tables.
+
+---
+
 ## ADR-044: Prompt injection mitigation for LLM calls that inject retrieved content
 
 **Date:** 2026-03-30

@@ -75,9 +75,7 @@ async def test_synchronous_endpoint_returns_json():
                     },
                 ],
             }
-            mock_llm.complete = AsyncMock(
-                return_value=json.dumps(mock_response)
-            )
+            mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
             mock_get_llm.return_value = mock_llm
 
             response = await client.post(
@@ -153,9 +151,7 @@ async def test_synchronous_endpoint_without_stream_field():
                     },
                 ],
             }
-            mock_llm.complete = AsyncMock(
-                return_value=json.dumps(mock_response)
-            )
+            mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
             mock_get_llm.return_value = mock_llm
 
             response = await client.post(
