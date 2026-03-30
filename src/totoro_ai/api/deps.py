@@ -7,9 +7,11 @@ from totoro_ai.core.config import AppConfig, get_config
 from totoro_ai.core.extraction.dispatcher import ExtractionDispatcher
 from totoro_ai.core.extraction.places_client import GooglePlacesClient
 from totoro_ai.core.extraction.service import ExtractionService
+from totoro_ai.core.recall.service import RecallService
 from totoro_ai.db.repositories import (
     SQLAlchemyEmbeddingRepository,
     SQLAlchemyPlaceRepository,
+    SQLAlchemyRecallRepository,
 )
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
@@ -47,4 +49,16 @@ async def get_extraction_service(
         extraction_config=config.extraction,
         embedder=get_embedder(),
         embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
+    )
+
+
+async def get_recall_service(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+    config: AppConfig = Depends(get_config),  # noqa: B008
+) -> RecallService:
+    """FastAPI dependency providing a fully wired RecallService."""
+    return RecallService(
+        embedder=get_embedder(),
+        recall_repo=SQLAlchemyRecallRepository(db_session),
+        config=config.recall,
     )

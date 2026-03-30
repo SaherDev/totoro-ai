@@ -132,6 +132,12 @@ class ConsultConfig(BaseModel):
     response_timeout_seconds: int = 10
 
 
+class RecallConfig(BaseModel):
+    max_results: int = 10
+    rrf_k: int = 60
+    candidate_multiplier: int = 2
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -140,6 +146,7 @@ class AppConfig(BaseModel):
     embeddings: EmbeddingsConfig = EmbeddingsConfig()
     system_prompts: SystemPromptsConfig = SystemPromptsConfig()
     consult: ConsultConfig = ConsultConfig()
+    recall: RecallConfig = RecallConfig()
 
 
 _config: AppConfig | None = None

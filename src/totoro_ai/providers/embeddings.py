@@ -113,8 +113,6 @@ def get_embedder() -> EmbedderProtocol:
     model = role_config.model
 
     if provider == "voyage":
-        return VoyageEmbedder(
-            model=model, api_key=secrets.providers.voyage.api_key
-        )
+        return VoyageEmbedder(model=model, api_key=secrets.providers.voyage.api_key)
 
     raise ValueError(f"Unsupported embedding provider: {provider}")

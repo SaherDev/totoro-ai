@@ -91,6 +91,15 @@ external_services:
     timeout_seconds: 3.0
 
 # ---------------------------------------------------------------------------
+# Recall service configuration — Hybrid search with RRF
+# ADR-045: Reciprocal Rank Fusion of pgvector + FTS
+# ---------------------------------------------------------------------------
+recall:
+  max_results: 10
+  rrf_k: 60
+  candidate_multiplier: 2
+
+# ---------------------------------------------------------------------------
 # Consult service configuration — Phase 2: structured output only
 # ---------------------------------------------------------------------------
 consult:

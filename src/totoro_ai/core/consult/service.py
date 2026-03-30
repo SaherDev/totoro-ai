@@ -64,9 +64,7 @@ class ConsultService:
         if intent.price_range:
             intent_parts.append(f"price_range={intent.price_range}")
         intent_summary = (
-            f"Parsed: {', '.join(intent_parts)}"
-            if intent_parts
-            else "Parsed query"
+            f"Parsed: {', '.join(intent_parts)}" if intent_parts else "Parsed query"
         )
 
         # Step 3: Helper to build step summaries with fallbacks
@@ -86,8 +84,7 @@ class ConsultService:
                     f"{location_context}"
                 ),
                 "discovery": (
-                    f"Searching for {place_type} within "
-                    f"{radius:.1f}km of your location"
+                    f"Searching for {place_type} within {radius:.1f}km of your location"
                 ),
                 "validation": f"Checking which {place_type} are open now",
                 "ranking": f"Comparing {place_type} for {occasion}",
@@ -102,13 +99,9 @@ class ConsultService:
             ),
             ReasoningStep(step="retrieval", summary=_build_summary("retrieval")),
             ReasoningStep(step="discovery", summary=_build_summary("discovery")),
-            ReasoningStep(
-                step="validation", summary=_build_summary("validation")
-            ),
+            ReasoningStep(step="validation", summary=_build_summary("validation")),
             ReasoningStep(step="ranking", summary=_build_summary("ranking")),
-            ReasoningStep(
-                step="completion", summary=_build_summary("completion")
-            ),
+            ReasoningStep(step="completion", summary=_build_summary("completion")),
         ]
 
         # Step 5: Call orchestrator LLM to generate recommendation
@@ -156,18 +149,11 @@ class ConsultService:
         try:
             response_json = json.loads(response_text)
         except json.JSONDecodeError as e:
-            raise ValueError(
-                f"LLM response is not valid JSON: {response_text}"
-            ) from e
+            raise ValueError(f"LLM response is not valid JSON: {response_text}") from e
 
         # Validate structure
-        if (
-            "primary" not in response_json
-            or "alternatives" not in response_json
-        ):
-            raise ValueError(
-                "LLM response missing 'primary' or 'alternatives' key"
-            )
+        if "primary" not in response_json or "alternatives" not in response_json:
+            raise ValueError("LLM response missing 'primary' or 'alternatives' key")
 
         photo_url = config.consult.placeholder_photo_url
         max_alternatives = config.consult.max_alternatives
@@ -189,11 +175,9 @@ class ConsultService:
             alt_data = alt_list[i] if i < len(alt_list) else {}
             alternatives.append(
                 PlaceResult(
-                    place_name=alt_data.get("place_name", f"Alternative {i+1}"),
+                    place_name=alt_data.get("place_name", f"Alternative {i + 1}"),
                     address=alt_data.get("address", ""),
-                    reasoning=alt_data.get(
-                        "reasoning", "Also recommended"
-                    ),
+                    reasoning=alt_data.get("reasoning", "Also recommended"),
                     source="discovered",
                     photos=[photo_url],
                 )
