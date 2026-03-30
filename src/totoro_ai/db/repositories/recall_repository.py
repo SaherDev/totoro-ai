@@ -4,7 +4,8 @@ Implements Protocol + SQLAlchemy concrete class for pgvector + FTS + RRF query.
 """
 
 import logging
-from typing import Any, Protocol, TypedDict
+from datetime import datetime
+from typing import Protocol, TypedDict, cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +22,7 @@ class RecallRow(TypedDict):
     cuisine: str | None
     price_range: str | None
     source_url: str | None
-    saved_at: Any  # datetime
+    saved_at: datetime
     match_reason: str
 
 
@@ -191,20 +192,11 @@ class SQLAlchemyRecallRepository:
             },
         )
 
-        rows = result.fetchall()
-        return [
-            RecallRow(
-                place_id=row[0],
-                place_name=row[1],
-                address=row[2],
-                cuisine=row[3],
-                price_range=row[4],
-                source_url=row[5],
-                saved_at=row[6],
-                match_reason=row[7],
-            )
-            for row in rows
-        ]
+        rows = result.mappings().fetchall()
+        return cast(
+            list[RecallRow],
+            [RecallRow(**dict(row)) for row in rows],  # type: ignore[typeddict-item]
+        )
 
     async def _text_only_search(
         self, user_id: str, query_text: str, limit: int
@@ -241,17 +233,8 @@ class SQLAlchemyRecallRepository:
             },
         )
 
-        rows = result.fetchall()
-        return [
-            RecallRow(
-                place_id=row[0],
-                place_name=row[1],
-                address=row[2],
-                cuisine=row[3],
-                price_range=row[4],
-                source_url=row[5],
-                saved_at=row[6],
-                match_reason=row[7],
-            )
-            for row in rows
-        ]
+        rows = result.mappings().fetchall()
+        return cast(
+            list[RecallRow],
+            [RecallRow(**dict(row)) for row in rows],  # type: ignore[typeddict-item]
+        )
