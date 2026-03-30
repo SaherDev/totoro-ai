@@ -137,7 +137,7 @@ class RecallConfig(BaseModel):
     rrf_k: int = 60
     candidate_multiplier: int = 2
     min_rrf_score: float = 0.01
-    max_cosine_distance: float = 0.8
+    max_cosine_distance: float = 0.65
 
 
 class AppConfig(BaseModel):
