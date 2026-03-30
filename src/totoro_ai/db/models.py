@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from totoro_ai.db.base import Base
 
 # CRITICAL: Must match config.embeddings.dimensions in app.yaml (currently 1024)
-# ADR-040: Voyage 4-lite chosen for 6.34% better retrieval quality
+# ADR-040: Voyage 4-lite chosen for 9.25% better retrieval quality
 # If embedding model changes, update BOTH this constant AND app.yaml
 EMBEDDING_DIMENSIONS = 1024
 
