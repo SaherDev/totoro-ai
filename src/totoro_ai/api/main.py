@@ -1,3 +1,5 @@
+import logging
+import os
 from importlib.metadata import version as pkg_version
 
 from fastapi import APIRouter, FastAPI
@@ -9,6 +11,25 @@ from totoro_ai.api.routes.extract_place import router as extract_place_router
 from totoro_ai.api.routes.recall import router as recall_router
 from totoro_ai.core.config import get_config
 from totoro_ai.db.session import _get_session_factory
+
+# Configure logging to show spell correction details
+_log_level = os.getenv("LOGLEVEL", "INFO").upper()
+_spell_correction_logger = logging.getLogger(
+    "totoro_ai.core.spell_correction.symspell"
+)
+_spell_correction_logger.setLevel(
+    logging.DEBUG if _log_level == "DEBUG" else logging.INFO
+)
+
+# Ensure console handler is attached if running with DEBUG
+if _log_level == "DEBUG" and not _spell_correction_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setLevel(logging.DEBUG)
+    _formatter = logging.Formatter(
+        "%(levelname)-8s | %(name)s: %(message)s"
+    )
+    _handler.setFormatter(_formatter)
+    _spell_correction_logger.addHandler(_handler)
 
 _app_meta = get_config().app
 _version = pkg_version("totoro-ai")
