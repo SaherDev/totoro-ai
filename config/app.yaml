@@ -98,6 +98,7 @@ recall:
   max_results: 10
   rrf_k: 60
   candidate_multiplier: 2
+  min_rrf_score: 0.01
 
 # ---------------------------------------------------------------------------
 # Consult service configuration — Phase 2: structured output only

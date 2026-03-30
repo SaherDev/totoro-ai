@@ -37,6 +37,7 @@ class RecallRepository(Protocol):
         limit: int,
         rrf_k: int,
         candidate_multiplier: int,
+        min_rrf_score: float = 0.01,
     ) -> list[RecallRow]:
         """Hybrid search combining pgvector + FTS + RRF.
 
@@ -47,9 +48,10 @@ class RecallRepository(Protocol):
             limit: Max results to return
             rrf_k: RRF constant (typically 60)
             candidate_multiplier: Pre-fetch N×limit candidates before RRF merge
+            min_rrf_score: Minimum RRF score threshold (filters low-relevance results)
 
         Returns:
-            List of RecallRow dicts ordered by RRF score descending
+            List of RecallRow dicts ordered by RRF score descending, filtered by min_rrf_score
         """
         ...
 
@@ -79,6 +81,7 @@ class SQLAlchemyRecallRepository:
         limit: int,
         rrf_k: int,
         candidate_multiplier: int,
+        min_rrf_score: float = 0.01,
     ) -> list[RecallRow]:
         """Hybrid search: vector + text + RRF merge (or text-only if vector is None).
 
@@ -94,6 +97,7 @@ class SQLAlchemyRecallRepository:
                     limit,
                     rrf_k,
                     candidate_multiplier,
+                    min_rrf_score,
                 )
             else:
                 return await self._text_only_search(user_id, query_text, limit)
@@ -113,6 +117,7 @@ class SQLAlchemyRecallRepository:
         limit: int,
         rrf_k: int,
         candidate_multiplier: int,
+        min_rrf_score: float,
     ) -> list[RecallRow]:
         """Full hybrid CTE: pgvector + FTS + RRF."""
         candidate_limit = limit * candidate_multiplier
@@ -178,6 +183,7 @@ class SQLAlchemyRecallRepository:
                 END AS match_reason
             FROM combined c
             JOIN places p ON p.id = c.id
+            WHERE c.rrf_score >= :min_rrf_score
             ORDER BY c.rrf_score DESC
             LIMIT :limit
         """)
@@ -191,6 +197,7 @@ class SQLAlchemyRecallRepository:
                 "limit": limit,
                 "rrf_k": rrf_k,
                 "candidate_limit": candidate_limit,
+                "min_rrf_score": min_rrf_score,
             },
         )
 
