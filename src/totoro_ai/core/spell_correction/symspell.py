@@ -60,10 +60,21 @@ class SymSpellCorrector:
             Corrected text, or original text on any error
         """
         try:
-            return self._correct_non_url_tokens(text)
+            corrected = self._correct_non_url_tokens(text)
+            if corrected != text:
+                logger.info(
+                    "Spell correction applied | input: %r → output: %r",
+                    text,
+                    corrected,
+                )
+            else:
+                logger.debug("No corrections needed | input: %r", text)
+            return corrected
         except Exception as e:
             logger.warning(
-                "Spell correction failed for input, returning original: %s", e
+                "Spell correction failed for input: %r, returning original: %s",
+                text,
+                e,
             )
             return text
 
