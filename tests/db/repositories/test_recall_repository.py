@@ -29,28 +29,16 @@ def repo(mock_session):
 def setup_mock_execute_result(mock_session, result_dicts):
     """Helper to setup mock session.execute() to return expected results.
 
-    The repository code uses result.fetchall() and indexes by position:
-    row[0]=place_id, row[1]=place_name, row[2]=address, row[3]=cuisine,
-    row[4]=price_range, row[5]=source_url, row[6]=saved_at, row[7]=match_reason
+    The repository code uses result.mappings().fetchall() to get dictionaries.
     """
-    # Convert dict results to tuples for indexing
-    rows = [
-        (
-            d["place_id"],
-            d["place_name"],
-            d["address"],
-            d["cuisine"],
-            d["price_range"],
-            d["source_url"],
-            d["saved_at"],
-            d["match_reason"],
-        )
-        for d in result_dicts
-    ]
+    # Create a mock mappings object
+    mock_mappings = MagicMock()
+    mock_mappings.fetchall.return_value = result_dicts
 
     # Create a mock result object
     mock_result = MagicMock()
-    mock_result.fetchall.return_value = rows
+    mock_result.mappings.return_value = mock_mappings
+
     # Mock scalar() for count queries
     mock_session.scalar = AsyncMock(return_value=0)
     mock_session.execute = AsyncMock(return_value=mock_result)
