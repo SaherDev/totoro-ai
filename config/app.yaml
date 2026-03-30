@@ -25,7 +25,7 @@ models:
 
   embedder:
     provider: voyage
-    model: voyage-3.5-lite
+    model: voyage-4-lite
     dimensions: 1024
 
   orchestrator:
@@ -100,7 +100,7 @@ consult:
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration
-# ADR-040: Voyage 3.5-lite chosen for 6.34% better retrieval quality
+# ADR-040: Voyage 4-lite chosen for 6.34% better retrieval quality
 # ---------------------------------------------------------------------------
 embeddings:
   dimensions: 1024

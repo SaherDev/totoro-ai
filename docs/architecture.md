@@ -188,7 +188,7 @@ All requests come from NestJS after auth verification. This repo never receives 
 | ------------- | ------------------ | ----------------------------------------- |
 | intent_parser | GPT-4o-mini        | Cheap, reliable for structured extraction |
 | orchestrator  | Claude Sonnet 4    | Strong reasoning for tool calling         |
-| embedder      | Voyage 3.5-lite | 6.34% better retrieval quality than OpenAI; 1024-dimensional vectors |
+| embedder      | Voyage 4-lite | 6.34% better retrieval quality than OpenAI; 1024-dimensional vectors |
 | evaluator     | GPT-4o-mini        | Cost-effective for batch evals            |
 
 Model assignments are config-driven via `config/app.yaml` under the `models:` key. No model names hardcoded in application code.
@@ -275,7 +275,7 @@ with explicit rollback and structured error logging.
 ## Key Boundaries
 
 - One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
-- **Critical constraint**: Embedding vector dimensions must stay in sync across both repos (ADR-040). This repo uses Voyage 3.5-lite with 1024-dimensional embeddings. The pgvector column in the product repo's Prisma schema must be defined with dimension 1024. If the embedding model changes, both repos must update together to avoid vector dimension mismatches during similarity queries.
+- **Critical constraint**: Embedding vector dimensions must stay in sync across both repos (ADR-040). This repo uses Voyage 4-lite with 1024-dimensional embeddings. The pgvector column in the product repo's Prisma schema must be defined with dimension 1024. If the embedding model changes, both repos must update together to avoid vector dimension mismatches during similarity queries.
 - Redis is FastAPI-only.
 - Google Places API is called directly by this repo as part of the AI pipeline.
 - All LLM and embedding provider calls happen in this repo only.
@@ -290,7 +290,7 @@ with explicit rollback and structured error logging.
 | Agent Framework | LangGraph             | Multi-step agent orchestration                 |
 | Chains          | LangChain             | Document loaders, retrievers, chains           |
 | LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                 |
-| Embeddings      | Voyage 3.5-lite | 1024-dimensional vectors; 32k token context window          |
+| Embeddings      | Voyage 4-lite | 1024-dimensional vectors; 32k token context window          |
 | Monitoring      | Langfuse              | LLM monitoring and evaluation                  |
 | Cache           | Redis                 | LLM response caching, session, agent state     |
 | Database Client | SQLAlchemy or asyncpg | Read-write connection to PostgreSQL + pgvector |

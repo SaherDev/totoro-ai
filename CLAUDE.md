@@ -4,7 +4,7 @@
 
 ## Project Context
 
-Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: intent parsing, place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, Instructor, pgvector, Redis, Langfuse. Models: GPT-4o-mini (intent parsing, extraction, evals), Claude Sonnet 4 (orchestration), Voyage 3.5-lite (embeddings). SDKs: OpenAI SDK, Anthropic SDK. Deployed on Railway.
+Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: intent parsing, place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, Instructor, pgvector, Redis, Langfuse. Models: GPT-4o-mini (intent parsing, extraction, evals), Claude Sonnet 4 (orchestration), Voyage 4-lite (embeddings). SDKs: OpenAI SDK, Anthropic SDK. Deployed on Railway.
 
 ## Key Directories
 
