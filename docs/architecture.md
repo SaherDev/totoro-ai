@@ -153,11 +153,13 @@ any pipeline runs. Classification happens in FastAPI as the first step of reques
 handling — not in NestJS, not in the frontend.
 
 Intent types:
+
 - consult — natural language intent query ("cheap dinner nearby", "good ramen for a date")
 - recall — memory fragment referencing a saved place ("that ramen place from TikTok")
 - save — URL or place name ("tiktok.com/@foodie/video/123", "Fuji Ramen Bangkok")
 
 Classification rules:
+
 - URL detected via urllib.parse → always save
 - Contains memory language ("that", "I saved", "from TikTok/Instagram") → recall
 - Everything else → consult
@@ -184,12 +186,12 @@ All requests come from NestJS after auth verification. This repo never receives 
 
 ## Model Assignments
 
-| Logical Role  | Model              | Why                                       |
-| ------------- | ------------------ | ----------------------------------------- |
-| intent_parser | GPT-4o-mini        | Cheap, reliable for structured extraction |
-| orchestrator  | Claude Sonnet 4    | Strong reasoning for tool calling         |
-| embedder      | Voyage 4-lite | 6.34% better retrieval quality than OpenAI; 1024-dimensional vectors |
-| evaluator     | GPT-4o-mini        | Cost-effective for batch evals            |
+| Logical Role  | Model           | Why                                                                  |
+| ------------- | --------------- | -------------------------------------------------------------------- |
+| intent_parser | GPT-4o-mini     | Cheap, reliable for structured extraction                            |
+| orchestrator  | Claude Sonnet 4 | Strong reasoning for tool calling                                    |
+| embedder      | Voyage 4-lite   | 9.25% better retrieval quality than OpenAI; 1024-dimensional vectors |
+| evaluator     | GPT-4o-mini     | Cost-effective for batch evals                                       |
 
 Model assignments are config-driven via `config/app.yaml` under the `models:` key. No model names hardcoded in application code.
 
@@ -237,6 +239,7 @@ They describe what lives where and what crosses which boundary.
 Behavioral and implementation patterns live in docs/decisions.md.
 
 ### Facade — Route Handlers
+
 Route handlers are the HTTP entry point only. Each handler makes
 exactly one service call and returns the result. No SQLAlchemy,
 no Redis, no pgvector, no Google Places API calls appear inside
@@ -244,6 +247,7 @@ src/totoro_ai/api/routes/. All orchestration lives in
 src/totoro_ai/core/.
 
 ### Protocol — Swappable Dependencies
+
 Any external dependency lives behind a Python Protocol. Concrete
 implementations live in src/totoro_ai/providers/ for cross-cutting
 dependencies or inside the relevant src/totoro_ai/core/ module for
@@ -252,6 +256,7 @@ graphs import the Protocol only. Nothing in core/ imports a concrete
 provider class directly.
 
 ### Repository — Database Access
+
 All SQLAlchemy code lives in three repository classes:
 PlaceRepository, EmbeddingRepository, TasteModelRepository.
 No ORM queries or raw SQL appear outside these classes. Service
@@ -260,6 +265,7 @@ and agent layers call repository methods only.
 Each repository is defined as a Python Protocol (abstract interface)
 with a concrete SQLAlchemy implementation. For example, PlaceRepository
 defines two methods:
+
 - `get_by_provider(provider: str, external_id: str) -> Place | None`
   Fetch a place by provider and external ID for deduplication.
 - `save(place: Place) -> Place`
@@ -282,18 +288,18 @@ with explicit rollback and structured error logging.
 
 ## Technology Stack
 
-| Layer           | Technology            | Notes                                          |
-| --------------- | --------------------- | ---------------------------------------------- |
-| Runtime         | Python 3.11           | AI library compatibility                       |
-| Package Manager | Poetry                |                                                |
-| HTTP Layer      | FastAPI               | Async, Pydantic-native                         |
-| Agent Framework | LangGraph             | Multi-step agent orchestration                 |
-| Chains          | LangChain             | Document loaders, retrievers, chains           |
-| LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                 |
-| Embeddings      | Voyage 4-lite | 1024-dimensional vectors; 32k token context window          |
-| Monitoring      | Langfuse              | LLM monitoring and evaluation                  |
-| Cache           | Redis                 | LLM response caching, session, agent state     |
-| Database Client | SQLAlchemy or asyncpg | Read-write connection to PostgreSQL + pgvector |
-| External API    | Google Places API     | Place validation and nearby discovery          |
-| Deploy          | Railway               | Hobby $5/mo                                    |
-| Local Dev       | Docker Compose        | PostgreSQL + pgvector, Redis, FastAPI          |
+| Layer           | Technology            | Notes                                              |
+| --------------- | --------------------- | -------------------------------------------------- |
+| Runtime         | Python 3.11           | AI library compatibility                           |
+| Package Manager | Poetry                |                                                    |
+| HTTP Layer      | FastAPI               | Async, Pydantic-native                             |
+| Agent Framework | LangGraph             | Multi-step agent orchestration                     |
+| Chains          | LangChain             | Document loaders, retrievers, chains               |
+| LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                     |
+| Embeddings      | Voyage 4-lite         | 1024-dimensional vectors; 32k token context window |
+| Monitoring      | Langfuse              | LLM monitoring and evaluation                      |
+| Cache           | Redis                 | LLM response caching, session, agent state         |
+| Database Client | SQLAlchemy or asyncpg | Read-write connection to PostgreSQL + pgvector     |
+| External API    | Google Places API     | Place validation and nearby discovery              |
+| Deploy          | Railway               | Hobby $5/mo                                        |
+| Local Dev       | Docker Compose        | PostgreSQL + pgvector, Redis, FastAPI              |
