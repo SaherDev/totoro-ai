@@ -136,6 +136,7 @@ class RecallConfig(BaseModel):
     max_results: int = 10
     rrf_k: int = 60
     candidate_multiplier: int = 2
+    min_rrf_score: float = 0.01
 
 
 class AppConfig(BaseModel):

@@ -62,6 +62,7 @@ class RecallService:
             limit=self._config.max_results,
             rrf_k=self._config.rrf_k,
             candidate_multiplier=self._config.candidate_multiplier,
+            min_rrf_score=self._config.min_rrf_score,
         )
 
         # Construct response
