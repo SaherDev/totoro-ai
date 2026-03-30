@@ -100,10 +100,11 @@ consult:
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration
-# ADR-040: Voyage 4-lite chosen for 6.34% better retrieval quality
+# ADR-040: Voyage 4-lite chosen for 9.25% better retrieval quality
 # ---------------------------------------------------------------------------
 embeddings:
   dimensions: 1024
+  description_separator: ", "
 
 # ---------------------------------------------------------------------------
 # LLM System Prompts

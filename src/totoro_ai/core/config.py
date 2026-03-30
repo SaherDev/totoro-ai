@@ -116,6 +116,7 @@ class ExternalServicesConfig(BaseModel):
 
 class EmbeddingsConfig(BaseModel):
     dimensions: int = 1024
+    description_separator: str = ", "
 
 
 class SystemPromptsConfig(BaseModel):

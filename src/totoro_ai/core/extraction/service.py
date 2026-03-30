@@ -1,10 +1,11 @@
 """Extraction service orchestrating the extraction pipeline."""
 
+import logging
 from uuid import uuid4
 
 from totoro_ai.api.errors import ExtractionFailedNoMatchError
 from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
-from totoro_ai.core.config import ExtractionConfig
+from totoro_ai.core.config import ExtractionConfig, get_config
 from totoro_ai.core.extraction.confidence import compute_confidence
 from totoro_ai.core.extraction.dispatcher import (
     ExtractionDispatcher,
@@ -12,11 +13,34 @@ from totoro_ai.core.extraction.dispatcher import (
 )
 from totoro_ai.core.extraction.places_client import PlacesClient
 from totoro_ai.db.models import Place
-from totoro_ai.db.repositories import PlaceRepository
+from totoro_ai.db.repositories import EmbeddingRepository, PlaceRepository
+from totoro_ai.providers.embeddings import EmbedderProtocol
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractionService:
     """Orchestrate place extraction pipeline (ADR-008, ADR-034)."""
+
+    @staticmethod
+    def _build_description(place: Place) -> str:
+        """Build embedding input text from place fields.
+
+        Combines place_name, cuisine (if present), and address into a single
+        description string for embedding, separated by the configured separator.
+
+        Args:
+            place: Place entity with name, cuisine, address
+
+        Returns:
+            Description string with configured separator
+        """
+        parts = [place.place_name]
+        if place.cuisine:
+            parts.append(place.cuisine)
+        parts.append(place.address)
+        separator = get_config().embeddings.description_separator
+        return separator.join(parts)
 
     def __init__(
         self,
@@ -24,6 +48,8 @@ class ExtractionService:
         places_client: PlacesClient,
         place_repo: PlaceRepository,
         extraction_config: ExtractionConfig,
+        embedder: EmbedderProtocol,
+        embedding_repo: EmbeddingRepository,
     ) -> None:
         """Initialize service with dependencies.
 
@@ -32,11 +58,15 @@ class ExtractionService:
             places_client: PlacesClient for place validation
             place_repo: PlaceRepository for place persistence (handles transactions)
             extraction_config: Confidence weights and decision thresholds
+            embedder: EmbedderProtocol for generating embeddings (ADR-038)
+            embedding_repo: EmbeddingRepository for persisting embeddings
         """
         self._dispatcher = dispatcher
         self._places_client = places_client
         self._place_repo = place_repo
         self._extraction_config = extraction_config
+        self._embedder = embedder
+        self._embedding_repo = embedding_repo
 
     async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
         """Extract and save (or confirm) a place from raw input.
@@ -145,6 +175,20 @@ class ExtractionService:
         )
 
         await self._place_repo.save(place)
+
+        # Step 8: Generate and save embedding (ADR-040, ADR-025)
+        try:
+            description = self._build_description(place)
+            vectors = await self._embedder.embed([description], input_type="document")
+            model_name = get_config().models["embedder"].model
+            await self._embedding_repo.upsert_embedding(
+                place_id=place_id, vector=vectors[0], model_name=model_name
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to generate embedding for place %s: %s", place_id, e
+            )
+            raise
 
         return ExtractPlaceResponse(
             place_id=place_id,

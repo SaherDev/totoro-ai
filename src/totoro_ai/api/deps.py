@@ -7,9 +7,13 @@ from totoro_ai.core.config import AppConfig, get_config
 from totoro_ai.core.extraction.dispatcher import ExtractionDispatcher
 from totoro_ai.core.extraction.places_client import GooglePlacesClient
 from totoro_ai.core.extraction.service import ExtractionService
-from totoro_ai.db.repositories import SQLAlchemyPlaceRepository
+from totoro_ai.db.repositories import (
+    SQLAlchemyEmbeddingRepository,
+    SQLAlchemyPlaceRepository,
+)
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
+from totoro_ai.providers.embeddings import get_embedder
 
 
 def build_dispatcher() -> ExtractionDispatcher:
@@ -41,4 +45,6 @@ async def get_extraction_service(
         places_client=GooglePlacesClient(),
         place_repo=SQLAlchemyPlaceRepository(db_session),
         extraction_config=config.extraction,
+        embedder=get_embedder(),
+        embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
     )
