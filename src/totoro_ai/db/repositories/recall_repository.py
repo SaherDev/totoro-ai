@@ -116,6 +116,8 @@ class SQLAlchemyRecallRepository:
     ) -> list[RecallRow]:
         """Full hybrid CTE: pgvector + FTS + RRF."""
         candidate_limit = limit * candidate_multiplier
+        # Convert vector list to pgvector string format for asyncpg
+        query_vector_str = "[" + ",".join(str(v) for v in query_vector) + "]"
 
         sql = text("""
             WITH vector_results AS (
@@ -184,7 +186,7 @@ class SQLAlchemyRecallRepository:
             sql,
             {
                 "user_id": user_id,
-                "query_vector": query_vector,
+                "query_vector": query_vector_str,
                 "query_text": query_text,
                 "limit": limit,
                 "rrf_k": rrf_k,
