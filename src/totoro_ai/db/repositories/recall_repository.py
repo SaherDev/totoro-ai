@@ -151,7 +151,10 @@ class SQLAlchemyRecallRepository:
                                     'english',
                                     p.place_name || ' ' || COALESCE(p.cuisine, '')
                                 ),
-                                plainto_tsquery('english', :query_text)
+                                to_tsquery('english', replace(
+                                    plainto_tsquery('english', :query_text)::text,
+                                    ' & ', ' | '
+                                ))
                             ) DESC
                     ) AS rank
                 FROM places p
@@ -159,7 +162,10 @@ class SQLAlchemyRecallRepository:
                   AND to_tsvector(
                       'english',
                       p.place_name || ' ' || COALESCE(p.cuisine, '')
-                  ) @@ plainto_tsquery('english', :query_text)
+                  ) @@ to_tsquery('english', replace(
+                      plainto_tsquery('english', :query_text)::text,
+                      ' & ', ' | '
+                  ))
             ),
             combined AS (
                 SELECT
@@ -231,11 +237,17 @@ class SQLAlchemyRecallRepository:
             FROM places p
             WHERE p.user_id = :user_id
               AND to_tsvector('english', p.place_name || ' ' || COALESCE(p.cuisine, ''))
-                  @@ plainto_tsquery('english', :query_text)
+                  @@ to_tsquery('english', replace(
+                      plainto_tsquery('english', :query_text)::text,
+                      ' & ', ' | '
+                  ))
             ORDER BY
                 ts_rank(
                     to_tsvector('english', p.place_name || ' ' || COALESCE(p.cuisine, '')),
-                    plainto_tsquery('english', :query_text)
+                    to_tsquery('english', replace(
+                        plainto_tsquery('english', :query_text)::text,
+                        ' & ', ' | '
+                    ))
                 ) DESC
             LIMIT :limit
         """)
