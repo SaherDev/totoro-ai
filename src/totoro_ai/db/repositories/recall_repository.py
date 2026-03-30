@@ -38,6 +38,7 @@ class RecallRepository(Protocol):
         rrf_k: int,
         candidate_multiplier: int,
         min_rrf_score: float = 0.01,
+        max_cosine_distance: float = 0.4,
     ) -> list[RecallRow]:
         """Hybrid search combining pgvector + FTS + RRF.
 
@@ -49,9 +50,10 @@ class RecallRepository(Protocol):
             rrf_k: RRF constant (typically 60)
             candidate_multiplier: Pre-fetch N×limit candidates before RRF merge
             min_rrf_score: Minimum RRF score threshold (filters low-relevance results)
+            max_cosine_distance: Maximum cosine distance for vector candidates (filters dissimilar vectors before RRF)
 
         Returns:
-            List of RecallRow dicts ordered by RRF score descending, filtered by min_rrf_score
+            List of RecallRow dicts ordered by RRF score descending, filtered by both thresholds
         """
         ...
 
@@ -82,6 +84,7 @@ class SQLAlchemyRecallRepository:
         rrf_k: int,
         candidate_multiplier: int,
         min_rrf_score: float = 0.01,
+        max_cosine_distance: float = 0.4,
     ) -> list[RecallRow]:
         """Hybrid search: vector + text + RRF merge (or text-only if vector is None).
 
@@ -98,6 +101,7 @@ class SQLAlchemyRecallRepository:
                     rrf_k,
                     candidate_multiplier,
                     min_rrf_score,
+                    max_cosine_distance,
                 )
             else:
                 return await self._text_only_search(user_id, query_text, limit)
@@ -118,6 +122,7 @@ class SQLAlchemyRecallRepository:
         rrf_k: int,
         candidate_multiplier: int,
         min_rrf_score: float,
+        max_cosine_distance: float,
     ) -> list[RecallRow]:
         """Full hybrid CTE: pgvector + FTS + RRF."""
         candidate_limit = limit * candidate_multiplier
@@ -132,6 +137,7 @@ class SQLAlchemyRecallRepository:
                 FROM places p
                 JOIN embeddings e ON e.place_id = p.id
                 WHERE p.user_id = :user_id
+                  AND e.vector <=> :query_vector < :max_cosine_distance
                 ORDER BY e.vector <=> :query_vector
                 LIMIT :candidate_limit
             ),
@@ -198,6 +204,7 @@ class SQLAlchemyRecallRepository:
                 "rrf_k": rrf_k,
                 "candidate_limit": candidate_limit,
                 "min_rrf_score": min_rrf_score,
+                "max_cosine_distance": max_cosine_distance,
             },
         )
 

@@ -13,7 +13,9 @@
       "Bash(.specify/scripts/bash/create-new-feature.sh --json --short-name \"recall-hybrid-search\" \"Implement POST /v1/recall endpoint with hybrid search combining vector similarity and full-text search merged with RRF, returning saved places matching a natural language query with match_reason field, cold start empty state support, and configurable result count\" 2>&1)",
       "Bash(.specify/scripts/bash/check-prerequisites.sh --json --paths-only 2>&1)",
       "Bash(.specify/scripts/bash/update-agent-context.sh claude:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(for q:*)",
+      "Bash(do echo:*)"
     ]
   }
 }
