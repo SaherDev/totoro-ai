@@ -174,6 +174,7 @@ POST /v1/recall
     │     - combined: FULL OUTER JOIN with RRF score calculation
     │       RRF formula: 1/(k + rank) per method, summed across both
     │       k=60 (constant, prevents rank=0 dominance)
+    │       min_rrf_score=0.01 (threshold filters low-relevance results)
     │   Else (embedding failed):
     │     - text_only_search: FTS fallback (no vector component)
     │
@@ -196,6 +197,7 @@ POST /v1/recall
 - Single CTE query: no N+1 queries; all ranking in database
 - RRF merging: fairly combines semantic (vector) and keyword (FTS) relevance
 - Candidate multiplier: prevents vector results from starving FTS results
+- Min RRF score threshold: filters low-relevance results; configurable via `min_rrf_score` (default 0.01)
 - Graceful fallback: text-only path exists; embedding failure does not crash
 - Deterministic match_reason: reflects actual search behavior; no guessing
 
@@ -247,6 +249,18 @@ All requests come from NestJS after auth verification. This repo never receives 
 | evaluator     | GPT-4o-mini     | Cost-effective for batch evals                                       |
 
 Model assignments are config-driven via `config/app.yaml` under the `models:` key. No model names hardcoded in application code.
+
+## Service Configuration
+
+Service-specific parameters are config-driven via `config/app.yaml`:
+
+**Recall Service** (hybrid search tuning):
+- `max_results`: Maximum results to return (default 10)
+- `rrf_k`: RRF constant for rank weighting (default 60, higher = more weight on top ranks)
+- `candidate_multiplier`: Pre-fetch factor (multiplies limit; default 2)
+- `min_rrf_score`: Minimum RRF score threshold to filter low-relevance results (default 0.01)
+
+Adjust these values to control result relevance and performance.
 
 ## Database Access
 
