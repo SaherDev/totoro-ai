@@ -16,6 +16,7 @@ from totoro_ai.db.repositories import (
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
 from totoro_ai.providers.embeddings import get_embedder
+from totoro_ai.providers.spell_correction import get_spell_corrector
 
 
 def build_dispatcher() -> ExtractionDispatcher:
@@ -49,6 +50,7 @@ async def get_extraction_service(
         extraction_config=config.extraction,
         embedder=get_embedder(),
         embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
+        spell_corrector=get_spell_corrector(),
     )
 
 
@@ -61,4 +63,5 @@ async def get_recall_service(
         embedder=get_embedder(),
         recall_repo=SQLAlchemyRecallRepository(db_session),
         config=config.recall,
+        spell_corrector=get_spell_corrector(),
     )

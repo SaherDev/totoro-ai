@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from totoro_ai.api.schemas.consult import ConsultRequest, ConsultResponse
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.providers import get_llm
+from totoro_ai.providers.spell_correction import get_spell_corrector
 
 router = APIRouter()
 
@@ -15,11 +16,14 @@ def get_consult_service() -> ConsultService:
 
     Resolves the LLM client via provider abstraction (config-driven).
     Role 'orchestrator' maps to configured AI provider in config/models.yaml.
+    Spell corrector is resolved from provider abstraction (ADR-038).
 
     Returns:
-        ConsultService instance with orchestrator LLM client
+        ConsultService instance with orchestrator LLM client and spell corrector
     """
-    return ConsultService(llm=get_llm("orchestrator"))
+    return ConsultService(
+        llm=get_llm("orchestrator"), spell_corrector=get_spell_corrector()
+    )
 
 
 @router.post(

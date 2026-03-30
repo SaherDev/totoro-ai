@@ -11,8 +11,18 @@ from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.intent.intent_parser import ParsedIntent
 
 
+@pytest.fixture
+def mock_spell_corrector() -> MagicMock:
+    """Create a mock spell corrector that returns text unchanged."""
+    mock_corrector = MagicMock()
+    mock_corrector.correct = MagicMock(side_effect=lambda text: text)
+    return mock_corrector
+
+
 @pytest.mark.asyncio
-async def test_consult_service_returns_consult_response():
+async def test_consult_service_returns_consult_response(
+    mock_spell_corrector: MagicMock,
+):
     """Test consult() returns ConsultResponse with reasoning steps and
     intent-derived summaries."""
     mock_llm = AsyncMock()
@@ -36,7 +46,7 @@ async def test_consult_service_returns_consult_response():
         ],
     }
     mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
-    service = ConsultService(llm=mock_llm)
+    service = ConsultService(llm=mock_llm, spell_corrector=mock_spell_corrector)
 
     with patch("totoro_ai.core.consult.service.IntentParser") as mock_parser_class:
         mock_parser = AsyncMock()
@@ -116,7 +126,9 @@ async def test_consult_service_returns_consult_response():
 
 
 @pytest.mark.asyncio
-async def test_consult_service_with_venue_type() -> None:
+async def test_consult_service_with_venue_type(
+    mock_spell_corrector: MagicMock,
+) -> None:
     """Test consult() uses venue_type when cuisine is not specified."""
     mock_llm = AsyncMock()
     mock_response = {
@@ -139,7 +151,7 @@ async def test_consult_service_with_venue_type() -> None:
         ],
     }
     mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
-    service = ConsultService(llm=mock_llm)
+    service = ConsultService(llm=mock_llm, spell_corrector=mock_spell_corrector)
 
     with patch("totoro_ai.core.consult.service.IntentParser") as mock_parser_class:
         mock_parser = AsyncMock()
@@ -173,7 +185,9 @@ async def test_consult_service_with_venue_type() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consult_service_without_location():
+async def test_consult_service_without_location(
+    mock_spell_corrector: MagicMock,
+):
     """Test consult() works without location and uses fallback context."""
     mock_llm = AsyncMock()
     mock_response = {
@@ -196,7 +210,7 @@ async def test_consult_service_without_location():
         ],
     }
     mock_llm.complete = AsyncMock(return_value=json.dumps(mock_response))
-    service = ConsultService(llm=mock_llm)
+    service = ConsultService(llm=mock_llm, spell_corrector=mock_spell_corrector)
 
     with patch("totoro_ai.core.consult.service.IntentParser") as mock_parser_class:
         mock_parser = AsyncMock()
@@ -229,7 +243,7 @@ async def test_consult_service_without_location():
 
 
 @pytest.mark.asyncio
-async def test_stream_yields_token_events():
+async def test_stream_yields_token_events(mock_spell_corrector: MagicMock):
     """Test that stream() yields tokens as SSE events."""
     mock_llm = AsyncMock()
 
@@ -241,7 +255,7 @@ async def test_stream_yields_token_events():
 
     mock_llm.stream = MagicMock(return_value=mock_stream_generator())
 
-    service = ConsultService(llm=mock_llm)
+    service = ConsultService(llm=mock_llm, spell_corrector=mock_spell_corrector)
 
     # Mock request object
     mock_request = AsyncMock()
@@ -273,7 +287,9 @@ async def test_stream_yields_token_events():
 
 
 @pytest.mark.asyncio
-async def test_stream_calls_llm_with_system_prompt():
+async def test_stream_calls_llm_with_system_prompt(
+    mock_spell_corrector: MagicMock,
+):
     """Test that stream() calls LLM with correct system prompt."""
     mock_llm = AsyncMock()
 
@@ -282,7 +298,7 @@ async def test_stream_calls_llm_with_system_prompt():
 
     mock_llm.stream = MagicMock(return_value=mock_stream_generator())
 
-    service = ConsultService(llm=mock_llm)
+    service = ConsultService(llm=mock_llm, spell_corrector=mock_spell_corrector)
 
     mock_request = AsyncMock()
     mock_request.is_disconnected = AsyncMock(return_value=False)
@@ -308,7 +324,7 @@ async def test_stream_calls_llm_with_system_prompt():
 
 
 @pytest.mark.asyncio
-async def test_stream_detects_disconnect():
+async def test_stream_detects_disconnect(mock_spell_corrector: MagicMock):
     """Test that stream() breaks iteration on client disconnect."""
     mock_llm = AsyncMock()
 
@@ -319,7 +335,7 @@ async def test_stream_detects_disconnect():
 
     mock_llm.stream = MagicMock(return_value=mock_stream_generator())
 
-    service = ConsultService(llm=mock_llm)
+    service = ConsultService(llm=mock_llm, spell_corrector=mock_spell_corrector)
 
     # Mock request that detects disconnect after 2 tokens
     mock_request = AsyncMock()
@@ -344,7 +360,9 @@ async def test_stream_detects_disconnect():
 
 
 @pytest.mark.asyncio
-async def test_stream_no_done_event_on_disconnect():
+async def test_stream_no_done_event_on_disconnect(
+    mock_spell_corrector: MagicMock,
+):
     """Test that done event is not sent if client disconnected."""
     mock_llm = AsyncMock()
 
@@ -353,7 +371,7 @@ async def test_stream_no_done_event_on_disconnect():
 
     mock_llm.stream = MagicMock(return_value=mock_stream_generator())
 
-    service = ConsultService(llm=mock_llm)
+    service = ConsultService(llm=mock_llm, spell_corrector=mock_spell_corrector)
 
     # Mock request that is disconnected before checking for done event
     mock_request = AsyncMock()

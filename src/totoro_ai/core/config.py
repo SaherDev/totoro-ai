@@ -140,6 +140,10 @@ class RecallConfig(BaseModel):
     max_cosine_distance: float = 0.65
 
 
+class SpellCorrectionConfig(BaseModel):
+    provider: str = "symspell"
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -149,6 +153,7 @@ class AppConfig(BaseModel):
     system_prompts: SystemPromptsConfig = SystemPromptsConfig()
     consult: ConsultConfig = ConsultConfig()
     recall: RecallConfig = RecallConfig()
+    spell_correction: SpellCorrectionConfig = SpellCorrectionConfig()
 
 
 _config: AppConfig | None = None

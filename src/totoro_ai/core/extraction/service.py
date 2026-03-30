@@ -12,6 +12,7 @@ from totoro_ai.core.extraction.dispatcher import (
     UnsupportedInputError,
 )
 from totoro_ai.core.extraction.places_client import PlacesClient
+from totoro_ai.core.spell_correction.base import SpellCorrectorProtocol
 from totoro_ai.db.models import Place
 from totoro_ai.db.repositories import EmbeddingRepository, PlaceRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
@@ -50,6 +51,7 @@ class ExtractionService:
         extraction_config: ExtractionConfig,
         embedder: EmbedderProtocol,
         embedding_repo: EmbeddingRepository,
+        spell_corrector: SpellCorrectorProtocol,
     ) -> None:
         """Initialize service with dependencies.
 
@@ -60,6 +62,7 @@ class ExtractionService:
             extraction_config: Confidence weights and decision thresholds
             embedder: EmbedderProtocol for generating embeddings (ADR-038)
             embedding_repo: EmbeddingRepository for persisting embeddings
+            spell_corrector: SpellCorrectorProtocol for typo correction (ADR-038)
         """
         self._dispatcher = dispatcher
         self._places_client = places_client
@@ -67,21 +70,23 @@ class ExtractionService:
         self._extraction_config = extraction_config
         self._embedder = embedder
         self._embedding_repo = embedding_repo
+        self._spell_corrector = spell_corrector
 
     async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
         """Extract and save (or confirm) a place from raw input.
 
         Pipeline:
-        1. Validate raw_input not empty
-        2. Dispatch to appropriate extractor
-        3. Validate place against Google Places
-        4. Compute confidence
-        5. Check thresholds:
+        1. Correct spelling (ADR-032)
+        2. Validate raw_input not empty
+        3. Dispatch to appropriate extractor
+        4. Validate place against Google Places
+        5. Compute confidence
+        6. Check thresholds:
            - ≤ require_confirmation → error
            - require_confirmation < score < store_silently → requires_confirmation=True
            - ≥ store_silently → check dedup, save, return with place_id
-        6. Dedup by (external_provider, external_id) if match found
-        7. Write Place to database
+        7. Dedup by (external_provider, external_id) if match found
+        8. Write Place to database
 
         Args:
             raw_input: TikTok URL or plain text
@@ -95,11 +100,14 @@ class ExtractionService:
             UnsupportedInputError: If no extractor matches (→ 422)
             ExtractionFailedNoMatchError: If confidence ≤ require_confirmation (→ 422)
         """
-        # Step 1: Validate input
+        # Step 1: Correct spelling
+        raw_input = self._spell_corrector.correct(raw_input)
+
+        # Step 2: Validate input
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
 
-        # Step 2: Dispatch to extractor
+        # Step 3: Dispatch to extractor
         try:
             result = await self._dispatcher.dispatch(raw_input)
         except UnsupportedInputError:
@@ -110,13 +118,13 @@ class ExtractionService:
 
         extraction = result.extraction
 
-        # Step 3: Validate against Google Places
+        # Step 4: Validate against Google Places
         places_match = await self._places_client.validate_place(
             name=extraction.place_name,
             location=extraction.address,
         )
 
-        # Step 4: Compute confidence
+        # Step 5: Compute confidence
         confidence = compute_confidence(
             source=result.source,
             match_quality=places_match.match_quality,
@@ -124,7 +132,7 @@ class ExtractionService:
             corroborated=False,
         )
 
-        # Step 5: Apply thresholds
+        # Step 6: Apply thresholds
         thresholds = self._extraction_config.thresholds
 
         if confidence <= thresholds.require_confirmation:
@@ -141,7 +149,7 @@ class ExtractionService:
                 source_url=result.source_url,
             )
 
-        # Step 6: Confidence ≥ store_silently — check deduplication
+        # Step 7: Confidence ≥ store_silently — check deduplication
         if places_match.external_id:
             existing = await self._place_repo.get_by_provider(
                 places_match.external_provider, places_match.external_id

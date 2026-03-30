@@ -15,6 +15,7 @@ from totoro_ai.api.schemas.consult import (
 )
 from totoro_ai.core.config import get_config
 from totoro_ai.core.intent.intent_parser import IntentParser
+from totoro_ai.core.spell_correction.base import SpellCorrectorProtocol
 from totoro_ai.providers import get_langfuse_client
 from totoro_ai.providers.llm import LLMClientProtocol
 
@@ -22,13 +23,17 @@ from totoro_ai.providers.llm import LLMClientProtocol
 class ConsultService:
     """Service for place recommendations with streaming and synchronous modes."""
 
-    def __init__(self, llm: LLMClientProtocol) -> None:
-        """Initialize the ConsultService with an LLM client.
+    def __init__(
+        self, llm: LLMClientProtocol, spell_corrector: SpellCorrectorProtocol
+    ) -> None:
+        """Initialize the ConsultService with an LLM client and spell corrector.
 
         Args:
             llm: LLM client instance (resolved via provider abstraction)
+            spell_corrector: SpellCorrectorProtocol for typo correction (ADR-038)
         """
         self._llm = llm
+        self._spell_corrector = spell_corrector
 
     async def consult(
         self,
@@ -47,13 +52,16 @@ class ConsultService:
             ConsultResponse with primary recommendation, alternatives, and
             reasoning steps
         """
+        # Step 1: Correct spelling
+        query = self._spell_corrector.correct(query)
+
         config = get_config()
 
-        # Step 1: Parse intent from query
+        # Step 2: Parse intent from query
         parser = IntentParser()
         intent = await parser.parse(query)
 
-        # Step 2: Build intent summary (non-null fields only)
+        # Step 3: Build intent summary (non-null fields only)
         intent_parts = []
         if intent.cuisine:
             intent_parts.append(f"cuisine={intent.cuisine}")
@@ -67,7 +75,7 @@ class ConsultService:
             f"Parsed: {', '.join(intent_parts)}" if intent_parts else "Parsed query"
         )
 
-        # Step 3: Helper to build step summaries with fallbacks
+        # Step 4: Helper to build step summaries with fallbacks
         def _build_summary(step_name: str) -> str:
             """Build step summary with intent-derived values and fallbacks."""
             place_type = intent.cuisine or intent.venue_type or "restaurants"

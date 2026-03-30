@@ -4,6 +4,7 @@ import logging
 
 from totoro_ai.api.schemas.recall import RecallResponse, RecallResult
 from totoro_ai.core.config import RecallConfig
+from totoro_ai.core.spell_correction.base import SpellCorrectorProtocol
 from totoro_ai.db.repositories.recall_repository import RecallRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
 
@@ -18,6 +19,7 @@ class RecallService:
         embedder: EmbedderProtocol,
         recall_repo: RecallRepository,
         config: RecallConfig,
+        spell_corrector: SpellCorrectorProtocol,
     ) -> None:
         """Initialize recall service.
 
@@ -25,25 +27,31 @@ class RecallService:
             embedder: Embedding provider (Voyage or fallback)
             recall_repo: Recall repository with hybrid search
             config: Recall configuration (limits, RRF k, etc.)
+            spell_corrector: SpellCorrectorProtocol for typo correction (ADR-038)
         """
         self._embedder = embedder
         self._repo = recall_repo
         self._config = config
+        self._spell_corrector = spell_corrector
 
     async def run(self, query: str, user_id: str) -> RecallResponse:
         """Execute recall search.
 
-        1. Check cold start (user has no saves) → return empty with empty_state=True
-        2. Try to embed query; on failure, set embedding=None
-        3. Call hybrid_search with vector or None (fallback to text-only)
-        4. Construct response with results, total count, empty_state flag
+        1. Correct spelling (ADR-032)
+        2. Check cold start (user has no saves) → return empty with empty_state=True
+        3. Try to embed query; on failure, set embedding=None
+        4. Call hybrid_search with vector or None (fallback to text-only)
+        5. Construct response with results, total count, empty_state flag
         """
-        # Check cold start
+        # Step 1: Correct spelling
+        query = self._spell_corrector.correct(query)
+
+        # Step 2: Check cold start
         saved_count = await self._repo.count_saved_places(user_id)
         if saved_count == 0:
             return RecallResponse(results=[], total=0, empty_state=True)
 
-        # Try to embed query
+        # Step 3: Try to embed query
         embedding = None
         try:
             vectors = await self._embedder.embed([query], input_type="query")
@@ -54,7 +62,7 @@ class RecallService:
                 extra={"user_id": user_id, "error": str(e)},
             )
 
-        # Hybrid search (with or without vector)
+        # Step 4: Hybrid search (with or without vector)
         rows = await self._repo.hybrid_search(
             user_id=user_id,
             query_vector=embedding,

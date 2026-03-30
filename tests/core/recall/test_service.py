@@ -1,7 +1,7 @@
 """Tests for the recall service."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -32,12 +32,21 @@ def mock_repo():
 
 
 @pytest.fixture
-def recall_service(mock_embedder, mock_repo, recall_config):
+def mock_spell_corrector():
+    """Mock spell corrector that returns text unchanged."""
+    mock_corrector = MagicMock()
+    mock_corrector.correct = MagicMock(side_effect=lambda text: text)
+    return mock_corrector
+
+
+@pytest.fixture
+def recall_service(mock_embedder, mock_repo, recall_config, mock_spell_corrector):
     """RecallService instance with mocked dependencies."""
     return RecallService(
         embedder=mock_embedder,
         recall_repo=mock_repo,
         config=recall_config,
+        spell_corrector=mock_spell_corrector,
     )
 
 

@@ -15,7 +15,11 @@
       "Bash(.specify/scripts/bash/update-agent-context.sh claude:*)",
       "Bash(git commit:*)",
       "Bash(for q:*)",
-      "Bash(do echo:*)"
+      "Bash(do echo:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh --json --short-name \"spell-correction\" \"Add spell correction pipeline with SymSpell provider abstraction wired into all three API endpoints\")",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json 2>&1)",
+      "Bash(poetry lock:*)",
+      "Bash(poetry install:*)"
     ]
   }
 }

@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 007-spell-correction: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, symspellpy (new)
 - 006-recall-hybrid-search: Added Python 3.11 + FastAPI 0.115, SQLAlchemy 2.0 async, pgvector, Pydantic 2.10, voyageai ^0.3, asyncpg
 - 005-voyage-embed-pipeline: Added Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, SQLAlchemy 2.0 async, Pydantic 2.10, voyageai ^0.3 (AsyncClient), langfuse ^2.0, pgvector
-- 004-consult-structured-output: Added Python 3.11 (>=3.11,<3.14) + FastAPI 0.115, Pydantic 2.10, Instructor 1.x, OpenAI SDK (via instructor), Langfuse (new dep), httpx 0.28
 
 
 ## Active Technologies
-- Python 3.11 + FastAPI 0.115, SQLAlchemy 2.0 async, pgvector, Pydantic 2.10, voyageai ^0.3, asyncpg (006-recall-hybrid-search)
-- PostgreSQL — existing `places` table + `embeddings` table (no new migration) (006-recall-hybrid-search)
+- Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, symspellpy (new) (007-spell-correction)
+- PostgreSQL — no schema changes needed (007-spell-correction)
 

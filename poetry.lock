@@ -579,6 +579,47 @@ docs = ["pydoctor (>=25.4.0)"]
 test = ["pytest"]
 
 [[package]]
+name = "editdistpy"
+version = "0.2.0"
+description = "Fast Levenshtein and Damerau optimal string alignment algorithms."
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "editdistpy-0.2.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:1e121b35aa76ca5cc4b057e5fedb9567d471d98169f285d1aa41f9325e80fe67"},
+    {file = "editdistpy-0.2.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:927dc694339901d04de6af6a55ce92a2f6284dfc478d4f5ae37615d2babc59a3"},
+    {file = "editdistpy-0.2.0-cp310-cp310-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d793a5633a9f5e58053f564a94b40e21e879b20e98d630552e03897295cc4ad8"},
+    {file = "editdistpy-0.2.0-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:921664e93d45542a42a7c14763f0a85a225ef0570a4bfd95be9d1447d7934dfb"},
+    {file = "editdistpy-0.2.0-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:b0bec54f5c57fec44f5e30e259675b002299a0b98276c19a9a8b13d892fbdf28"},
+    {file = "editdistpy-0.2.0-cp310-cp310-win_amd64.whl", hash = "sha256:6d23c27c6076c252df20c2d2eb36544926d3ab7c9be501191d194a2e3877d3ee"},
+    {file = "editdistpy-0.2.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:71b90c7b9935b5566c5c8ce9c43c9da598609dd6d9ce3c00180677dfa9130103"},
+    {file = "editdistpy-0.2.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:1f4a6544a9ddaf61eb4e203db722097cbf4df93214b512ce9fef03f3d82b8a58"},
+    {file = "editdistpy-0.2.0-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a24b63bdbd0470beae6019b9aaa4c0d3f7a0de3cad0b3b9b1eff189510ae74ef"},
+    {file = "editdistpy-0.2.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f94521e43057fa1dd73ce92c29a8dcfca4fbb6f5da8c83ee59271c5929be2c11"},
+    {file = "editdistpy-0.2.0-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:b3e53dd3cb532ab53e768dbc9dc6c62fc3fa7bc967314a901d0768e6b98bde6c"},
+    {file = "editdistpy-0.2.0-cp311-cp311-win_amd64.whl", hash = "sha256:09692cfdaa20b7d3d1bccd25a9f9e7f0c912d1091ef010ad4950aa22efcd16b4"},
+    {file = "editdistpy-0.2.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:c6e462a67231f7c9913d002d2b30a5185004da7742dd000b61cc6cc92b75d3c0"},
+    {file = "editdistpy-0.2.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:3cb0cd5d129c7d2f20b570a735d8cdf085e58bf40078816ed4f2dc621ab28c42"},
+    {file = "editdistpy-0.2.0-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:fa9e50f3f76495688a5d078b784ac482b1d8cdae5fb84594e2ddb6eecc263627"},
+    {file = "editdistpy-0.2.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:38e79087b32b1fa78ed05f740f7bf15f859ec268cd5f055f64283755475e23b3"},
+    {file = "editdistpy-0.2.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:b1751a0c2f827ba0a97dcf4be968941ece0055e167c859f4b0217e8daf5cab6a"},
+    {file = "editdistpy-0.2.0-cp312-cp312-win_amd64.whl", hash = "sha256:cd66a19b925ebb275e6800263ece73c67809c67ad715ff6ae8f9ea5da0fa9fd1"},
+    {file = "editdistpy-0.2.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:78d508610df1207b430ac9ad1f88726afa2d1269f6f0cc182d994a2f7c8e778b"},
+    {file = "editdistpy-0.2.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:bba9e4a002324109fec475b9a9362688b87fdb9b31ded908ff78b7a6a25cf4a1"},
+    {file = "editdistpy-0.2.0-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a10b30674e8d68e81b3be8588a7502bc31e901886d5cd4f351ea515e49d314ed"},
+    {file = "editdistpy-0.2.0-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b475f127dc16737ae36c5673a447992801ce118e4b96c4e0fd73cea92e037f8f"},
+    {file = "editdistpy-0.2.0-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:5161bbe021f84632ecfe55f2e0e4aec512add3dab57a1c55460b60ebba3dd5b7"},
+    {file = "editdistpy-0.2.0-cp313-cp313-win_amd64.whl", hash = "sha256:0079918a9dca01289ebd7a0c09c9e19697cf5994f47ac500d601fc61c1923469"},
+    {file = "editdistpy-0.2.0-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:5e5b6efea765fb89ad1a442e5d94f46cae28c3de2e16411394f85e6a42280d19"},
+    {file = "editdistpy-0.2.0-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:f516d921a4a6726739b8d04ba3406b3c893ccf8675384d92de60b48498b55a40"},
+    {file = "editdistpy-0.2.0-cp39-cp39-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:664c71890e9592b82c48680df51859f7acf5a8cda6c7f9db508a4fa8eb0ccc97"},
+    {file = "editdistpy-0.2.0-cp39-cp39-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d50b5ef70dbe5d103356309ca133e4d1d18d443b336f448267e500d4cfaa9466"},
+    {file = "editdistpy-0.2.0-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:153a27f19e08f8fed05234ddba6fb9f25fc381d737c2e2df75cfa31ebc348bd0"},
+    {file = "editdistpy-0.2.0-cp39-cp39-win_amd64.whl", hash = "sha256:d3822cf1e43a360f8abd85b42aa36a15b6227120c40040f8c74be874d2d72926"},
+    {file = "editdistpy-0.2.0.tar.gz", hash = "sha256:6cd95c61687a2681b11e28c914a90c2d73a771dea3d38473dc94cc8c64563ed1"},
+]
+
+[[package]]
 name = "fastapi"
 version = "0.115.14"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
@@ -3388,6 +3429,21 @@ anyio = ">=3.6.2,<5"
 full = ["httpx (>=0.27.0,<0.29.0)", "itsdangerous", "jinja2", "python-multipart (>=0.0.18)", "pyyaml"]
 
 [[package]]
+name = "symspellpy"
+version = "6.9.0"
+description = "Python SymSpell"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "symspellpy-6.9.0-py3-none-any.whl", hash = "sha256:b6dba96275fdbedc240491854160bbe596dda930f2d58567ad55faf82a4e4b43"},
+    {file = "symspellpy-6.9.0.tar.gz", hash = "sha256:5ce8cb8a13e531db03f664407abc9e42e272f16bab7c0639500a8bdd07eee482"},
+]
+
+[package.dependencies]
+editdistpy = ">=0.1.3"
+
+[[package]]
 name = "tenacity"
 version = "9.1.4"
 description = "Retry code until it succeeds"
@@ -4458,4 +4514,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "d47884b964e0db1b09078c8ee80b854efc16a125df7f1802be1d1c0afd4bf01f"
+content-hash = "252244dc7f0c9cb740f870a38099869cf7d8cc32998a4c38fe0adb72d5d75294"
