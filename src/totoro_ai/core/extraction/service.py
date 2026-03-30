@@ -185,9 +185,7 @@ class ExtractionService:
                 place_id=place_id, vector=vectors[0], model_name=model_name
             )
         except Exception as e:
-            logger.error(
-                "Failed to generate embedding for place %s: %s", place_id, e
-            )
+            logger.error("Failed to generate embedding for place %s: %s", place_id, e)
             raise
 
         return ExtractPlaceResponse(
