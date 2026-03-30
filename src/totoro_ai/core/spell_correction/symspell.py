@@ -102,15 +102,27 @@ class SymSpellCorrector:
             else:
                 non_url_tokens.append(token)
 
+        # Log URL preservation
+        if url_indices:
+            logger.debug(
+                "📌 Found %d URL(s) to preserve: %s",
+                len(url_indices),
+                [url_indices[i] for i in sorted(url_indices.keys())],
+            )
+
         # If no URLs, correct the entire text
         if not url_indices:
+            logger.debug("🔍 No URLs found, correcting entire text")
             suggestions = self._sym_spell.lookup_compound(text, max_edit_distance=2)
             return suggestions[0].term if suggestions else text
 
         # Correct only non-URL text
         non_url_text = " ".join(non_url_tokens)
+        logger.debug("🔍 Correcting non-URL text: %r", non_url_text)
         suggestions = self._sym_spell.lookup_compound(non_url_text, max_edit_distance=2)
         corrected_non_url = suggestions[0].term if suggestions else non_url_text
+        if corrected_non_url != non_url_text:
+            logger.debug("✨ Non-URL correction: %r → %r", non_url_text, corrected_non_url)
 
         # Reassemble: rebuild token list with corrected non-URL tokens and original URLs
         corrected_tokens = corrected_non_url.split()
