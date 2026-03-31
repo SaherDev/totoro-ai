@@ -1,11 +1,11 @@
 """Event dispatcher for domain-driven architecture"""
 
-from typing import Any, Awaitable, Callable, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Protocol
 
 from fastapi import BackgroundTasks
 
 from totoro_ai.core.events.events import DomainEvent
-
 
 # Type alias for event handler callables
 EventHandler = Callable[[DomainEvent], Awaitable[None]]
@@ -21,7 +21,8 @@ class EventDispatcherProtocol(Protocol):
             event: Domain event to dispatch
 
         Handlers are executed as background tasks after HTTP response is sent.
-        Handler exceptions are logged and traced via Langfuse — never surfaced to caller.
+        Handler exceptions are logged and traced via Langfuse — never surfaced
+        to caller.
         """
         ...
 

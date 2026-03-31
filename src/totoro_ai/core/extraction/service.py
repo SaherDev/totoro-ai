@@ -7,13 +7,13 @@ from uuid import uuid4
 from totoro_ai.api.errors import ExtractionFailedNoMatchError
 from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
 from totoro_ai.core.config import ExtractionConfig, get_config
+from totoro_ai.core.events.events import PlaceSaved
 from totoro_ai.core.extraction.confidence import compute_confidence
 from totoro_ai.core.extraction.dispatcher import (
     ExtractionDispatcher,
     UnsupportedInputError,
 )
 from totoro_ai.core.extraction.places_client import PlacesClient
-from totoro_ai.core.events.events import PlaceSaved
 from totoro_ai.db.models import Place
 from totoro_ai.db.repositories import EmbeddingRepository, PlaceRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
@@ -66,7 +66,8 @@ class ExtractionService:
             extraction_config: Confidence weights and decision thresholds
             embedder: EmbedderProtocol for generating embeddings (ADR-038)
             embedding_repo: EmbeddingRepository for persisting embeddings
-            event_dispatcher: EventDispatcherProtocol for dispatching domain events (ADR-043)
+            event_dispatcher: EventDispatcherProtocol for dispatching domain events
+                (ADR-043)
         """
         self._dispatcher = dispatcher
         self._places_client = places_client
@@ -193,16 +194,19 @@ class ExtractionService:
             place_metadata={
                 "cuisine": place.cuisine,
                 "price_range": place.price_range,
-                "location": f"{place.lat},{place.lng}" if place.lat and place.lng else None,
+                "location": f"{place.lat},{place.lng}"
+                if place.lat and place.lng
+                else None,
                 "source": place.source,
             },
         )
         await self._event_dispatcher.dispatch(place_saved_event)
 
         # Step 9: Generate and save embedding (ADR-040, ADR-025)
-        # Per research.md Option A: embedding failure is non-fatal. Log and continue.
-        # A missing embedding is a known, queryable state (places LEFT JOIN embeddings WHERE vector IS NULL)
-        # that a future backfill job can resolve. The user's save is confirmed regardless.
+        # Per research.md Option A: embedding failure is non-fatal. Log and
+        # continue. A missing embedding is a known, queryable state (places LEFT
+        # JOIN embeddings WHERE vector IS NULL) that a future backfill job can
+        # resolve. The user's save is confirmed regardless.
         try:
             description = self._build_description(place)
             vectors = await self._embedder.embed([description], input_type="document")
@@ -211,9 +215,11 @@ class ExtractionService:
                 place_id=place_id, vector=vectors[0], model_name=model_name
             )
         except Exception as e:
-            # TODO: backfill job to generate embeddings for places with vector IS NULL
+            # TODO: backfill job to generate embeddings for places with
+            # vector IS NULL
             logger.warning(
-                "Failed to generate embedding for place %s (non-fatal): %s. Place saved, taste signal captured.",
+                "Failed to generate embedding for place %s (non-fatal): %s. "
+                "Place saved, taste signal captured.",
                 place_id,
                 e,
                 exc_info=True,

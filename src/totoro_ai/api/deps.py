@@ -15,7 +15,6 @@ from totoro_ai.db.repositories import (
     SQLAlchemyEmbeddingRepository,
     SQLAlchemyPlaceRepository,
     SQLAlchemyRecallRepository,
-    SQLAlchemyTasteModelRepository,
 )
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
@@ -62,9 +61,17 @@ async def get_event_dispatcher(
     # Create EventDispatcher with handler registry
     dispatcher = EventDispatcher(background_tasks=background_tasks)
     dispatcher.register_handler("place_saved", handlers.on_place_saved)  # type: ignore[arg-type]
-    dispatcher.register_handler("recommendation_accepted", handlers.on_recommendation_accepted)  # type: ignore[arg-type]
-    dispatcher.register_handler("recommendation_rejected", handlers.on_recommendation_rejected)  # type: ignore[arg-type]
-    dispatcher.register_handler("onboarding_signal", handlers.on_onboarding_signal)  # type: ignore[arg-type]
+    dispatcher.register_handler(
+        "recommendation_accepted",
+        handlers.on_recommendation_accepted,  # type: ignore[arg-type]
+    )
+    dispatcher.register_handler(
+        "recommendation_rejected",
+        handlers.on_recommendation_rejected,  # type: ignore[arg-type]
+    )
+    dispatcher.register_handler(
+        "onboarding_signal", handlers.on_onboarding_signal  # type: ignore[arg-type]
+    )
 
     return dispatcher
 

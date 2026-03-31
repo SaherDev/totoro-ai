@@ -98,8 +98,7 @@ class RankingService:
         ]
 
         similarity = sum(
-            taste_vector.get(dim, 0.5) * observation.get(dim, 0.5)
-            for dim in dimensions
+            taste_vector.get(dim, 0.5) * observation.get(dim, 0.5) for dim in dimensions
         )
 
         # Normalize to [0, 1] (max possible is 8 if all are 1.0)
@@ -136,7 +135,8 @@ class RankingService:
                 observations.crowd_tolerance, candidate.get("crowd_level")
             ),
             "cuisine_adventurousness": self._lookup_obs(
-                observations.cuisine_adventurousness, candidate.get("cuisine_adventurousness")
+                observations.cuisine_adventurousness,
+                candidate.get("cuisine_adventurousness"),
             ),
             "time_of_day_preference": self._lookup_obs(
                 observations.time_of_day_preference, candidate.get("time_of_day")

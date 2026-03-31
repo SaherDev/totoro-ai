@@ -22,7 +22,9 @@
       "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)",
       "Bash(python -m py_compile src/totoro_ai/db/models.py)",
       "Bash(alembic upgrade:*)",
-      "Bash(grep -h \"down_revision\" alembic/versions/*.py)"
+      "Bash(grep -h \"down_revision\" alembic/versions/*.py)",
+      "Bash(xargs ls:*)",
+      "Bash(grep -r \"onboarding\\\\|OnboardingSignal\" tests/ --include=*.py)"
     ]
   }
 }

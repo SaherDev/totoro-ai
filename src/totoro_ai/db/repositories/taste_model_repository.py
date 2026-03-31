@@ -3,7 +3,7 @@
 from typing import Any, Protocol
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.db.models import InteractionLog, SignalType, TasteModel
@@ -58,7 +58,8 @@ class TasteModelRepository(Protocol):
             signal_type: Type of signal (save, accepted, rejected, etc.)
             place_id: Place identifier (nullable for some signal types)
             gain: Signal strength/weight from config
-            context: Additional context {location, time_of_day, session_id, recommendation_id}
+            context: Additional context {location, time_of_day, session_id,
+                recommendation_id}
 
         Raises:
             Exception: If log write fails, caller must abort cache update
@@ -127,8 +128,9 @@ class SQLAlchemyTasteModelRepository:
     ) -> None:
         """Record a behavioral signal in the interaction log
 
-        Strict consistency: If this write fails, the caller MUST abort any cache updates.
-        The interaction_log is the canonical source of truth for taste model state.
+        Strict consistency: If this write fails, the caller MUST abort any
+        cache updates. The interaction_log is the canonical source of truth
+        for taste model state.
         """
         log_entry = InteractionLog(
             id=str(uuid4()),
