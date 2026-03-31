@@ -50,10 +50,12 @@ class RecallRepository(Protocol):
             rrf_k: RRF constant (typically 60)
             candidate_multiplier: Pre-fetch N×limit candidates before RRF merge
             min_rrf_score: Minimum RRF score threshold (filters low-relevance results)
-            max_cosine_distance: Maximum cosine distance for vector candidates (filters dissimilar vectors before RRF)
+            max_cosine_distance: Maximum cosine distance for vector candidates
+                (filters dissimilar vectors before RRF)
 
         Returns:
-            List of RecallRow dicts ordered by RRF score descending, filtered by both thresholds
+            List of RecallRow dicts ordered by RRF score descending,
+            filtered by both thresholds
         """
         ...
 
@@ -243,7 +245,8 @@ class SQLAlchemyRecallRepository:
                   ))
             ORDER BY
                 ts_rank(
-                    to_tsvector('english', p.place_name || ' ' || COALESCE(p.cuisine, '')),
+                    to_tsvector('english',
+                        p.place_name || ' ' || COALESCE(p.cuisine, '')),
                     to_tsquery('english', replace(
                         plainto_tsquery('english', :query_text)::text,
                         ' & ', ' | '

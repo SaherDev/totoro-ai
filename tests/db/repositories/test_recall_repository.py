@@ -51,7 +51,7 @@ class TestRecallRepositoryVectorTextMatch:
     async def test_hybrid_search_returns_results_matching_both_methods(
         self, repo, mock_session
     ):
-        """Verify result when query matches both vector similarity and full-text search."""
+        """Verify result when query matches both vector and full-text search."""
         result_dicts = [
             {
                 "place_id": "place-1",

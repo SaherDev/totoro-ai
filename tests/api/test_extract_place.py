@@ -93,42 +93,56 @@ def test_extract_place_unsupported_input_returns_422() -> None:
 def test_extract_place_low_confidence_requires_confirmation() -> None:
     """Test that low confidence (0.30 < score < 0.70) requires confirmation.
 
-    Expected response when confidence is in confirmation zone:
-    {
-        "place_id": null,
-        "place": { ... },
-        "confidence": 0.55,
-        "requires_confirmation": true,
-        "source_url": null
-    }
-
-    Note: Confirmation zone is rare with current scoring (PLAIN_TEXT base 0.70).
-    Most real inputs either exceed 0.70 (save) or drop to 0.30 (error).
-    This zone is more likely with multi-source extraction (Phase 4+).
+    Mocks the extraction service to return a mid-confidence result so the
+    endpoint response contract is tested without invoking the real LLM pipeline.
     """
+    from totoro_ai.api.deps import get_extraction_service
+    from totoro_ai.api.schemas.extract_place import (
+        ExtractPlaceResponse,
+        PlaceExtraction,
+    )
+
+    mock_place = PlaceExtraction(
+        place_name="Unknown Place",
+        address="Somewhere, City",
+        cuisine=None,
+        price_range=None,
+        lat=None,
+        lng=None,
+        source_url=None,
+    )
+    mock_response = ExtractPlaceResponse(
+        place_id=None,
+        place=mock_place,
+        confidence=0.55,
+        requires_confirmation=True,
+        source_url=None,
+    )
+
+    mock_service = AsyncMock()
+    mock_service.run.return_value = mock_response
+
+    app.dependency_overrides[get_extraction_service] = lambda: mock_service
     client = TestClient(app)
 
-    # Ambiguous input will likely trigger error (confidence ≤ 0.30)
-    # Rather than confirmation (0.30 < confidence < 0.70)
-    request = ExtractPlaceRequest(
-        user_id="test-user",
-        raw_input="unknown place somewhere",
-    )
+    try:
+        request = ExtractPlaceRequest(
+            user_id="test-user",
+            raw_input="unknown place somewhere",
+        )
 
-    response = client.post(
-        "/v1/extract-place",
-        json=request.model_dump(),
-    )
+        response = client.post(
+            "/v1/extract-place",
+            json=request.model_dump(),
+        )
 
-    # Current behavior: ambiguous input triggers error, not confirmation
-    # This is correct — threshold guards against unreliable extractions
-    assert response.status_code in [200, 422]
-    if response.status_code == 200:
+        assert response.status_code == 200
         data = response.json()
-        if data.get("requires_confirmation"):
-            # If we do get confirmation, verify the structure
-            assert data.get("place_id") is None
-            assert 0.30 < data.get("confidence", 0) < 0.70
+        assert data["place_id"] is None
+        assert data["requires_confirmation"] is True
+        assert 0.30 < data["confidence"] < 0.70
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_extract_place_deduplication() -> None:
