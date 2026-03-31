@@ -361,6 +361,10 @@ testing with mock repositories and swapping implementations without
 touching service code. All database writes include try/except blocks
 with explicit rollback and structured error logging.
 
+### Taste Model
+
+The taste model builds a per-user 8-dimensional preference vector from behavioral signals (save, accept, reject, onboarding). Each signal updates the vector via EMA with config-driven learning rates and gain modulation. The vector feeds into RankingService for personalized scoring. Full architecture: [docs/taste-model-architecture.md](taste-model-architecture.md).
+
 ## Key Boundaries
 
 - One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
