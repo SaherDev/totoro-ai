@@ -122,7 +122,10 @@ class TasteModelService:
                 "confirmed": confirmed,
             },
         )
-        await self._increment_and_update_confidence(user_id)
+        place = await self.place_repo.get_by_id(place_id)
+        await self._apply_taste_update(
+            user_id, self._place_to_metadata(place), gain, is_positive=confirmed
+        )
 
     async def get_taste_vector(self, user_id: str) -> dict[str, float]:
         taste_model = await self.repository.get_by_user_id(user_id)
@@ -171,20 +174,24 @@ class TasteModelService:
         await self.repository.upsert(user_id=user_id, parameters=new_vector)
         await self.session.commit()
 
-    async def _increment_and_update_confidence(self, user_id: str) -> None:
-        taste_model = await self.repository.get_by_user_id(user_id)
-        current_vector = (
-            taste_model.parameters.copy()
-            if taste_model is not None
-            else DEFAULT_VECTOR.copy()
-        )
-        await self.repository.upsert(user_id=user_id, parameters=current_vector)
-        await self.session.commit()
-
     def _place_to_metadata(self, place: Place | None) -> dict[str, Any]:
         if place is None:
             return {}
-        return {"price_range": place.price_range}
+        hour = place.created_at.hour
+        if 5 <= hour <= 10:
+            time_of_day = "breakfast"
+        elif 11 <= hour <= 14:
+            time_of_day = "lunch"
+        elif 15 <= hour <= 20:
+            time_of_day = "dinner"
+        else:
+            time_of_day = "late_night"
+        metadata: dict[str, Any] = {"time_of_day": time_of_day}
+        if place.price_range is not None:
+            metadata["price_range"] = place.price_range
+        if place.ambiance is not None:
+            metadata["ambiance"] = place.ambiance
+        return metadata
 
     def _get_observation_value(
         self, dimension: str, place_metadata: dict[str, Any]
