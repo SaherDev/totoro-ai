@@ -6,6 +6,7 @@ from sqlalchemy import text
 from totoro_ai.api.errors import register_error_handlers
 from totoro_ai.api.routes.consult import router as consult_router
 from totoro_ai.api.routes.extract_place import router as extract_place_router
+from totoro_ai.api.routes.feedback import router as feedback_router
 from totoro_ai.api.routes.recall import router as recall_router
 from totoro_ai.core.config import get_config
 from totoro_ai.db.session import _get_session_factory
@@ -43,6 +44,7 @@ async def health() -> dict[str, str]:
 # Include routers
 router.include_router(consult_router, prefix="")
 router.include_router(extract_place_router, prefix="")
+router.include_router(feedback_router, prefix="")
 router.include_router(recall_router, prefix="")
 app.include_router(router)
 
