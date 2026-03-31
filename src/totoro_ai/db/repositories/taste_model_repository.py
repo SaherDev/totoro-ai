@@ -1,9 +1,10 @@
 """TasteModelRepository — Protocol and implementation for taste model persistence"""
 
+import math
 from typing import Any, Protocol
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.db.models import InteractionLog, SignalType, TasteModel
@@ -27,16 +28,17 @@ class TasteModelRepository(Protocol):
         self,
         user_id: str,
         parameters: dict[str, float],
-        confidence: float,
-        interaction_count: int,
     ) -> TasteModel:
-        """Insert or update a taste model profile
+        """Insert or update a taste model profile with atomic count increment
+
+        interaction_count is incremented atomically in the DB (avoids
+        read-modify-write race when concurrent signals arrive for the same user).
+        confidence is recalculated in the same statement as
+        1 − exp(−(count + 1) / 10).
 
         Args:
             user_id: User identifier
             parameters: 8-dimension taste vector {dimension: float}
-            confidence: Confidence score [0, 1] calculated as 1 − e^(−count / 10)
-            interaction_count: Total interaction count
 
         Returns:
             Persisted TasteModel record
@@ -88,35 +90,45 @@ class SQLAlchemyTasteModelRepository:
         self,
         user_id: str,
         parameters: dict[str, float],
-        confidence: float,
-        interaction_count: int,
     ) -> TasteModel:
-        """Insert or update a taste model profile with atomic increment"""
-        # Get existing record
-        stmt = select(TasteModel).where(TasteModel.user_id == user_id)
-        result = await self.session.execute(stmt)
-        existing = result.scalar_one_or_none()
+        """Insert or update a taste model profile with atomic count increment
 
-        if existing:
-            # Update existing record
-            existing.parameters = parameters
-            existing.confidence = confidence
-            existing.interaction_count = interaction_count
-            await self.session.flush()
-            return existing
-        else:
-            # Create new record
-            new_record = TasteModel(
-                id=str(uuid4()),
-                user_id=user_id,
-                model_version="1.0",  # Initial version
+        interaction_count is incremented in SQL (interaction_count + 1) so two
+        concurrent calls for the same user cannot both read count=5 and both
+        write back 6, losing one increment.
+        """
+        # Atomic UPDATE: increment count and recompute confidence in one statement
+        stmt = (
+            update(TasteModel)
+            .where(TasteModel.user_id == user_id)
+            .values(
                 parameters=parameters,
-                confidence=confidence,
-                interaction_count=interaction_count,
+                interaction_count=TasteModel.interaction_count + 1,
+                confidence=1
+                - func.exp(-(TasteModel.interaction_count + 1) / 10.0),
             )
-            self.session.add(new_record)
-            await self.session.flush()
-            return new_record
+        )
+        result = await self.session.execute(stmt)
+
+        if result.rowcount > 0:  # type: ignore[attr-defined]
+            # Re-fetch so the returned object reflects the DB state
+            fetch = await self.session.execute(
+                select(TasteModel).where(TasteModel.user_id == user_id)
+            )
+            return fetch.scalar_one()
+
+        # New user — INSERT with count=1 and confidence = 1 − e^(−1/10)
+        new_record = TasteModel(
+            id=str(uuid4()),
+            user_id=user_id,
+            model_version="1.0",
+            parameters=parameters,
+            confidence=1 - math.exp(-1 / 10.0),
+            interaction_count=1,
+        )
+        self.session.add(new_record)
+        await self.session.flush()
+        return new_record
 
     async def log_interaction(
         self,

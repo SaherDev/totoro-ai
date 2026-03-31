@@ -24,6 +24,10 @@ class PlaceRepository(Protocol):
     - save(): Insert new place or update existing (upsert semantics)
     """
 
+    async def get_by_id(self, place_id: str) -> Place | None:
+        """Get place by primary key."""
+        ...
+
     async def get_by_provider(self, provider: str, external_id: str) -> Place | None:
         """Get place by provider and external ID.
 
@@ -69,6 +73,12 @@ class SQLAlchemyPlaceRepository:
             session: AsyncSession for database operations
         """
         self._session = session
+
+    async def get_by_id(self, place_id: str) -> Place | None:
+        return cast(
+            Place | None,
+            await self._session.scalar(select(Place).where(Place.id == place_id)),
+        )
 
     async def get_by_provider(self, provider: str, external_id: str) -> Place | None:
         """Get place by provider and external ID.
