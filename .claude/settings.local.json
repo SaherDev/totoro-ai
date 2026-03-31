@@ -15,7 +15,14 @@
       "Bash(.specify/scripts/bash/update-agent-context.sh claude:*)",
       "Bash(git commit:*)",
       "Bash(for q:*)",
-      "Bash(do echo:*)"
+      "Bash(do echo:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh --json --short-name \"taste-model\" \"implement the taste model for Totoro AI: EMA updates from behavioral signals, interaction log, EventDispatcher wiring, TasteModelRepository, personalization routing, and consult ranking integration\")",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json 2>&1)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)",
+      "Bash(python -m py_compile src/totoro_ai/db/models.py)",
+      "Bash(alembic upgrade:*)",
+      "Bash(grep -h \"down_revision\" alembic/versions/*.py)"
     ]
   }
 }
