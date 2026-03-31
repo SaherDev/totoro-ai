@@ -1,6 +1,7 @@
 """Extraction service orchestrating the extraction pipeline."""
 
 import logging
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from totoro_ai.api.errors import ExtractionFailedNoMatchError
@@ -12,9 +13,13 @@ from totoro_ai.core.extraction.dispatcher import (
     UnsupportedInputError,
 )
 from totoro_ai.core.extraction.places_client import PlacesClient
+from totoro_ai.core.events.events import PlaceSaved
 from totoro_ai.db.models import Place
 from totoro_ai.db.repositories import EmbeddingRepository, PlaceRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
+
+if TYPE_CHECKING:
+    from totoro_ai.core.events.dispatcher import EventDispatcherProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +55,7 @@ class ExtractionService:
         extraction_config: ExtractionConfig,
         embedder: EmbedderProtocol,
         embedding_repo: EmbeddingRepository,
+        event_dispatcher: "EventDispatcherProtocol",
     ) -> None:
         """Initialize service with dependencies.
 
@@ -60,6 +66,7 @@ class ExtractionService:
             extraction_config: Confidence weights and decision thresholds
             embedder: EmbedderProtocol for generating embeddings (ADR-038)
             embedding_repo: EmbeddingRepository for persisting embeddings
+            event_dispatcher: EventDispatcherProtocol for dispatching domain events (ADR-043)
         """
         self._dispatcher = dispatcher
         self._places_client = places_client
@@ -67,6 +74,7 @@ class ExtractionService:
         self._extraction_config = extraction_config
         self._embedder = embedder
         self._embedding_repo = embedding_repo
+        self._event_dispatcher = event_dispatcher
 
     async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
         """Extract and save (or confirm) a place from raw input.
@@ -176,7 +184,25 @@ class ExtractionService:
 
         await self._place_repo.save(place)
 
-        # Step 8: Generate and save embedding (ADR-040, ADR-025)
+        # Step 8: Dispatch PlaceSaved event (before embedding, per ADR-043)
+        # This ensures the taste signal is captured even if embedding fails.
+        # Handler runs as a background task after HTTP 200 response.
+        place_saved_event = PlaceSaved(
+            user_id=user_id,
+            place_id=place_id,
+            place_metadata={
+                "cuisine": place.cuisine,
+                "price_range": place.price_range,
+                "location": f"{place.lat},{place.lng}" if place.lat and place.lng else None,
+                "source": place.source,
+            },
+        )
+        await self._event_dispatcher.dispatch(place_saved_event)
+
+        # Step 9: Generate and save embedding (ADR-040, ADR-025)
+        # Per research.md Option A: embedding failure is non-fatal. Log and continue.
+        # A missing embedding is a known, queryable state (places LEFT JOIN embeddings WHERE vector IS NULL)
+        # that a future backfill job can resolve. The user's save is confirmed regardless.
         try:
             description = self._build_description(place)
             vectors = await self._embedder.embed([description], input_type="document")
@@ -185,8 +211,13 @@ class ExtractionService:
                 place_id=place_id, vector=vectors[0], model_name=model_name
             )
         except Exception as e:
-            logger.error("Failed to generate embedding for place %s: %s", place_id, e)
-            raise
+            # TODO: backfill job to generate embeddings for places with vector IS NULL
+            logger.warning(
+                "Failed to generate embedding for place %s (non-fatal): %s. Place saved, taste signal captured.",
+                place_id,
+                e,
+                exc_info=True,
+            )
 
         return ExtractPlaceResponse(
             place_id=place_id,
