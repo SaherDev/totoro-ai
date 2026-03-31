@@ -15,6 +15,26 @@ Format:
 
 ---
 
+## ADR-046: WholeDocument chunking adopted as embedding strategy
+
+**Date:** 2026-03-31
+**Status:** accepted
+**Context:** Evaluated two chunking strategies against 18 labeled queries
+using Voyage 3.5-lite embeddings. Strategy A (whole-document) concatenates
+place_name, cuisine, and address into one string. Strategy B (field-aware)
+generates three separate embeddings per place for identity, location, and context.
+**Decision:** Use WholeDocument chunking. Strategy A achieved 83.3% top-1 and
+100% top-3 accuracy vs 66.7% and 94.4% for Strategy B. The current
+ExtractionService._build_description already implements this strategy and
+requires no changes. ADR-007 superseded by ADR-040.
+**Consequences:** No changes to ExtractionService or EmbeddingRepository for
+production embedding writes. ChunkingStrategy Protocol and both implementations
+remain in chunking.py for future re-evaluation if the place schema evolves.
+Interview claim: tested whole-document vs field-aware chunking on 18 labeled
+queries — whole-document achieved 83.3% top-1 retrieval accuracy.
+
+---
+
 ## ADR-045: Hybrid search for recall via pgvector + FTS + RRF
 
 **Date:** 2026-03-31
