@@ -2,9 +2,20 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from uuid import UUID
 
-from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from totoro_ai.db.base import Base
@@ -108,9 +119,13 @@ class InteractionLog(Base):
 
     __tablename__ = "interaction_log"
 
-    id: Mapped[str] = mapped_column(PGUUID, primary_key=True, default=lambda: str(UUID(int=0)))
+    id: Mapped[str] = mapped_column(
+        PGUUID, primary_key=True, default=lambda: str(UUID(int=0))
+    )
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    signal_type: Mapped[SignalType] = mapped_column(Enum(SignalType, native_enum=True), nullable=False)
+    signal_type: Mapped[SignalType] = mapped_column(
+        Enum(SignalType, native_enum=True), nullable=False
+    )
     place_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("places.id", ondelete="SET NULL"), nullable=True
     )

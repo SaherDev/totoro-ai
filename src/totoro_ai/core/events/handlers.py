@@ -1,19 +1,20 @@
 """Event handlers for domain events
 
 Handlers wrap TasteModelService calls with error handling and Langfuse tracing.
-Per ADR-043, failures are logged and traced but never propagated to user-facing responses.
+Per ADR-043, failures are logged and traced but never propagated to user-facing
+responses.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from langfuse import Langfuse
 
 from totoro_ai.core.events.events import (
     OnboardingSignal,
+    PlaceSaved,
     RecommendationAccepted,
     RecommendationRejected,
-    PlaceSaved,
 )
 
 if TYPE_CHECKING:
@@ -25,7 +26,9 @@ logger = logging.getLogger(__name__)
 class EventHandlers:
     """Container for event handler functions"""
 
-    def __init__(self, taste_service: "TasteModelService", langfuse: Langfuse | None = None) -> None:
+    def __init__(
+        self, taste_service: "TasteModelService", langfuse: Langfuse | None = None
+    ) -> None:
         """Initialize handlers with dependencies
 
         Args:
@@ -129,13 +132,21 @@ class EventHandlers:
                 self.langfuse.capture_message(
                     message="OnboardingSignal event handled",
                     level="info",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id, "confirmed": event.confirmed},
+                    metadata={
+                        "event_id": event.event_id,
+                        "user_id": event.user_id,
+                        "confirmed": event.confirmed,
+                    },
                 )
         except Exception as exc:
             logger.error(
                 f"Failed to update taste model on onboarding signal: {exc}",
                 exc_info=True,
-                extra={"user_id": event.user_id, "place_id": event.place_id, "confirmed": event.confirmed},
+                extra={
+                    "user_id": event.user_id,
+                    "place_id": event.place_id,
+                    "confirmed": event.confirmed,
+                },
             )
             if self.langfuse:
                 self.langfuse.capture_message(

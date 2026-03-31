@@ -219,7 +219,8 @@ class TasteModelService:
             user_id: User identifier
             place_metadata: Place attributes for v_observation
             gain: Signal gain/weight from config
-            is_positive: True for positive signals (save, accepted), False for negative (rejected)
+            is_positive: True for positive signals (save, accepted); False for
+                negative (rejected)
         """
         # Get current taste model or create default
         taste_model = await self.repository.get_by_user_id(user_id)
@@ -239,7 +240,8 @@ class TasteModelService:
             v_prior = v_current
 
             if is_positive:
-                # Positive formula: v_new = α × |gain| × v_obs + (1 − α × |gain|) × v_current
+                # Positive: v_new = α × |gain| × v_obs + (1 − α × |gain|) ×
+                # v_current
                 alpha_gain = alpha * abs(gain)
                 v_new = alpha_gain * v_observation + (1 - alpha_gain) * v_current
             else:
@@ -294,7 +296,9 @@ class TasteModelService:
         # Commit transaction
         await self.session.commit()
 
-    def _get_observation_value(self, dimension: str, place_metadata: dict[str, Any]) -> float:
+    def _get_observation_value(
+        self, dimension: str, place_metadata: dict[str, Any]
+    ) -> float:
         """Get v_observation for a dimension from place metadata
 
         Maps place attributes to observation values via config lookup table.
@@ -337,7 +341,9 @@ class TasteModelService:
             return 0.5
 
         # Look up mapped value
-        mapped_value = dimension_obs.get(value) if isinstance(dimension_obs, dict) else None
+        mapped_value = (
+            dimension_obs.get(value) if isinstance(dimension_obs, dict) else None
+        )
         return mapped_value if mapped_value is not None else 0.5
 
     def _blend_vectors(
@@ -358,6 +364,7 @@ class TasteModelService:
         """
         default_weight = 1 - personal_weight
         return {
-            dim: personal.get(dim, 0.5) * personal_weight + defaults.get(dim, 0.5) * default_weight
+            dim: personal.get(dim, 0.5) * personal_weight
+            + defaults.get(dim, 0.5) * default_weight
             for dim in self.TASTE_DIMENSIONS
         }
