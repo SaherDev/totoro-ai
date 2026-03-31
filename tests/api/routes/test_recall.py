@@ -35,7 +35,7 @@ class TestRecallRouteHappyPath:
     def test_recall_returns_results_with_match_reason(
         self, client, mock_recall_service
     ):
-        """Verify HTTP 200, results not empty, each has match_reason, total matches count."""
+        """Verify HTTP 200, results not empty, each has match_reason."""
         # Setup mock response
         mock_response = RecallResponse(
             results=[

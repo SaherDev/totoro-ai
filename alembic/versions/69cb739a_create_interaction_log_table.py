@@ -16,45 +16,34 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Create enum type for signal_type
-    signal_type_enum = sa.Enum(
-        'save',
-        'accepted',
-        'rejected',
-        'ignored',
-        'repeat_visit',
-        'search_accepted',
-        'onboarding_explicit',
-        name='signaltype',
-        native_enum=True
-    )
-    signal_type_enum.create(op.get_bind(), checkfirst=True)
-
-    # Create interaction_log table
-    op.create_table(
-        'interaction_log',
-        sa.Column('id', sa.UUID(), nullable=False),
-        sa.Column('user_id', sa.String(), nullable=False),
-        sa.Column('signal_type', signal_type_enum, nullable=False),
-        sa.Column('place_id', sa.UUID(), nullable=True),
-        sa.Column('gain', sa.Float(), nullable=False),
-        sa.Column('context', sa.JSON(), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-        sa.ForeignKeyConstraint(['place_id'], ['places.id'], ondelete='SET NULL'),
-        sa.PrimaryKeyConstraint('id')
+    op.execute(
+        "DO $$ BEGIN "
+        "CREATE TYPE signaltype AS ENUM ("
+        "'save', 'accepted', 'rejected', 'ignored', "
+        "'repeat_visit', 'search_accepted', 'onboarding_explicit'"
+        "); "
+        "EXCEPTION WHEN duplicate_object THEN null; "
+        "END $$"
     )
 
-    # Create indexes
+    op.execute("""
+        CREATE TABLE interaction_log (
+            id UUID NOT NULL,
+            user_id VARCHAR NOT NULL,
+            signal_type signaltype NOT NULL,
+            place_id VARCHAR,
+            gain FLOAT NOT NULL,
+            context JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (id),
+            FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE SET NULL
+        )
+    """)
+
     op.create_index(op.f('ix_interaction_log_user_id'), 'interaction_log', ['user_id'], unique=False)
 
 
 def downgrade() -> None:
-    # Drop index
     op.drop_index(op.f('ix_interaction_log_user_id'), table_name='interaction_log')
-
-    # Drop table
     op.drop_table('interaction_log')
-
-    # Drop enum type
-    signal_type_enum = sa.Enum(name='signaltype', native_enum=True)
-    signal_type_enum.drop(op.get_bind(), checkfirst=True)
+    op.execute("DROP TYPE IF EXISTS signaltype")

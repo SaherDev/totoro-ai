@@ -125,7 +125,12 @@ class InteractionLog(Base):
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     signal_type: Mapped[SignalType] = mapped_column(
-        Enum(SignalType, native_enum=True), nullable=False
+        Enum(
+            SignalType,
+            native_enum=True,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        nullable=False,
     )
     place_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("places.id", ondelete="SET NULL"), nullable=True
