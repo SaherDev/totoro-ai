@@ -6,29 +6,26 @@ from totoro_ai.api.deps import get_extraction_service
 from totoro_ai.api.schemas.extract_place import (
     ExtractPlaceRequest,
     ExtractPlaceResponse,
+    ProvisionalResponse,
 )
 from totoro_ai.core.extraction.service import ExtractionService
 
 router = APIRouter()
 
 
-@router.post("/extract-place", response_model=ExtractPlaceResponse)
+@router.post(
+    "/extract-place",
+    response_model=ExtractPlaceResponse | ProvisionalResponse,
+)
 async def extract_place(
     request: ExtractPlaceRequest,
     service: ExtractionService = Depends(get_extraction_service),  # noqa: B008
-) -> ExtractPlaceResponse:
-    """Extract and save (or confirm) a place from raw input.
-
-    Request body:
-    - user_id: User identifier
-    - raw_input: TikTok URL or plain text description
+) -> ExtractPlaceResponse | ProvisionalResponse:
+    """Extract and save (or confirm) places from raw input.
 
     Returns:
-    - 200: Place saved or requires confirmation
+    - 200: Places saved/confirmed or provisional response for background processing
     - 400: Validation error (empty input)
-    - 422: Extraction failed or unsupported input
     - 500: Internal error
-
-    The service handles all extraction logic; this route is a facade.
     """
     return await service.run(request.raw_input, request.user_id)

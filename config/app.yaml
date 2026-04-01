@@ -47,10 +47,11 @@ models:
 extraction:
   confidence_weights:
     base_scores:
-      CAPTION: 0.70
-      PLAIN_TEXT: 0.70
-      SPEECH: 0.60
-      OCR: 0.55
+      EMOJI_REGEX: 0.95
+      LLM_NER: 0.80
+      SUBTITLE_CHECK: 0.75
+      WHISPER_AUDIO: 0.65
+      VISION_FRAMES: 0.55
     places_modifiers:
       EXACT: 0.20
       FUZZY: 0.15
@@ -61,6 +62,9 @@ extraction:
   thresholds:
     store_silently: 0.70
     require_confirmation: 0.30
+  circuit_breaker:
+    failure_threshold: 5
+    cooldown_seconds: 900
   # Place fields that can be updated on re-submission (upsert semantics)
   mutable_fields:
     - place_name

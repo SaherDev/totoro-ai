@@ -78,9 +78,15 @@ class ExtractionThresholds(BaseModel):
     require_confirmation: float = 0.30
 
 
+class CircuitBreakerConfig(BaseModel):
+    failure_threshold: int = 5
+    cooldown_seconds: float = 900.0
+
+
 class ExtractionConfig(BaseModel):
     confidence_weights: ConfidenceWeights
     thresholds: ExtractionThresholds
+    circuit_breaker: CircuitBreakerConfig = CircuitBreakerConfig()
     mutable_fields: list[str] = [
         "place_name",
         "address",

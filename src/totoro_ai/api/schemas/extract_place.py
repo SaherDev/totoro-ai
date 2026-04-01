@@ -4,9 +4,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from totoro_ai.core.extraction.models import ExtractionLevel
+
 
 class PlaceExtraction(BaseModel):
-    """Structured output from LLM extraction step. Not persisted directly."""
+    """Structured output from LLM extraction step. Used by LLMNEREnricher."""
 
     place_name: str = Field(description="Name of the place")
     address: str = Field(description="Full address including city")
@@ -26,23 +28,42 @@ class ExtractPlaceRequest(BaseModel):
     raw_input: str = Field(description="TikTok URL or plain text")
 
 
-class ExtractPlaceResponse(BaseModel):
-    """Response body for extract-place endpoint."""
+class ExtractedPlaceSchema(BaseModel):
+    """Single validated place in the response."""
 
     place_id: str | None = Field(
-        description="UUID of saved place record; None when requires_confirmation=True"
+        description="UUID of saved place record; None if requires_confirmation"
     )
-    place: PlaceExtraction = Field(description="Extracted and validated place data")
-    confidence: float = Field(description="Confidence score (0.0-0.95)")
+    place_name: str
+    address: str | None = None
+    city: str | None = None
+    cuisine: str | None = None
+    confidence: float
+    resolved_by: ExtractionLevel
+    corroborated: bool = False
+    external_provider: str | None = None
+    external_id: str | None = None
     requires_confirmation: bool = Field(
-        description="True when 0.30 < confidence < 0.70; no DB write yet"
-    )
-    source_url: str | None = Field(
-        description="Original TikTok URL; None for plain text"
+        description="True when confidence < store_silently threshold"
     )
 
     @field_validator("confidence", mode="after")
     @classmethod
     def round_confidence(cls, v: float) -> float:
-        """Round confidence to 2 decimal places for clean JSON output."""
         return round(v, 2)
+
+
+class ExtractPlaceResponse(BaseModel):
+    """Response body for extract-place endpoint — multi-place support."""
+
+    status: Literal["complete"] = "complete"
+    places: list[ExtractedPlaceSchema]
+    source_url: str | None = Field(description="Original URL; None for plain text")
+
+
+class ProvisionalResponse(BaseModel):
+    """Response when background processing is needed."""
+
+    status: Literal["pending"] = "pending"
+    message: str = "We're still working on identifying this place."
+    pending_levels: list[ExtractionLevel] = Field(default_factory=list)
