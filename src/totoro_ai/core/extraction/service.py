@@ -1,19 +1,27 @@
-"""Extraction service orchestrating the extraction pipeline."""
+"""Three-phase extraction pipeline service (ADR-008, ADR-034).
+
+Phase 1: Enrichment — run all enrichers, populate context, dedup candidates
+Phase 2: Validation — validate candidates via Google Places in parallel
+Phase 3: Background — dispatch heavy enrichers if nothing validated
+"""
 
 import logging
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from totoro_ai.api.errors import ExtractionFailedNoMatchError
-from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
-from totoro_ai.core.config import ExtractionConfig, get_config
-from totoro_ai.core.events.events import PlaceSaved
-from totoro_ai.core.extraction.confidence import compute_confidence
-from totoro_ai.core.extraction.dispatcher import (
-    ExtractionDispatcher,
-    UnsupportedInputError,
+from totoro_ai.api.schemas.extract_place import (
+    ExtractedPlaceSchema,
+    ExtractPlaceResponse,
+    ProvisionalResponse,
 )
-from totoro_ai.core.extraction.places_client import PlacesClient
+from totoro_ai.core.config import ExtractionConfig, get_config
+from totoro_ai.core.events.events import ExtractionPending, PlaceSaved
+from totoro_ai.core.extraction.dedup import dedup_candidates
+from totoro_ai.core.extraction.input_parser import parse_input
+from totoro_ai.core.extraction.models import ExtractionContext, ExtractionLevel
+from totoro_ai.core.extraction.protocols import Enricher
+from totoro_ai.core.extraction.result import ExtractionResult
+from totoro_ai.core.extraction.validator import GooglePlacesValidator
 from totoro_ai.db.models import Place
 from totoro_ai.db.repositories import EmbeddingRepository, PlaceRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
@@ -25,188 +33,186 @@ logger = logging.getLogger(__name__)
 
 
 class ExtractionService:
-    """Orchestrate place extraction pipeline (ADR-008, ADR-034)."""
-
-    @staticmethod
-    def _build_description(place: Place) -> str:
-        """Build embedding input text from place fields.
-
-        Combines place_name, cuisine (if present), and address into a single
-        description string for embedding, separated by the configured separator.
-
-        Args:
-            place: Place entity with name, cuisine, address
-
-        Returns:
-            Description string with configured separator
-        """
-        parts = [place.place_name]
-        if place.cuisine:
-            parts.append(place.cuisine)
-        parts.append(place.address)
-        separator = get_config().embeddings.description_separator
-        return separator.join(parts)
+    """Orchestrate the three-phase extraction pipeline."""
 
     def __init__(
         self,
-        dispatcher: ExtractionDispatcher,
-        places_client: PlacesClient,
+        enricher_chain: list[Enricher],
+        validator: GooglePlacesValidator,
         place_repo: PlaceRepository,
         extraction_config: ExtractionConfig,
         embedder: EmbedderProtocol,
         embedding_repo: EmbeddingRepository,
         event_dispatcher: "EventDispatcherProtocol",
+        background_pending_levels: list[ExtractionLevel] | None = None,
     ) -> None:
-        """Initialize service with dependencies.
-
-        Args:
-            dispatcher: ExtractionDispatcher for input routing
-            places_client: PlacesClient for place validation
-            place_repo: PlaceRepository for place persistence (handles transactions)
-            extraction_config: Confidence weights and decision thresholds
-            embedder: EmbedderProtocol for generating embeddings (ADR-038)
-            embedding_repo: EmbeddingRepository for persisting embeddings
-            event_dispatcher: EventDispatcherProtocol for dispatching domain events
-                (ADR-043)
-        """
-        self._dispatcher = dispatcher
-        self._places_client = places_client
+        self._enricher_chain = enricher_chain
+        self._validator = validator
         self._place_repo = place_repo
         self._extraction_config = extraction_config
         self._embedder = embedder
         self._embedding_repo = embedding_repo
         self._event_dispatcher = event_dispatcher
+        self._background_pending_levels = background_pending_levels or [
+            ExtractionLevel.SUBTITLE_CHECK,
+            ExtractionLevel.WHISPER_AUDIO,
+            ExtractionLevel.VISION_FRAMES,
+        ]
 
-    async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
-        """Extract and save (or confirm) a place from raw input.
-
-        Pipeline:
-        1. Validate raw_input not empty
-        2. Dispatch to appropriate extractor
-        3. Validate place against Google Places
-        4. Compute confidence
-        5. Check thresholds:
-           - ≤ require_confirmation → error
-           - require_confirmation < score < store_silently → requires_confirmation=True
-           - ≥ store_silently → check dedup, save, return with place_id
-        6. Dedup by (external_provider, external_id) if match found
-        7. Write Place to database
+    async def run(
+        self, raw_input: str, user_id: str
+    ) -> ExtractPlaceResponse | ProvisionalResponse:
+        """Execute the three-phase extraction pipeline.
 
         Args:
-            raw_input: TikTok URL or plain text
+            raw_input: TikTok URL, plain text, or mixed input
             user_id: User identifier (validated by NestJS)
 
         Returns:
-            ExtractPlaceResponse with place data and status
+            ExtractPlaceResponse with validated places, or
+            ProvisionalResponse when background processing is dispatched
 
         Raises:
-            ValueError: If raw_input is empty (→ 400)
-            UnsupportedInputError: If no extractor matches (→ 422)
-            ExtractionFailedNoMatchError: If confidence ≤ require_confirmation (→ 422)
+            ValueError: If raw_input is empty
         """
-        # Step 1: Validate input
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
 
-        # Step 2: Dispatch to extractor
-        try:
-            result = await self._dispatcher.dispatch(raw_input)
-        except UnsupportedInputError:
-            raise
+        parsed = parse_input(raw_input)
 
-        if result is None:
-            raise ExtractionFailedNoMatchError("Extraction returned no result")
-
-        extraction = result.extraction
-
-        # Step 3: Validate against Google Places
-        places_match = await self._places_client.validate_place(
-            name=extraction.place_name,
-            location=extraction.address,
+        context = ExtractionContext(
+            url=parsed.url,
+            user_id=user_id,
+            supplementary_text=parsed.supplementary_text,
         )
 
-        # Step 4: Compute confidence
-        confidence = compute_confidence(
-            source=result.source,
-            match_quality=places_match.match_quality,
-            weights=self._extraction_config.confidence_weights,
-            corroborated=False,
-        )
+        # Phase 1: Enrichment — run all enrichers, then dedup
+        for enricher in self._enricher_chain:
+            await enricher.enrich(context)
+        dedup_candidates(context)
 
-        # Step 5: Apply thresholds
-        thresholds = self._extraction_config.thresholds
-
-        if confidence <= thresholds.require_confirmation:
-            raise ExtractionFailedNoMatchError(
-                f"Confidence too low: {confidence:.2f} ≤ {thresholds.require_confirmation}"  # noqa: E501
+        # Phase 2: Validation — validate candidates via Google Places
+        if context.candidates:
+            results = await self._validator.validate(
+                context.candidates, source_url=context.url
             )
+            if results:
+                response = await self._save_results(results, user_id, context.url)
+                return response
 
-        if confidence < thresholds.store_silently:
-            return ExtractPlaceResponse(
-                place_id=None,
-                place=extraction,
-                confidence=confidence,
-                requires_confirmation=True,
-                source_url=result.source_url,
-            )
+        # Phase 3: Background — dispatch heavy enrichers if nothing validated
+        pending = self._background_pending_levels if context.url else []
 
-        # Step 6: Confidence ≥ store_silently — check deduplication
-        if places_match.external_id:
-            existing = await self._place_repo.get_by_provider(
-                places_match.external_provider, places_match.external_id
-            )
-
-            if existing:
-                return ExtractPlaceResponse(
-                    place_id=existing.id,
-                    place=extraction,
-                    confidence=confidence,
-                    requires_confirmation=False,
-                    source_url=result.source_url,
+        if pending:
+            await self._event_dispatcher.dispatch(
+                ExtractionPending(
+                    user_id=user_id,
+                    url=context.url,
+                    supplementary_text=context.supplementary_text,
+                    pending_levels=[level.value for level in pending],
                 )
+            )
 
-        # Step 7: Write new Place to database
+        return ProvisionalResponse(
+            pending_levels=pending,
+        )
+
+    async def _save_results(
+        self,
+        results: list[ExtractionResult],
+        user_id: str,
+        source_url: str | None,
+    ) -> ExtractPlaceResponse:
+        """Save validated results to database and dispatch events."""
+        thresholds = self._extraction_config.thresholds
+        place_schemas: list[ExtractedPlaceSchema] = []
+        saved_place_ids: list[str] = []
+        saved_metadata: list[dict[str, object]] = []
+
+        for result in results:
+            requires_confirmation = result.confidence < thresholds.store_silently
+            place_id: str | None = None
+
+            above_threshold = result.confidence > thresholds.require_confirmation
+            if not requires_confirmation and above_threshold:
+                place_id = await self._save_one_place(result, user_id, source_url)
+                if place_id:
+                    saved_place_ids.append(place_id)
+                    saved_metadata.append(
+                        {
+                            "cuisine": result.cuisine,
+                            "source": result.resolved_by.value,
+                        }
+                    )
+
+            place_schemas.append(
+                ExtractedPlaceSchema(
+                    place_id=place_id,
+                    place_name=result.place_name,
+                    address=result.address,
+                    city=result.city,
+                    cuisine=result.cuisine,
+                    confidence=result.confidence,
+                    resolved_by=result.resolved_by,
+                    corroborated=result.corroborated,
+                    external_provider=result.external_provider,
+                    external_id=result.external_id,
+                    requires_confirmation=requires_confirmation,
+                )
+            )
+
+        # Dispatch batch PlaceSaved event for all saved places
+        if saved_place_ids:
+            await self._event_dispatcher.dispatch(
+                PlaceSaved(
+                    user_id=user_id,
+                    place_ids=saved_place_ids,
+                    place_metadata=saved_metadata,
+                )
+            )
+
+        return ExtractPlaceResponse(
+            places=place_schemas,
+            source_url=source_url,
+        )
+
+    async def _save_one_place(
+        self,
+        result: ExtractionResult,
+        user_id: str,
+        source_url: str | None,
+    ) -> str | None:
+        """Save a single place, handling dedup. Returns place_id or None."""
+        # Duplicate detection by (external_provider, external_id)
+        if result.external_id and result.external_provider:
+            existing = await self._place_repo.get_by_provider(
+                result.external_provider, result.external_id
+            )
+            if existing:
+                logger.debug(
+                    "Duplicate place skipped: %s (%s/%s)",
+                    result.place_name,
+                    result.external_provider,
+                    result.external_id,
+                )
+                return existing.id
+
         place_id = str(uuid4())
         place = Place(
             id=place_id,
             user_id=user_id,
-            place_name=places_match.validated_name or extraction.place_name,
-            address=extraction.address,
-            cuisine=extraction.cuisine,
-            price_range=extraction.price_range,
-            lat=places_match.lat,
-            lng=places_match.lng,
-            source_url=result.source_url,
-            external_provider=places_match.external_provider,
-            external_id=places_match.external_id,
-            confidence=confidence,
-            source=result.source.value,
+            place_name=result.place_name,
+            address=result.address or "",
+            cuisine=result.cuisine,
+            source_url=source_url,
+            external_provider=result.external_provider or "google",
+            external_id=result.external_id,
+            confidence=result.confidence,
+            source=result.resolved_by.value,
         )
-
         await self._place_repo.save(place)
 
-        # Step 8: Dispatch PlaceSaved event (before embedding, per ADR-043)
-        # This ensures the taste signal is captured even if embedding fails.
-        # Handler runs as a background task after HTTP 200 response.
-        place_saved_event = PlaceSaved(
-            user_id=user_id,
-            place_id=place_id,
-            place_metadata={
-                "cuisine": place.cuisine,
-                "price_range": place.price_range,
-                "location": f"{place.lat},{place.lng}"
-                if place.lat and place.lng
-                else None,
-                "source": place.source,
-            },
-        )
-        await self._event_dispatcher.dispatch(place_saved_event)
-
-        # Step 9: Generate and save embedding (ADR-040, ADR-025)
-        # Per research.md Option A: embedding failure is non-fatal. Log and
-        # continue. A missing embedding is a known, queryable state (places LEFT
-        # JOIN embeddings WHERE vector IS NULL) that a future backfill job can
-        # resolve. The user's save is confirmed regardless.
+        # Generate embedding (non-fatal per ADR-040)
         try:
             description = self._build_description(place)
             vectors = await self._embedder.embed([description], input_type="document")
@@ -215,20 +221,22 @@ class ExtractionService:
                 place_id=place_id, vector=vectors[0], model_name=model_name
             )
         except Exception as e:
-            # TODO: backfill job to generate embeddings for places with
-            # vector IS NULL
             logger.warning(
-                "Failed to generate embedding for place %s (non-fatal): %s. "
-                "Place saved, taste signal captured.",
+                "Failed to generate embedding for place %s (non-fatal): %s",
                 place_id,
                 e,
                 exc_info=True,
             )
 
-        return ExtractPlaceResponse(
-            place_id=place_id,
-            place=extraction,
-            confidence=confidence,
-            requires_confirmation=False,
-            source_url=result.source_url,
-        )
+        return place_id
+
+    @staticmethod
+    def _build_description(place: Place) -> str:
+        """Build embedding input text from place fields."""
+        parts = [place.place_name]
+        if place.cuisine:
+            parts.append(place.cuisine)
+        if place.address:
+            parts.append(place.address)
+        separator = get_config().embeddings.description_separator
+        return separator.join(parts)

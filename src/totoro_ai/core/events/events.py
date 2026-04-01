@@ -15,11 +15,20 @@ class DomainEvent(BaseModel):
 
 
 class PlaceSaved(DomainEvent):
-    """Event: User saved a place"""
+    """Event: User saved one or more places from a single extraction."""
 
     event_type: str = "place_saved"
-    place_id: str
-    place_metadata: dict[str, Any] = Field(default_factory=dict)
+    place_ids: list[str]
+    place_metadata: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ExtractionPending(DomainEvent):
+    """Event: Background extraction dispatched (ADR-042/043)."""
+
+    event_type: str = "extraction_pending"
+    url: str | None = None
+    supplementary_text: str = ""
+    pending_levels: list[str] = Field(default_factory=list)
 
 
 class RecommendationAccepted(DomainEvent):
