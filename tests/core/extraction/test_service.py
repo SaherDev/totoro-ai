@@ -68,6 +68,8 @@ def _mock_place_repo() -> AsyncMock:
     repo = AsyncMock()
     repo.get_by_provider = AsyncMock(return_value=None)
     repo.save = AsyncMock()
+    # save_many returns the places passed in (simulates successful save)
+    repo.save_many = AsyncMock(side_effect=lambda places: places)
     return repo
 
 
@@ -185,8 +187,10 @@ class TestExtractionService:
         with pytest.raises(ValueError, match="raw_input cannot be empty"):
             await service.run("", "user-1")
 
-    async def test_duplicate_place_skipped(self) -> None:
-        candidates = [CandidatePlace(name="Fuji Ramen", source=ExtractionLevel.LLM_NER)]
+    async def test_duplicate_place_returns_existing_id(self) -> None:
+        candidates = [
+            CandidatePlace(name="Fuji Ramen", source=ExtractionLevel.LLM_NER)
+        ]
         enricher = FakeEnricher(candidates)
 
         mock_places_client = AsyncMock()
@@ -199,11 +203,11 @@ class TestExtractionService:
             )
         )
 
-        # Existing place found — dedup should return existing ID
+        # save_many returns existing place (dedup handled by repo)
         existing_place = MagicMock()
         existing_place.id = "existing-place-uuid"
         place_repo = _mock_place_repo()
-        place_repo.get_by_provider = AsyncMock(return_value=existing_place)
+        place_repo.save_many = AsyncMock(return_value=[existing_place])
 
         validator = GooglePlacesValidator(mock_places_client, _weights)
 
@@ -220,8 +224,7 @@ class TestExtractionService:
         result = await service.run("Fuji Ramen", "user-1")
         assert isinstance(result, ExtractPlaceResponse)
         assert result.places[0].place_id == "existing-place-uuid"
-        # save() should NOT have been called since place already exists
-        place_repo.save.assert_not_called()
+        place_repo.save_many.assert_called_once()
 
     async def test_url_input_dispatches_background_on_no_results(self) -> None:
         service = ExtractionService(

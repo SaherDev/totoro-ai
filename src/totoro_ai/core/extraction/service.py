@@ -123,45 +123,70 @@ class ExtractionService:
         user_id: str,
         source_url: str | None,
     ) -> ExtractPlaceResponse:
-        """Save validated results to database and dispatch events."""
+        """Save validated results to database and dispatch events.
+
+        Uses batch save (single dedup query + single commit) instead of
+        N sequential saves.
+        """
         thresholds = self._extraction_config.thresholds
+
+        # Split results into saveable vs confirmation-required
+        saveable: list[tuple[ExtractionResult, Place]] = []
         place_schemas: list[ExtractedPlaceSchema] = []
+
+        for result in results:
+            requires_confirmation = (
+                result.confidence < thresholds.store_silently
+            )
+            above_threshold = (
+                result.confidence > thresholds.require_confirmation
+            )
+
+            if not requires_confirmation and above_threshold:
+                place_id = str(uuid4())
+                place = Place(
+                    id=place_id,
+                    user_id=user_id,
+                    place_name=result.place_name,
+                    address=result.address or "",
+                    cuisine=result.cuisine,
+                    source_url=source_url,
+                    external_provider=result.external_provider or "google",
+                    external_id=result.external_id,
+                    confidence=result.confidence,
+                    source=result.resolved_by.value,
+                )
+                saveable.append((result, place))
+            else:
+                place_schemas.append(
+                    self._to_schema(result, None, requires_confirmation)
+                )
+
+        # Batch save — one dedup query + one commit
         saved_place_ids: list[str] = []
         saved_metadata: list[dict[str, object]] = []
 
-        for result in results:
-            requires_confirmation = result.confidence < thresholds.store_silently
-            place_id: str | None = None
+        if saveable:
+            places_to_save = [place for _, place in saveable]
+            saved_places = await self._place_repo.save_many(places_to_save)
 
-            above_threshold = result.confidence > thresholds.require_confirmation
-            if not requires_confirmation and above_threshold:
-                place_id = await self._save_one_place(result, user_id, source_url)
-                if place_id:
-                    saved_place_ids.append(place_id)
-                    saved_metadata.append(
-                        {
-                            "cuisine": result.cuisine,
-                            "source": result.resolved_by.value,
-                        }
-                    )
-
-            place_schemas.append(
-                ExtractedPlaceSchema(
-                    place_id=place_id,
-                    place_name=result.place_name,
-                    address=result.address,
-                    city=result.city,
-                    cuisine=result.cuisine,
-                    confidence=result.confidence,
-                    resolved_by=result.resolved_by,
-                    corroborated=result.corroborated,
-                    external_provider=result.external_provider,
-                    external_id=result.external_id,
-                    requires_confirmation=requires_confirmation,
+            for (result, _), saved_place in zip(saveable, saved_places, strict=False):
+                place_schemas.append(
+                    self._to_schema(result, saved_place.id, False)
                 )
+                saved_place_ids.append(saved_place.id)
+                saved_metadata.append({
+                    "cuisine": result.cuisine,
+                    "source": result.resolved_by.value,
+                })
+
+        # Batch embeddings (non-fatal per ADR-040)
+        if saved_place_ids:
+            await self._generate_embeddings(
+                [place for _, place in saveable]
             )
 
-        # Dispatch batch PlaceSaved event for all saved places
+        # Dispatch batch PlaceSaved event
         if saved_place_ids:
             await self._event_dispatcher.dispatch(
                 PlaceSaved(
@@ -176,59 +201,46 @@ class ExtractionService:
             source_url=source_url,
         )
 
-    async def _save_one_place(
-        self,
+    @staticmethod
+    def _to_schema(
         result: ExtractionResult,
-        user_id: str,
-        source_url: str | None,
-    ) -> str | None:
-        """Save a single place, handling dedup. Returns place_id or None."""
-        # Duplicate detection by (external_provider, external_id)
-        if result.external_id and result.external_provider:
-            existing = await self._place_repo.get_by_provider(
-                result.external_provider, result.external_id
-            )
-            if existing:
-                logger.debug(
-                    "Duplicate place skipped: %s (%s/%s)",
-                    result.place_name,
-                    result.external_provider,
-                    result.external_id,
-                )
-                return existing.id
-
-        place_id = str(uuid4())
-        place = Place(
-            id=place_id,
-            user_id=user_id,
+        place_id: str | None,
+        requires_confirmation: bool,
+    ) -> ExtractedPlaceSchema:
+        return ExtractedPlaceSchema(
+            place_id=place_id,
             place_name=result.place_name,
-            address=result.address or "",
+            address=result.address,
+            city=result.city,
             cuisine=result.cuisine,
-            source_url=source_url,
-            external_provider=result.external_provider or "google",
-            external_id=result.external_id,
             confidence=result.confidence,
-            source=result.resolved_by.value,
+            resolved_by=result.resolved_by,
+            corroborated=result.corroborated,
+            external_provider=result.external_provider,
+            external_id=result.external_id,
+            requires_confirmation=requires_confirmation,
         )
-        await self._place_repo.save(place)
 
-        # Generate embedding (non-fatal per ADR-040)
+    async def _generate_embeddings(self, places: list[Place]) -> None:
+        """Generate embeddings for saved places. Non-fatal."""
         try:
-            description = self._build_description(place)
-            vectors = await self._embedder.embed([description], input_type="document")
-            model_name = get_config().models["embedder"].model
-            await self._embedding_repo.upsert_embedding(
-                place_id=place_id, vector=vectors[0], model_name=model_name
+            descriptions = [self._build_description(p) for p in places]
+            vectors = await self._embedder.embed(
+                descriptions, input_type="document"
             )
+            model_name = get_config().models["embedder"].model
+            for place, vector in zip(places, vectors, strict=False):
+                await self._embedding_repo.upsert_embedding(
+                    place_id=place.id,
+                    vector=vector,
+                    model_name=model_name,
+                )
         except Exception as e:
             logger.warning(
-                "Failed to generate embedding for place %s (non-fatal): %s",
-                place_id,
+                "Failed to generate embeddings (non-fatal): %s",
                 e,
                 exc_info=True,
             )
-
-        return place_id
 
     @staticmethod
     def _build_description(place: Place) -> str:

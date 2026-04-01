@@ -7,7 +7,7 @@ Handles upsert semantics (save) and lookup (get_by_provider) with error recovery
 import logging
 from typing import Protocol, cast
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.core.config import get_config
@@ -56,6 +56,19 @@ class PlaceRepository(Protocol):
 
         Raises:
             RuntimeError: If save operation fails (with cause chain via __cause__)
+        """
+        ...
+
+    async def save_many(self, places: list[Place]) -> list[Place]:
+        """Save multiple places in a single transaction.
+
+        Batch dedup lookup + insert/update + single commit.
+
+        Args:
+            places: List of Place entities to save
+
+        Returns:
+            List of saved Place records (matching input order)
         """
         ...
 
@@ -154,4 +167,71 @@ class SQLAlchemyPlaceRepository:
             raise RuntimeError(
                 f"Failed to save place "
                 f"({place.external_provider}/{place.external_id}): {e}"
+            ) from e
+
+    async def save_many(self, places: list[Place]) -> list[Place]:
+        """Save multiple places in a single transaction.
+
+        1. Batch dedup: one SELECT for all (provider, external_id) pairs
+        2. Update existing, add new
+        3. Single commit
+
+        Args:
+            places: List of Place entities to save
+
+        Returns:
+            List of saved Place records (matching input order)
+        """
+        if not places:
+            return []
+
+        try:
+            config = get_config()
+            mutable_fields = config.extraction.mutable_fields
+
+            # Batch dedup lookup — one query for all pairs
+            pairs = [
+                (p.external_provider, p.external_id)
+                for p in places
+                if p.external_id is not None
+            ]
+
+            existing_map: dict[tuple[str, str], Place] = {}
+            if pairs:
+                stmt = select(Place).where(
+                    tuple_(
+                        Place.external_provider, Place.external_id
+                    ).in_(pairs)
+                )
+                result = await self._session.execute(stmt)
+                for row in result.scalars().all():
+                    key = (row.external_provider, row.external_id or "")
+                    existing_map[key] = row
+
+            # Process each place: update existing or insert new
+            saved: list[Place] = []
+            for place in places:
+                key = (place.external_provider, place.external_id or "")
+                existing = existing_map.get(key)
+
+                if existing is not None:
+                    for field in mutable_fields:
+                        setattr(existing, field, getattr(place, field))
+                    saved.append(existing)
+                else:
+                    self._session.add(place)
+                    saved.append(place)
+
+            await self._session.commit()
+            return saved
+
+        except Exception as e:
+            await self._session.rollback()
+            logger.error(
+                "Failed to save %d places: %s",
+                len(places),
+                e,
+            )
+            raise RuntimeError(
+                f"Failed to save {len(places)} places: {e}"
             ) from e
