@@ -37,12 +37,18 @@ class TestCandidatePlace:
         assert c.corroborated is False
 
     def test_corroborated_default_false(self) -> None:
-        c = CandidatePlace(name="X", city=None, cuisine=None, source=ExtractionLevel.LLM_NER)
+        c = CandidatePlace(
+            name="X", city=None, cuisine=None, source=ExtractionLevel.LLM_NER
+        )
         assert c.corroborated is False
 
     def test_corroborated_can_be_set(self) -> None:
         c = CandidatePlace(
-            name="X", city=None, cuisine=None, source=ExtractionLevel.LLM_NER, corroborated=True
+            name="X",
+            city=None,
+            cuisine=None,
+            source=ExtractionLevel.LLM_NER,
+            corroborated=True,
         )
         assert c.corroborated is True
 
@@ -59,7 +65,9 @@ class TestExtractionContext:
         assert ctx.pending_levels == []
 
     def test_instantiation_plain_text(self) -> None:
-        ctx = ExtractionContext(url=None, user_id="u2", supplementary_text="ramen in Tokyo")
+        ctx = ExtractionContext(
+            url=None, user_id="u2", supplementary_text="ramen in Tokyo"
+        )
         assert ctx.url is None
         assert ctx.supplementary_text == "ramen in Tokyo"
 
@@ -67,7 +75,9 @@ class TestExtractionContext:
         ctx1 = ExtractionContext(url=None, user_id="u1")
         ctx2 = ExtractionContext(url=None, user_id="u2")
         ctx1.candidates.append(
-            CandidatePlace(name="A", city=None, cuisine=None, source=ExtractionLevel.LLM_NER)
+            CandidatePlace(
+                name="A", city=None, cuisine=None, source=ExtractionLevel.LLM_NER
+            )
         )
         assert ctx2.candidates == []
 
@@ -106,7 +116,10 @@ class TestExtractionPending:
         event = ExtractionPending(
             user_id="u1",
             url="https://tiktok.com/v/1",
-            pending_levels=[ExtractionLevel.WHISPER_AUDIO, ExtractionLevel.VISION_FRAMES],
+            pending_levels=[
+                ExtractionLevel.WHISPER_AUDIO,
+                ExtractionLevel.VISION_FRAMES,
+            ],
             context=ctx,
         )
         assert event.user_id == "u1"

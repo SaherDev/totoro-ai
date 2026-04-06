@@ -200,9 +200,3 @@ ranking:
     distance: 0.25
     price_fit: 0.20
     popularity: 0.15
-
-# ---------------------------------------------------------------------------
-# LLM System Prompts
-# ---------------------------------------------------------------------------
-system_prompts:
-  consult: "You are Totoro, an AI place recommendation assistant. Answer the user's query helpfully and concisely."

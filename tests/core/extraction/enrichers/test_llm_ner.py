@@ -27,10 +27,12 @@ def _mock_instructor(places: list[dict[str, str | None]]) -> InstructorClient:
 
 @pytest.fixture
 def enricher_two_places() -> LLMNEREnricher:
-    client = _mock_instructor([
-        {"name": "Fuji Ramen", "city": "Bangkok", "cuisine": "ramen"},
-        {"name": "Som Tam Nua", "city": "Bangkok", "cuisine": "thai"},
-    ])
+    client = _mock_instructor(
+        [
+            {"name": "Fuji Ramen", "city": "Bangkok", "cuisine": "ramen"},
+            {"name": "Som Tam Nua", "city": "Bangkok", "cuisine": "thai"},
+        ]
+    )
     return LLMNEREnricher(instructor_client=client)
 
 
@@ -53,7 +55,10 @@ class TestLLMNEREnricher:
         ctx = ExtractionContext(url=None, user_id="u1", caption="some text")
         ctx.candidates.append(
             CandidatePlace(
-                name="Existing", city=None, cuisine=None, source=ExtractionLevel.EMOJI_REGEX
+                name="Existing",
+                city=None,
+                cuisine=None,
+                source=ExtractionLevel.EMOJI_REGEX,
             )
         )
         await enricher_two_places.enrich(ctx)
@@ -68,7 +73,9 @@ class TestLLMNEREnricher:
         assert ctx.candidates == []
 
     async def test_uses_supplementary_text_when_no_caption(self) -> None:
-        client = _mock_instructor([{"name": "Fuji Ramen", "city": None, "cuisine": None}])
+        client = _mock_instructor(
+            [{"name": "Fuji Ramen", "city": None, "cuisine": None}]
+        )
         enricher = LLMNEREnricher(instructor_client=client)
         ctx = ExtractionContext(
             url=None, user_id="u1", supplementary_text="Fuji Ramen is great"
@@ -101,7 +108,9 @@ class TestLLMNEREnricher:
         assert "<context>" in user_msg["content"]
         assert "</context>" in user_msg["content"]
 
-    async def test_source_set_to_llm_ner(self, enricher_two_places: LLMNEREnricher) -> None:
+    async def test_source_set_to_llm_ner(
+        self, enricher_two_places: LLMNEREnricher
+    ) -> None:
         ctx = ExtractionContext(url=None, user_id="u1", caption="text")
         await enricher_two_places.enrich(ctx)
         assert all(c.source == ExtractionLevel.LLM_NER for c in ctx.candidates)

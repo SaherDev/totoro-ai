@@ -294,14 +294,13 @@ async def test_stream_calls_llm_with_system_prompt():
     ):
         pass
 
-    # Get system prompt from config
-    config = get_config()
-    system_prompt = config.system_prompts.consult
-
     # Verify LLM was called with messages format
     mock_llm.stream.assert_called_once_with(
         [
-            {"role": "system", "content": system_prompt},
+            {
+                "role": "system",
+                "content": "You are Totoro, an AI place recommendation assistant. Answer the user's query helpfully and concisely.",
+            },
             {"role": "user", "content": "test query"},
         ]
     )

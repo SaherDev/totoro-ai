@@ -60,10 +60,14 @@ class TestCircuitBreakerEnricher:
         assert cb.state == CircuitState.CLOSED
         assert cb._consecutive_failures == 0
 
-    async def test_half_open_after_cooldown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_half_open_after_cooldown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import time
 
-        cb = CircuitBreakerEnricher(_failing_enricher(), failure_threshold=2, cooldown_seconds=10)
+        cb = CircuitBreakerEnricher(
+            _failing_enricher(), failure_threshold=2, cooldown_seconds=10
+        )
         for _ in range(2):
             with pytest.raises(RuntimeError):
                 await cb.enrich(_ctx())
