@@ -27,6 +27,12 @@ models:
     max_tokens: 0
     temperature: 0
 
+  vision_frames:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 512
+    temperature: 0
+
   intent_parser:
     provider: openai
     model: gpt-4o-mini

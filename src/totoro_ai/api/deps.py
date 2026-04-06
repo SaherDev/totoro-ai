@@ -1,6 +1,5 @@
 """FastAPI dependencies for route handlers (ADR-019)."""
 
-import anthropic
 from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +20,7 @@ from totoro_ai.db.repositories import (
 )
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
+from totoro_ai.providers.llm import get_vision_extractor
 from totoro_ai.providers.embeddings import EmbedderProtocol, get_embedder
 from totoro_ai.providers.groq_client import GroqWhisperClient
 
@@ -106,10 +106,7 @@ async def get_event_dispatcher(
                 instructor_client=get_instructor_client("intent_parser"),
             ),
             VisionFramesEnricher(
-                anthropic_client=anthropic.AsyncAnthropic(
-                    api_key=get_secrets().providers.anthropic.api_key or ""
-                ),
-                model=get_config().models["orchestrator"].model,
+                vision_extractor=get_vision_extractor("vision_frames")
             ),
         ],
         validator=GooglePlacesValidator(
@@ -161,14 +158,18 @@ def get_extraction_pipeline(
     from totoro_ai.core.extraction.protocols import Enricher
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
 
-    enrichment = EnrichmentPipeline([
-        ParallelEnricherGroup([
-            CircuitBreakerEnricher(TikTokOEmbedEnricher()),
-            CircuitBreakerEnricher(YtDlpMetadataEnricher()),
-        ]),
-        EmojiRegexEnricher(),
-        LLMNEREnricher(instructor_client=get_instructor_client("intent_parser")),
-    ])
+    enrichment = EnrichmentPipeline(
+        [
+            ParallelEnricherGroup(
+                [
+                    CircuitBreakerEnricher(TikTokOEmbedEnricher()),
+                    CircuitBreakerEnricher(YtDlpMetadataEnricher()),
+                ]
+            ),
+            EmojiRegexEnricher(),
+            LLMNEREnricher(instructor_client=get_instructor_client("intent_parser")),
+        ]
+    )
     validator = GooglePlacesValidator(
         places_client=GooglePlacesClient(),
         confidence_config=extraction_config.confidence,
@@ -201,7 +202,9 @@ def get_extraction_pipeline(
 
 def get_extraction_service(
     pipeline: ExtractionPipeline = Depends(get_extraction_pipeline),  # noqa: B008
-    persistence: ExtractionPersistenceService = Depends(get_extraction_persistence),  # noqa: B008
+    persistence: ExtractionPersistenceService = Depends(
+        get_extraction_persistence
+    ),  # noqa: B008
 ) -> ExtractionService:
     """FastAPI dependency providing ExtractionService (2 deps replacing 7)."""
     return ExtractionService(pipeline=pipeline, persistence=persistence)
