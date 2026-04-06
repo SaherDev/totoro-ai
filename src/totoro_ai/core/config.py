@@ -73,6 +73,24 @@ class ConfidenceWeights(BaseModel):
     max_score: float = 0.95
 
 
+class ConfidenceConfig(BaseModel):
+    """Per-level confidence scoring config (ADR-029).
+
+    base_scores keys are ExtractionLevel.value strings (e.g. "emoji_regex").
+    max_score caps the output — no extraction path earns 1.0.
+    """
+
+    base_scores: dict[str, float] = {
+        "emoji_regex": 0.95,
+        "llm_ner": 0.80,
+        "subtitle_check": 0.75,
+        "whisper_audio": 0.65,
+        "vision_frames": 0.55,
+    }
+    corroboration_bonus: float = 0.10
+    max_score: float = 0.97
+
+
 class ExtractionThresholds(BaseModel):
     store_silently: float = 0.70
     require_confirmation: float = 0.30
@@ -93,6 +111,9 @@ class ExtractionConfig(BaseModel):
         "confidence",
         "source",
     ]
+    confidence: ConfidenceConfig = ConfidenceConfig()
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_cooldown: float = 900.0
 
 
 class ExternalServiceConfig(BaseModel):

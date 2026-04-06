@@ -61,6 +61,17 @@ extraction:
   thresholds:
     store_silently: 0.70
     require_confirmation: 0.30
+  confidence:
+    base_scores:
+      emoji_regex: 0.95
+      llm_ner: 0.80
+      subtitle_check: 0.75
+      whisper_audio: 0.65
+      vision_frames: 0.55
+    corroboration_bonus: 0.10
+    max_score: 0.97
+  circuit_breaker_threshold: 5
+  circuit_breaker_cooldown: 900
   # Place fields that can be updated on re-submission (upsert semantics)
   mutable_fields:
     - place_name
