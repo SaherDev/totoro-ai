@@ -14,7 +14,9 @@ def enricher() -> TikTokOEmbedEnricher:
 
 
 class TestTikTokOEmbedEnricher:
-    async def test_sets_caption_from_oembed(self, enricher: TikTokOEmbedEnricher) -> None:
+    async def test_sets_caption_from_oembed(
+        self, enricher: TikTokOEmbedEnricher
+    ) -> None:
         ctx = ExtractionContext(url="https://tiktok.com/v/123", user_id="u1")
         with patch.object(
             enricher, "_fetch_caption", new=AsyncMock(return_value="Fuji Ramen caption")
@@ -43,8 +45,12 @@ class TestTikTokOEmbedEnricher:
     async def test_propagates_http_error(self, enricher: TikTokOEmbedEnricher) -> None:
         """Exceptions must NOT be caught internally — circuit breaker handles them."""
         ctx = ExtractionContext(url="https://tiktok.com/v/123", user_id="u1")
-        with patch.object(
-            enricher, "_fetch_caption", new=AsyncMock(side_effect=RuntimeError("timeout"))
+        with (
+            patch.object(
+                enricher,
+                "_fetch_caption",
+                new=AsyncMock(side_effect=RuntimeError("timeout")),
+            ),
+            pytest.raises(RuntimeError, match="timeout"),
         ):
-            with pytest.raises(RuntimeError, match="timeout"):
-                await enricher.enrich(ctx)
+            await enricher.enrich(ctx)

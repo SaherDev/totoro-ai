@@ -1,4 +1,7 @@
-"""Tests for calculate_confidence() — multiplicative formula with configurable max_score."""
+"""Tests for calculate_confidence() — multiplicative formula.
+
+Caps at config.max_score (default 0.97) instead of 1.0.
+"""
 
 import pytest
 
@@ -47,7 +50,9 @@ class TestCalculateConfidence:
 
     def test_subtitle_check_exact(self) -> None:
         # 0.75 * 1.0 + 0.0 = 0.75
-        score = calculate_confidence(ExtractionLevel.SUBTITLE_CHECK, 1.0, False, _config)
+        score = calculate_confidence(
+            ExtractionLevel.SUBTITLE_CHECK, 1.0, False, _config
+        )
         assert score == pytest.approx(0.75)
 
     def test_cap_at_max_score(self) -> None:
@@ -61,8 +66,12 @@ class TestCalculateConfidence:
 
     def test_unknown_level_defaults_to_0_50(self) -> None:
         # A config missing a key falls back to 0.50 base
-        sparse_config = ConfidenceConfig(base_scores={}, corroboration_bonus=0.10, max_score=0.97)
-        score = calculate_confidence(ExtractionLevel.EMOJI_REGEX, 1.0, False, sparse_config)
+        sparse_config = ConfidenceConfig(
+            base_scores={}, corroboration_bonus=0.10, max_score=0.97
+        )
+        score = calculate_confidence(
+            ExtractionLevel.EMOJI_REGEX, 1.0, False, sparse_config
+        )
         assert score == pytest.approx(0.50)
 
     @pytest.mark.parametrize("level", list(ExtractionLevel))
