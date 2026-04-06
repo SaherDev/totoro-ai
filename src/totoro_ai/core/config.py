@@ -96,6 +96,23 @@ class ExtractionThresholds(BaseModel):
     require_confirmation: float = 0.30
 
 
+class ExtractionVisionConfig(BaseModel):
+    max_frames: int = 5
+    scene_threshold: float = 0.3
+    timeout_seconds: float = 10.0
+
+
+class ExtractionWhisperConfig(BaseModel):
+    timeout_seconds: float = 8.0
+    audio_format: str = "opus"
+    audio_quality: str = "32k"
+
+
+class ExtractionSubtitleConfig(BaseModel):
+    output_dir: str = "/tmp/subtitles"
+    format: str = "vtt"
+
+
 class ExtractionConfig(BaseModel):
     confidence_weights: ConfidenceWeights
     thresholds: ExtractionThresholds
@@ -114,6 +131,9 @@ class ExtractionConfig(BaseModel):
     confidence: ConfidenceConfig = ConfidenceConfig()
     circuit_breaker_threshold: int = 5
     circuit_breaker_cooldown: float = 900.0
+    vision: ExtractionVisionConfig = ExtractionVisionConfig()
+    whisper: ExtractionWhisperConfig = ExtractionWhisperConfig()
+    subtitle: ExtractionSubtitleConfig = ExtractionSubtitleConfig()
 
 
 class ExternalServiceConfig(BaseModel):
@@ -223,10 +243,25 @@ class RankingConfig(BaseModel):
     weights: RankingWeightsConfig
 
 
+class ProviderEndpointConfig(BaseModel):
+    """Non-secret provider config (base URL, etc.). API keys live in SecretsConfig."""
+
+    base_url: str
+
+
+class AppProvidersConfig(BaseModel):
+    """Non-secret provider endpoints (base URLs). API keys live in SecretsConfig."""
+
+    groq: ProviderEndpointConfig = ProviderEndpointConfig(
+        base_url="https://api.groq.com"
+    )
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
     extraction: ExtractionConfig
+    providers: AppProvidersConfig = AppProvidersConfig()
     external_services: ExternalServicesConfig = ExternalServicesConfig()
     embeddings: EmbeddingsConfig = EmbeddingsConfig()
     system_prompts: SystemPromptsConfig = SystemPromptsConfig()
@@ -261,6 +296,7 @@ class ProvidersConfig(BaseModel):
     anthropic: ProviderKey = ProviderKey()
     voyage: ProviderKey = ProviderKey()
     google: ProviderKey = ProviderKey()
+    groq: ProviderKey = ProviderKey()
 
 
 class DatabaseConfig(BaseModel):
@@ -327,6 +363,7 @@ class _EnvSource:
                 "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY")},
                 "voyage": {"api_key": os.environ.get("VOYAGE_API_KEY")},
                 "google": {"api_key": os.environ.get("GOOGLE_API_KEY")},
+                "groq": {"api_key": os.environ.get("GROQ_API_KEY")},
             },
         }
 

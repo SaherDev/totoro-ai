@@ -16,7 +16,17 @@ app:
 # Model assignments — logical roles to providers and models
 # ADR-016, ADR-020: code never hardcodes model names, always reads from config
 # ---------------------------------------------------------------------------
+providers:
+  groq:
+    base_url: https://api.groq.com
+
 models:
+  transcriber:
+    provider: groq
+    model: whisper-large-v3-turbo
+    max_tokens: 0
+    temperature: 0
+
   intent_parser:
     provider: openai
     model: gpt-4o-mini
@@ -72,6 +82,17 @@ extraction:
     max_score: 0.97
   circuit_breaker_threshold: 5
   circuit_breaker_cooldown: 900
+  vision:
+    max_frames: 5
+    scene_threshold: 0.3
+    timeout_seconds: 10
+  whisper:
+    timeout_seconds: 8
+    audio_format: opus
+    audio_quality: 32k
+  subtitle:
+    output_dir: /tmp/subtitles
+    format: vtt
   # Place fields that can be updated on re-submission (upsert semantics)
   mutable_fields:
     - place_name

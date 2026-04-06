@@ -93,3 +93,4 @@ class ExtractionPending:
     url: str | None
     pending_levels: list[ExtractionLevel]
     context: ExtractionContext
+    event_type: str = "extraction_pending"

@@ -15,6 +15,33 @@ Format:
 
 ---
 
+## ADR-047: whisper-large-v3-turbo for audio transcription via Groq
+
+**Date:** 2026-04-06\
+**Status:** accepted\
+**Context:** WhisperAudioEnricher (Level 5) needs a speech-to-text model to transcribe
+TikTok/Instagram video audio when caption-based extraction fails. Three Groq-hosted
+Whisper models were evaluated: whisper-large-v3 (1.55B params, 299x real-time, 8.4%
+WER), whisper-large-v3-turbo (0.8B params, 216x real-time, ~10% WER), and
+distil-whisper-large-v3-en (756M params, English-only, 9.7% WER). The extraction
+pipeline has an 8-second hard timeout on the audio enricher. Use case is extracting
+restaurant/place names from short food content videos — audio is typically clear
+speech, clips are under 60 seconds, and inputs are multilingual (Thai, Japanese,
+English). Accuracy difference between v3 and turbo is ~2% WER, which does not
+materially affect place name extraction from clear speech. distil-whisper is excluded
+because it is English-only.\
+**Decision:** Use whisper-large-v3-turbo as the transcription model. Model name is
+config-driven via config/app.yaml under models.transcriber.model — never hardcoded.
+Groq free tier covers 8 hours of audio per day, sufficient for portfolio scale. If
+accuracy becomes a bottleneck under real user data, swap to whisper-large-v3 via a
+single config change — no code changes required.\
+**Consequences:** Add transcriber role to config/app.yaml. GroqWhisperClient reads
+model name from get_config().models["transcriber"].model. Switching to whisper-large-v3
+requires only a YAML change. distil-whisper is not a valid future option unless the
+product scope narrows to English-only inputs.
+
+---
+
 ## ADR-046: WholeDocument chunking adopted as embedding strategy
 
 **Date:** 2026-03-31
