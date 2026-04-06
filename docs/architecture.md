@@ -67,30 +67,29 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
-`POST /v1/extract-place` runs a three-phase cascade pipeline:
+extract-place is a three-phase deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. Enrichers run unconditionally in Step 1. The validator gates results in Step 2. Background dispatch fires in Step 3 only when Step 2 finds nothing.
 
-**Phase 1 — Inline Enrichment** (`EnrichmentPipeline`)
-- Parallel caption enrichers (TikTok oEmbed, yt-dlp metadata) populate the context
-- `EmojiRegexEnricher` extracts place candidates from caption text
-- `LLMNEREnricher` extracts place candidates via LLM named-entity recognition
-- Candidates are deduplicated by name; corroborated candidates scored higher
+```
+Raw input (URL, plain text, or mixed)
+    │
+    ▼
+POST /v1/extract-place
+    │  Receives: raw_input, user_id
+    │
+    ├── Step 1: Enrich candidates
+    │   Parallel caption fetch (TikTok oEmbed, yt-dlp), regex extraction, LLM NER
+    │   Deduplicate by name; corroborated candidates receive a confidence bonus
+    │
+    ├── Step 2: Validate candidates
+    │   Google Places API validates each candidate in parallel
+    │   Confidence scored per match quality; results saved and returned if any pass
+    │
+    └── Step 3: Background dispatch (only when Step 2 returns nothing)
+        ExtractionPending event dispatched → ProvisionalResponse returned immediately
+        Background: subtitle, audio (Whisper), vision enrichers → re-validate → save
+```
 
-**Phase 2 — Validation** (`GooglePlacesValidator`)
-- Each candidate is validated against Google Places API
-- `ConfidenceConfig` scores the match (base score per extraction level + corroboration bonus)
-- If one or more candidates pass the confidence threshold, results are returned immediately
-
-**Phase 3 — Background Dispatch** (on no inline results)
-- An `ExtractionPending` event is dispatched
-- Response returns immediately with `provisional: true`, `extraction_status: "processing"`
-- `ExtractionPendingHandler` runs background enrichers (subtitle, audio, vision) asynchronously
-
-**Persistence** (`ExtractionPersistenceService`)
-- Deduplicates by `(external_provider, external_id)` before writing
-- Writes `Place` rows to PostgreSQL
-- Dispatches `PlaceSaved` event (triggers taste model update)
-- Batch-upserts embeddings via `bulk_upsert_embeddings`
-- Ordering invariant: DB writes → event dispatch → embeddings
+The pipeline runs the full cascade deterministically. No mid-pipeline callbacks to NestJS.
 
 ## Data Flow: Consult (Recommend a Place)
 
@@ -231,6 +230,7 @@ All requests come from NestJS after auth verification. This repo never receives 
 | orchestrator  | Claude Sonnet 4 | Strong reasoning for tool calling                                    |
 | embedder      | Voyage 4-lite   | 9.25% better retrieval quality than OpenAI; 1024-dimensional vectors |
 | evaluator     | GPT-4o-mini     | Cost-effective for batch evals                                       |
+| transcriber   | whisper-large-v3-turbo | Fast multilingual STT via Groq; 216x real-time; background audio enricher only (ADR-047) |
 
 Model assignments are config-driven via `config/app.yaml` under the `models:` key. No model names hardcoded in application code.
 
@@ -245,6 +245,20 @@ Service-specific parameters are config-driven via `config/app.yaml`:
 - `min_rrf_score`: Minimum RRF score threshold to filter low-relevance results (default 0.01)
 
 Adjust these values to control result relevance and performance.
+
+**Extraction Service** (cascade tuning):
+- `circuit_breaker_threshold`: failures before circuit opens (default 5)
+- `circuit_breaker_cooldown`: seconds before half-open probe (default 900)
+- `confidence.base_scores`: per-level base confidence — emoji_regex: 0.95, llm_ner: 0.80, subtitle_check: 0.75, whisper_audio: 0.65, vision_frames: 0.55
+- `confidence.corroboration_bonus`: bonus when two independent sources find the same name (default 0.10)
+- `confidence.max_score`: ceiling — system never claims perfect certainty (default 0.97)
+- `vision.max_frames`: maximum frames sent to vision model (default 5)
+- `vision.scene_threshold`: ffmpeg scene change threshold (default 0.3)
+- `vision.timeout_seconds`: hard timeout for vision enricher (default 10)
+- `whisper.timeout_seconds`: hard timeout for audio enricher (default 8)
+- `whisper.audio_format`: audio format for in-memory pipe fallback (default opus)
+- `whisper.audio_quality`: audio bitrate for in-memory pipe fallback (default 32k)
+- `subtitle.output_dir`: temporary directory for VTT files (default /tmp/subtitles)
 
 ## Database Access
 
@@ -278,7 +292,7 @@ Used for:
 
 ## Design Principles
 
-- extract-place is a workflow. consult is an agent. These use different implementation patterns. Do not use LangGraph for extract-place.
+- extract-place is a three-phase workflow (Enrichment → Validation → Background), not an agent. No LangGraph. Enrichers populate ExtractionContext unconditionally. The validator gates results. Background dispatch fires only when inline validation finds nothing. consult is an agent using LangGraph. These use fundamentally different implementation patterns — do not conflate them.
 - The consult agent's tool set should be minimal. Only register tools the agent needs for the current task. Do not preload tools for future capabilities.
 - Each LangGraph node passes only the data the next node needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
 - Steps 2 (retrieve) and 3 (discover) in the consult pipeline run as parallel LangGraph branches. They are independent and their results merge before validation.
