@@ -184,12 +184,7 @@ def get_extraction_pipeline(
             ),
             instructor_client=get_instructor_client("intent_parser"),
         ),
-        VisionFramesEnricher(
-            anthropic_client=anthropic.AsyncAnthropic(
-                api_key=get_secrets().providers.anthropic.api_key or ""
-            ),
-            model=get_config().models["orchestrator"].model,
-        ),
+        VisionFramesEnricher(vision_extractor=get_vision_extractor()),
     ]
     return ExtractionPipeline(
         enrichment=enrichment,
