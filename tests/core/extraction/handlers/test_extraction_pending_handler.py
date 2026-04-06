@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from totoro_ai.core.extraction.handlers.extraction_pending import (
     ExtractionPendingHandler,
 )
+from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionContext,
@@ -65,7 +66,7 @@ async def test_all_background_enrichers_called_in_order() -> None:
     enrichers = [_mock_enricher(e1), _mock_enricher(e2), _mock_enricher(e3)]
     validator = MagicMock()
     validator.validate = AsyncMock(return_value=None)
-    persistence = MagicMock()
+    persistence = AsyncMock(spec=ExtractionPersistenceService)
 
     handler = ExtractionPendingHandler(
         background_enrichers=enrichers,
@@ -99,7 +100,7 @@ async def test_dedup_called_after_enrichers() -> None:
     enrichers = [_mock_enricher(add_e1), _mock_enricher(add_e2)]
     validator = MagicMock()
     validator.validate = AsyncMock(return_value=None)
-    persistence = MagicMock()
+    persistence = AsyncMock(spec=ExtractionPersistenceService)
 
     handler = ExtractionPendingHandler(
         background_enrichers=enrichers,
@@ -126,7 +127,7 @@ async def test_validator_called_with_enriched_candidates() -> None:
     enricher = _mock_enricher(add_candidate)
     validator = MagicMock()
     validator.validate = AsyncMock(return_value=None)
-    persistence = MagicMock()
+    persistence = AsyncMock(spec=ExtractionPersistenceService)
 
     handler = ExtractionPendingHandler(
         background_enrichers=[enricher],
@@ -145,7 +146,7 @@ async def test_validator_called_with_enriched_candidates() -> None:
 async def test_persistence_not_called_when_validator_returns_none() -> None:
     validator = MagicMock()
     validator.validate = AsyncMock(return_value=None)
-    persistence = AsyncMock()
+    persistence = AsyncMock(spec=ExtractionPersistenceService)
 
     handler = ExtractionPendingHandler(
         background_enrichers=[],
@@ -161,7 +162,7 @@ async def test_persistence_called_when_validator_returns_results() -> None:
     results = [_make_result()]
     validator = MagicMock()
     validator.validate = AsyncMock(return_value=results)
-    persistence = AsyncMock()
+    persistence = AsyncMock(spec=ExtractionPersistenceService)
 
     handler = ExtractionPendingHandler(
         background_enrichers=[],

@@ -9,6 +9,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.db.models import Embedding
@@ -21,6 +22,7 @@ class EmbeddingRepository(Protocol):
 
     Defines the interface for database access to embeddings. Implementations must:
     - upsert_embedding(): Insert new or replace existing embedding for a place
+    - bulk_upsert_embeddings(): Batch upsert multiple embeddings in one round-trip
     """
 
     async def upsert_embedding(
@@ -40,6 +42,22 @@ class EmbeddingRepository(Protocol):
 
         Raises:
             RuntimeError: If upsert operation fails
+        """
+        ...
+
+    async def bulk_upsert_embeddings(
+        self,
+        records: list[tuple[str, list[float], str]],
+    ) -> None:
+        """Upsert multiple embeddings in a single SQL statement.
+
+        Args:
+            records: List of (place_id, vector, model_name) tuples.
+                     All records inserted or updated in one round-trip.
+                     Empty list → no-op, no DB call.
+
+        Raises:
+            RuntimeError: If the batch operation fails
         """
         ...
 
@@ -109,4 +127,51 @@ class SQLAlchemyEmbeddingRepository:
             )
             raise RuntimeError(
                 f"Failed to upsert embedding for place {place_id}: {e}"
+            ) from e
+
+    async def bulk_upsert_embeddings(
+        self,
+        records: list[tuple[str, list[float], str]],
+    ) -> None:
+        """Upsert multiple embeddings in a single SQL statement.
+
+        Uses PostgreSQL's INSERT ... ON CONFLICT for efficient batch upsert.
+        All records are inserted or updated in a single round-trip.
+
+        Args:
+            records: List of (place_id, vector, model_name) tuples.
+                     All records inserted or updated in one round-trip.
+                     Empty list → no-op, no DB call.
+
+        Raises:
+            RuntimeError: If the batch operation fails
+        """
+        if not records:
+            return
+
+        rows = [
+            {"id": str(uuid4()), "place_id": pid, "vector": vec, "model_name": model}
+            for pid, vec, model in records
+        ]
+
+        stmt = pg_insert(Embedding).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["place_id"],
+            set_={
+                "vector": stmt.excluded.vector,
+                "model_name": stmt.excluded.model_name,
+            },
+        )
+
+        try:
+            await self._session.execute(stmt)
+            await self._session.commit()
+        except Exception as e:
+            await self._session.rollback()
+            logger.error(
+                "Failed to bulk upsert embeddings",
+                extra={"record_count": len(records), "error": str(e)},
+            )
+            raise RuntimeError(
+                f"Failed to bulk upsert {len(records)} embeddings: {e}"
             ) from e

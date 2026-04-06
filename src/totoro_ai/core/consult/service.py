@@ -18,8 +18,10 @@ from totoro_ai.core.intent.intent_parser import IntentParser
 from totoro_ai.providers import get_langfuse_client
 from totoro_ai.providers.llm import LLMClientProtocol
 
-
-_SYSTEM_PROMPT = "You are Totoro, an AI place recommendation assistant. Answer the user's query helpfully and concisely."
+_SYSTEM_PROMPT = (
+    "You are Totoro, an AI place recommendation assistant. "
+    "Answer the user's query helpfully and concisely."
+)
 
 
 class ConsultService:

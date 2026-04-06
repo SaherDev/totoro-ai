@@ -67,46 +67,30 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
-extract-place is a deterministic workflow, not an agent. It follows a fixed sequence of steps with one structured LLM extraction call per input type. No tool selection, no reasoning loop, no LangGraph.
+`POST /v1/extract-place` runs a three-phase cascade pipeline:
 
-```
-Raw input (URL + text, text-only, mixed formats)
-    │
-    ▼
-POST /v1/extract-place
-    │  Receives: raw_input, user_id
-    │
-    ├── Parse input to extract URL and supplementary context
-    │   Input parser handles: "text before URL text after", "URL only", "text only"
-    │   Produces: (url, supplementary_text, input_type)
-    │
-    ├── Dispatch to appropriate extractor
-    │   If URL detected: route to TikTok extractor (for TikTok URLs) or other URL extractors
-    │   If no URL: route to PlainText extractor
-    │
-    ├── Extractor fetches content and runs structured LLM extraction
-    │   (TikTok: fetch caption via oEmbed API + merge with supplementary_text)
-    │   (PlainText: use raw input text)
-    │   Produces: place_name, address, cuisine, price_range
-    │
-    ├── Validate extracted place via Google Places API
-    │   Query for exact match and calculate match quality
-    │
-    ├── Compute confidence score
-    │   Base score from extraction + match quality modifier
-    │   Applied to extract-place logic
-    │
-    ├── Decision: confidence determines action
-    │   High confidence → Save to PostgreSQL and return place_id
-    │   Mid-range confidence → Return extracted data, require user confirmation
-    │   Low confidence → Return error
-    │
-    └── Return to NestJS: place_id (if saved), extracted data, confidence, decision_reason
-```
+**Phase 1 — Inline Enrichment** (`EnrichmentPipeline`)
+- Parallel caption enrichers (TikTok oEmbed, yt-dlp metadata) populate the context
+- `EmojiRegexEnricher` extracts place candidates from caption text
+- `LLMNEREnricher` extracts place candidates via LLM named-entity recognition
+- Candidates are deduplicated by name; corroborated candidates scored higher
 
-FastAPI writes only when high-confidence extraction occurs. If mid-range confidence, no write happens until user confirms. NestJS receives the result and decision flag, then decides whether to persist.
+**Phase 2 — Validation** (`GooglePlacesValidator`)
+- Each candidate is validated against Google Places API
+- `ConfidenceConfig` scores the match (base score per extraction level + corroboration bonus)
+- If one or more candidates pass the confidence threshold, results are returned immediately
 
-Input Parser (src/totoro_ai/core/extraction/input_parser.py) runs before dispatcher routing. It uses regex to detect URLs and extract user-provided context (text before/after the URL). For TikTok inputs, the supplementary text is merged with the video caption before LLM extraction, providing additional context for place identification. Langfuse logs the raw input and parsed components for audit trail and debugging.
+**Phase 3 — Background Dispatch** (on no inline results)
+- An `ExtractionPending` event is dispatched
+- Response returns immediately with `provisional: true`, `extraction_status: "processing"`
+- `ExtractionPendingHandler` runs background enrichers (subtitle, audio, vision) asynchronously
+
+**Persistence** (`ExtractionPersistenceService`)
+- Deduplicates by `(external_provider, external_id)` before writing
+- Writes `Place` rows to PostgreSQL
+- Dispatches `PlaceSaved` event (triggers taste model update)
+- Batch-upserts embeddings via `bulk_upsert_embeddings`
+- Ordering invariant: DB writes → event dispatch → embeddings
 
 ## Data Flow: Consult (Recommend a Place)
 

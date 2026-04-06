@@ -17,7 +17,7 @@ All requests come from NestJS after auth verification. totoro-ai never receives 
 
 ## POST /v1/extract-place
 
-Extract and validate a place from raw user input (ADR-017, ADR-018). Accepts TikTok URLs (with optional descriptive text), plain text descriptions, or mixed formats (text + URL in any order). Validates via Google Places API and returns either a saved place record or a candidate requiring user confirmation.
+Extract and validate places from raw user input (ADR-017, ADR-018). Runs a three-phase cascade: inline enrichment → validation → background dispatch. Accepts TikTok URLs (with optional descriptive text), plain text descriptions, or mixed formats (text + URL in any order). Returns multiple resolved places immediately, or queues background enrichers if inline extraction yields no results.
 
 **Request:**
 
@@ -43,68 +43,59 @@ Alternative formats:
 }
 ```
 
-**Response (Saved — confidence ≥ 0.70):**
+**Response (Saved — inline candidates validated, one or more pass threshold):**
 
 ```json
 {
-  "place_id": "550e8400-e29b-41d4-a716-446655440000",
-  "place": {
-    "place_name": "Fuji Ramen",
-    "address": "123 Sukhumvit Soi 33, Bangkok",
-    "cuisine": "ramen",
-    "price_range": "low"
-  },
-  "confidence": 0.90,
-  "status": "resolved",
-  "requires_confirmation": false,
+  "provisional": false,
+  "places": [
+    {
+      "place_id": "550e8400-e29b-41d4-a716-446655440000",
+      "place_name": "Fuji Ramen",
+      "address": "123 Sukhumvit Soi 33, Bangkok",
+      "city": "Bangkok",
+      "cuisine": "ramen",
+      "confidence": 0.87,
+      "resolved_by": "llm_ner",
+      "external_provider": "google",
+      "external_id": "ChIJN1t_tDeuEmsRUsoyG83frY4"
+    }
+  ],
+  "pending_levels": [],
+  "extraction_status": "saved",
   "source_url": "https://www.tiktok.com/@foodie/video/123"
 }
 ```
 
-**Response (Confirmation Required — 0.30 < confidence < 0.70):**
+**Response (Duplicate — all candidates already in database):**
 
 ```json
 {
-  "place_id": null,
-  "place": {
-    "place_name": "Fuji Ramen",
-    "address": "123 Sukhumvit Soi 33, Bangkok",
-    "cuisine": null,
-    "price_range": null
-  },
-  "confidence": 0.55,
-  "status": "resolved",
-  "requires_confirmation": true,
-  "source_url": null
-}
-```
-
-**Response (Unresolved — confidence ≤ 0.30 or invalid URL):**
-
-```json
-{
-  "place_id": null,
-  "place": {
-    "place_name": null,
-    "address": null,
-    "cuisine": null,
-    "price_range": null
-  },
-  "confidence": 0.20,
-  "status": "unresolved",
-  "requires_confirmation": false,
+  "provisional": false,
+  "places": [],
+  "pending_levels": [],
+  "extraction_status": "duplicate",
   "source_url": "https://www.tiktok.com/@foodie/video/123"
 }
 ```
 
-Low confidence extractions (confidence ≤ 0.30) and invalid URLs are never rejected. The place is saved with `status: "unresolved"` and queued for background reprocessing. The response returns HTTP 200. The product repo surfaces this to the user as a pending save, not an error. The system retries extraction in the background.
+**Response (Provisional — no inline results, background extraction queued):**
+
+```json
+{
+  "provisional": true,
+  "places": [],
+  "pending_levels": ["subtitle_check", "whisper_audio", "vision_frames"],
+  "extraction_status": "processing",
+  "source_url": "https://www.tiktok.com/@foodie/video/123"
+}
+```
 
 **Error Responses:**
 
-| Status | Error Type           | Trigger                                                        |
-| ------ | -------------------- | -------------------------------------------------------------- |
-| 400    | `bad_request`        | `raw_input` is empty                                           |
-| 422    | `unsupported_input`  | Non-TikTok URL in Phase 2                                      |
+| Status | Error Type           | Trigger                                        |
+| ------ | -------------------- | ---------------------------------------------- |
+| 400    | `bad_request`        | `raw_input` is empty                           |
 | 500    | `extraction_error`   | TikTok oEmbed timeout, Places API failure, or DB write failure |
 
 **Error Response Body:**
@@ -118,19 +109,23 @@ Low confidence extractions (confidence ≤ 0.30) and invalid URLs are never reje
 
 **Notes:**
 
+- **Three-phase pipeline**: Phase 1 (inline enrichment) extracts candidates from caption/text via emoji regex and LLM NER. Phase 2 (validation) scores each candidate against Google Places API and filters by confidence threshold. Phase 3 (background dispatch) runs on no inline results.
 - **Input formats**: Supports TikTok URLs, plain text, and hybrid formats (URL + descriptive text in any order). Parser extracts URL and merges surrounding text as supplementary context.
-- **Phase 2 support**: TikTok URLs, plain text, and hybrid inputs. Instagram/generic URLs are Phase 3.
 - **Extraction**:
-  - **TikTok URLs**: System fetches the caption via oEmbed (3-second timeout), then merges any supplementary text from raw_input before LLM extraction. Example: "amazing ramen https://tiktok.com/.../123" → LLM sees "amazing ramen + oEmbed caption".
-  - **Plain text**: Text is passed directly to the LLM.
-  - **Hybrid (URL + text)**: Text before and after the URL is combined and passed to the LLM alongside the URL or caption.
-- **Validation**: Extracted place name is validated against Google Places API. Match quality (EXACT, FUZZY, CATEGORY_ONLY, NONE) feeds into confidence scoring.
-- **Confidence threshold**: ≥ 0.70 saves automatically with `status: "resolved"`; 0.30–0.70 requires user confirmation with `status: "resolved"`; ≤ 0.30 saves as unresolved with `status: "unresolved"` and queues for background retry. Never returns an error for low confidence.
-- **Embeddings**: NOT generated in this endpoint (ADR-040). Embeddings are handled separately.
-- **Deduplication**: If a `(external_provider, external_id)` match exists, the existing Place record is returned without a new write (ADR-041).
-- **Timeout**: Total budget 10s; TikTok oEmbed timeout 3s; remaining budget covers LLM extraction and Places validation.
+  - **TikTok URLs**: System fetches the caption via oEmbed (3-second timeout), then merges any supplementary text from raw_input before enrichment. Example: "amazing ramen https://tiktok.com/.../123" → enrichers see "amazing ramen + oEmbed caption".
+  - **Plain text**: Text is passed directly to enrichers.
+  - **Hybrid (URL + text)**: Text before and after the URL is combined and passed to enrichers alongside the caption.
+- **Validation**: Each candidate is validated against Google Places API. Match quality (EXACT, FUZZY, CATEGORY_ONLY, NONE) feeds into confidence scoring.
+- **Confidence threshold**: Configurable via `confidence.threshold` (default 0.70). Candidates at or above threshold are saved immediately in Phase 2. If no candidates pass inline, Phase 3 is triggered.
+- **Corroboration bonus**: Candidates extracted by multiple methods (emoji + LLM NER) receive a confidence bonus.
+- **Embeddings**: NOT generated in this endpoint (ADR-040). Embeddings are batch-upserted after DB writes.
+- **Deduplication**: If a `(external_provider, external_id)` match exists, duplicate status is returned; no new write occurs (ADR-041).
+- **Timeout**: Total budget 10s; TikTok oEmbed timeout 3s; remaining budget covers enrichment and Places validation.
 - `source_url`: Original TikTok URL (populated for TikTok input); `null` for plain text.
-- `cuisine` and `price_range`: Nullable — may be `null` if LLM cannot determine them.
+- `provisional`: `false` if Phase 2 returned results; `true` if Phase 3 dispatched background enrichers.
+- `pending_levels`: Array of background enricher levels queued (empty if Phase 2 succeeded).
+- `extraction_status`: One of `"saved"` (results returned), `"duplicate"` (all found in DB), or `"processing"` (background enrichers queued).
+- `places`: Array of SavedPlace objects (with place_id, confidence, resolved_by, external_provider, external_id). Empty if status is not "saved".
 - The response schema tolerates extra fields (forward-compatible).
 
 ---

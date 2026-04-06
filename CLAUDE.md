@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 012-extraction-cascade-run3: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, instructor, openai SDK, anthropic SDK, voyageai
 - 011-extraction-cascade-run2: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, anthropic SDK, groq SDK (new), httpx, yt-dlp, asyncio
 - 009-taste-model-audit-fixes: Added Python 3.11 (`>=3.11,<3.13`) + FastAPI 0.115, SQLAlchemy 2.0 async, Alembic, asyncpg, Pydantic 2.10, pytes
-- 008-taste-model: Added Python 3.11 + FastAPI 0.115, SQLAlchemy 2.0 async, Pydantic 2.10, asyncpg, Alembic
 
 
 ## Active Technologies
-- Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, anthropic SDK, groq SDK (new), httpx, yt-dlp, asyncio (011-extraction-cascade-run2)
-- N/A (no DB writes in this run — persistence deferred to Run 3) (011-extraction-cascade-run2)
+- Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, instructor, openai SDK, anthropic SDK, voyageai (012-extraction-cascade-run3)
+- PostgreSQL (asyncpg), no schema migrations in this run (012-extraction-cascade-run3)
 

@@ -1,7 +1,6 @@
 """New cascade types — zero dependencies on existing extraction modules.
 
-These types coexist with the legacy ExtractionResult (result.py) until Run 3.
-Import from totoro_ai.core.extraction.types to get these new types.
+Import from totoro_ai.core.extraction.types for all cascade pipeline types.
 """
 
 from __future__ import annotations
@@ -56,13 +55,7 @@ class ExtractionContext:
 
 @dataclass
 class ExtractionResult:
-    """Validated, scored result from GooglePlacesValidator.
-
-    NOTE: This is a new dataclass. The legacy ExtractionResult(BaseModel) in
-    result.py remains unchanged until Run 3. Import disambiguation:
-    - New type: from totoro_ai.core.extraction.types import ExtractionResult
-    - Legacy type: from totoro_ai.core.extraction.result import ExtractionResult
-    """
+    """Validated, scored result from GooglePlacesValidator."""
 
     place_name: str
     address: str | None
@@ -87,7 +80,12 @@ class ProvisionalResponse:
 
 @dataclass
 class ExtractionPending:
-    """Typed domain event for background dispatch (ADR-043)."""
+    """Typed domain event for background dispatch (ADR-043).
+
+    Intentionally NOT a DomainEvent subclass: ExtractionContext contains mutable
+    list fields that are incompatible with Pydantic BaseModel validation.
+    The event dispatcher uses cast(DomainEvent, event) as a typed workaround.
+    """
 
     user_id: str
     url: str | None

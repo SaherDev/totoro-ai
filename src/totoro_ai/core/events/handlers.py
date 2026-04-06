@@ -43,7 +43,7 @@ class EventHandlers:
         try:
             await self.taste_service.handle_place_saved(
                 user_id=event.user_id,
-                place_id=event.place_id,
+                place_ids=event.place_ids,
                 place_metadata=event.place_metadata,
             )
             if self.langfuse:
@@ -56,7 +56,7 @@ class EventHandlers:
             logger.error(
                 f"Failed to update taste model on place save: {exc}",
                 exc_info=True,
-                extra={"user_id": event.user_id, "place_id": event.place_id},
+                extra={"user_id": event.user_id, "place_ids": event.place_ids},
             )
             if self.langfuse:
                 self.langfuse.capture_message(
