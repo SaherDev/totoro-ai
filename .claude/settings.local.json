@@ -24,7 +24,10 @@
       "Bash(alembic upgrade:*)",
       "Bash(grep -h \"down_revision\" alembic/versions/*.py)",
       "Bash(xargs ls:*)",
-      "Bash(grep -r \"onboarding\\\\|OnboardingSignal\" tests/ --include=*.py)"
+      "Bash(grep -r \"onboarding\\\\|OnboardingSignal\" tests/ --include=*.py)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh:*)",
+      "Bash(git stash:*)",
+      "Bash(python3:*)"
     ]
   }
 }

@@ -76,6 +76,7 @@ class ProvisionalResponse:
     confidence: float
     message: str
     pending_levels: list[ExtractionLevel] = field(default_factory=list)
+    request_id: str = ""  # UUID4 set by ExtractionPipeline when Phase 3 fires
 
 
 @dataclass
@@ -92,3 +93,4 @@ class ExtractionPending:
     pending_levels: list[ExtractionLevel]
     context: ExtractionContext
     event_type: str = "extraction_pending"
+    request_id: str = ""  # carried from ProvisionalResponse to handler

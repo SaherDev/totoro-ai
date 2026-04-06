@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import cast
 
 from totoro_ai.core.config import ExtractionConfig
@@ -67,6 +68,7 @@ class ExtractionPipeline:
             return results
 
         # Phase 3: background dispatch
+        request_id = str(uuid.uuid4())
         pending_levels = [
             ExtractionLevel.SUBTITLE_CHECK,
             ExtractionLevel.WHISPER_AUDIO,
@@ -81,6 +83,7 @@ class ExtractionPipeline:
                     url=url,
                     pending_levels=pending_levels,
                     context=context,
+                    request_id=request_id,
                 ),
             )
         )
@@ -89,4 +92,5 @@ class ExtractionPipeline:
             confidence=0.0,
             message="We're still working on identifying this place.",
             pending_levels=pending_levels,
+            request_id=request_id,
         )
