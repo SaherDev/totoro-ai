@@ -36,16 +36,14 @@ class TestCircuitBreakerEnricher:
     async def test_opens_after_threshold_exceptions(self) -> None:
         cb = CircuitBreakerEnricher(_failing_enricher(), failure_threshold=3)
         for _ in range(3):
-            with pytest.raises(RuntimeError):
-                await cb.enrich(_ctx())
+            await cb.enrich(_ctx())  # exceptions are swallowed, not re-raised
         assert cb.state == CircuitState.OPEN
 
     async def test_skips_enricher_when_open(self) -> None:
         inner = _failing_enricher()
         cb = CircuitBreakerEnricher(inner, failure_threshold=2, cooldown_seconds=9999)
         for _ in range(2):
-            with pytest.raises(RuntimeError):
-                await cb.enrich(_ctx())
+            await cb.enrich(_ctx())  # exceptions are swallowed, not re-raised
         assert cb.state == CircuitState.OPEN
         # This call should be skipped — enricher NOT called
         await cb.enrich(_ctx())
@@ -69,8 +67,7 @@ class TestCircuitBreakerEnricher:
             _failing_enricher(), failure_threshold=2, cooldown_seconds=10
         )
         for _ in range(2):
-            with pytest.raises(RuntimeError):
-                await cb.enrich(_ctx())
+            await cb.enrich(_ctx())  # exceptions are swallowed, not re-raised
         assert cb.state == CircuitState.OPEN
 
         # Fast-forward time past cooldown

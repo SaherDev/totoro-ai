@@ -1,9 +1,12 @@
 """Circuit breaker and parallel group for enrichers."""
 
 import asyncio
+import logging
 import time
 from enum import Enum
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 from totoro_ai.core.extraction.types import ExtractionContext
 
@@ -54,9 +57,13 @@ class CircuitBreakerEnricher:
         try:
             await self._enricher.enrich(context)
             self._reset()
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "CircuitBreakerEnricher caught exception from %s: %s",
+                type(self._enricher).__name__,
+                exc,
+            )
             self._record_failure()
-            raise
 
     def _record_failure(self) -> None:
         self._consecutive_failures += 1

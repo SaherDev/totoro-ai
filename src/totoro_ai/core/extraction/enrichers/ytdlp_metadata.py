@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 
 from totoro_ai.core.extraction.types import ExtractionContext
 
@@ -26,7 +27,9 @@ class YtDlpMetadataEnricher:
 
     async def _fetch_description(self, url: str) -> str | None:
         proc = await asyncio.create_subprocess_exec(
-            "yt-dlp",
+            sys.executable,
+            "-m",
+            "yt_dlp",
             "--dump-json",
             url,
             stdout=asyncio.subprocess.PIPE,
