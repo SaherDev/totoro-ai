@@ -124,6 +124,41 @@ async def test_extraction_pending_event_has_correct_user_id_and_url() -> None:
     assert event.url == "https://tiktok.com/video/99"
 
 
+async def test_same_external_id_deduped_after_validation() -> None:
+    """Two results from different enrichers resolving to the same external_id
+    are collapsed into one with corroboration bonus applied."""
+    emoji_result = ExtractionResult(
+        place_name="RAMEN KAISUGI Bangkok",
+        address=None,
+        city="Bangkok",
+        cuisine=None,
+        confidence=0.76,
+        resolved_by=ExtractionLevel.EMOJI_REGEX,
+        corroborated=False,
+        external_provider="google",
+        external_id="ChIJrUYs1Xuf4jARDnd40CFUUAE",
+    )
+    ner_result = ExtractionResult(
+        place_name="RAMEN KAISUGI",
+        address=None,
+        city="Bangkok",
+        cuisine=None,
+        confidence=0.64,
+        resolved_by=ExtractionLevel.LLM_NER,
+        corroborated=False,
+        external_provider="google",
+        external_id="ChIJrUYs1Xuf4jARDnd40CFUUAE",
+    )
+    pipeline, _, _, _ = _make_pipeline(validator_returns=[emoji_result, ner_result])
+
+    output = await pipeline.run(url=None, user_id="u1", supplementary_text="RAMEN KAISUGI Bangkok")
+
+    assert isinstance(output, list)
+    assert len(output) == 1
+    assert output[0].resolved_by == ExtractionLevel.EMOJI_REGEX
+    assert output[0].corroborated is True
+
+
 async def test_plain_text_input_url_none_passes_through() -> None:
     results = [_make_result()]
     pipeline, enrichment, validator, dispatcher = _make_pipeline(

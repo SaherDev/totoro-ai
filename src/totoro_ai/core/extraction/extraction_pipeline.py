@@ -8,6 +8,7 @@ from typing import cast
 from totoro_ai.core.config import ExtractionConfig
 from totoro_ai.core.events.dispatcher import EventDispatcherProtocol
 from totoro_ai.core.events.events import DomainEvent
+from totoro_ai.core.extraction.dedup import dedup_results_by_external_id
 from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
 from totoro_ai.core.extraction.protocols import Enricher
 from totoro_ai.core.extraction.types import (
@@ -62,10 +63,12 @@ class ExtractionPipeline:
         # Phase 1: inline enrichment + dedup
         await self._enrichment.run(context)
 
-        # Phase 2: validate candidates
+        # Phase 2: validate candidates, then dedup by external_id
         results = await self._validator.validate(context.candidates)
         if results:
-            return results
+            return dedup_results_by_external_id(
+                results, self._extraction_config.confidence
+            )
 
         # Phase 3: background dispatch
         request_id = str(uuid.uuid4())

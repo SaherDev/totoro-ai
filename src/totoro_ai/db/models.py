@@ -70,7 +70,7 @@ class Embedding(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     place_id: Mapped[str] = mapped_column(
-        String, ForeignKey("places.id", ondelete="CASCADE"), nullable=False, index=True
+        String, ForeignKey("places.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     vector: Mapped[list[float]] = mapped_column(
         Vector(EMBEDDING_DIMENSIONS), nullable=False

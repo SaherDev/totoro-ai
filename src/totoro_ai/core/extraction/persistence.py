@@ -1,6 +1,7 @@
 """ExtractionPersistenceService — shared write-path for extraction results."""
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -15,6 +16,21 @@ if TYPE_CHECKING:
     from totoro_ai.core.events.dispatcher import EventDispatcherProtocol
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PlaceSaveOutcome:
+    """Per-result outcome from save_and_emit.
+
+    status values:
+    - "saved": written to DB; place_id is the new UUID
+    - "duplicate": already in DB; place_id is the existing record's ID
+    - "below_threshold": confidence < save_threshold; place_id is None
+    """
+
+    result: ExtractionResult
+    place_id: str | None
+    status: str
 
 
 class ExtractionPersistenceService:
@@ -37,22 +53,43 @@ class ExtractionPersistenceService:
 
     async def save_and_emit(
         self, results: list[ExtractionResult], user_id: str
-    ) -> list[str]:
+    ) -> list[PlaceSaveOutcome]:
         """Save extraction results to DB and emit PlaceSaved event.
 
+        Enforces save_threshold from config — places below threshold are
+        included in the returned outcomes with status "below_threshold" but
+        are never written to the database.
+
         Returns:
-            List of place_id strings for newly saved places (excludes deduped).
+            One PlaceSaveOutcome per input result, with status "saved",
+            "duplicate", or "below_threshold".
         """
+        save_threshold = get_config().extraction.confidence.save_threshold
+        outcomes: list[PlaceSaveOutcome] = []
         saved_ids: list[str] = []
         saved_results: list[ExtractionResult] = []
 
         for result in results:
+            # Threshold check — skip DB write but still surface in response
+            if round(result.confidence, 2) < save_threshold:
+                outcomes.append(
+                    PlaceSaveOutcome(
+                        result=result, place_id=None, status="below_threshold"
+                    )
+                )
+                continue
+
             # Dedup check — only when external_id is known
             if result.external_id is not None:
                 existing = await self._place_repo.get_by_provider(
                     result.external_provider or "unknown", result.external_id
                 )
                 if existing:
+                    outcomes.append(
+                        PlaceSaveOutcome(
+                            result=result, place_id=existing.id, status="duplicate"
+                        )
+                    )
                     continue
 
             place_id = str(uuid4())
@@ -74,9 +111,12 @@ class ExtractionPersistenceService:
             await self._place_repo.save(place)
             saved_ids.append(place_id)
             saved_results.append(result)
+            outcomes.append(
+                PlaceSaveOutcome(result=result, place_id=place_id, status="saved")
+            )
 
         if not saved_ids:
-            return []
+            return outcomes
 
         # Dispatch PlaceSaved AFTER all DB writes (ordering invariant)
         event = PlaceSaved(
@@ -104,7 +144,7 @@ class ExtractionPersistenceService:
                 exc_info=True,
             )
 
-        return saved_ids
+        return outcomes
 
     def _build_description(self, result: ExtractionResult) -> str:
         """Build embedding input text from extraction result fields."""

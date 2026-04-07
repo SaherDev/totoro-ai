@@ -1,6 +1,7 @@
 """Google Places API client for place validation."""
 
 import difflib
+import re
 from enum import Enum
 from typing import Protocol
 
@@ -8,6 +9,72 @@ import httpx
 from pydantic import BaseModel
 
 from totoro_ai.core.config import get_config, get_secrets
+
+# Tokens that carry location meaning, not venue identity.  Stripped from both
+# the candidate name and the Google Places result before SequenceMatcher runs
+# so that geographic suffixes ("Bangkok", "Sukhumvit 33") can't drag the ratio
+# below the EXACT threshold.
+_NOISE_TOKENS: frozenset[str] = frozenset(
+    {
+        # countries / major cities used as search context
+        "thailand",
+        "bangkok",
+        "japan",
+        "tokyo",
+        "osaka",
+        "singapore",
+        "korea",
+        "seoul",
+        # generic street / area identifiers
+        "soi",
+        "road",
+        "rd",
+        "street",
+        "st",
+        "ave",
+        "avenue",
+        "lane",
+        "ln",
+        "sukhumvit",
+        "silom",
+        "sathorn",
+        "thonglor",
+        "ekkamai",
+        "asok",
+        "phrom",
+        "phong",
+        # ordinal/cardinal noise
+        "north",
+        "south",
+        "east",
+        "west",
+        # generic place-type words that differ across languages
+        "restaurant",
+        "ramen",  # kept only when it's not the sole content
+        "cafe",
+        "bar",
+        "shop",
+    }
+)
+
+
+def _core_tokens(text: str) -> str:
+    """Return the core name tokens of *text* with location noise removed.
+
+    Steps:
+    1. Lowercase and strip punctuation.
+    2. Split into whitespace-separated tokens.
+    3. Remove tokens that are pure digits or pure noise geography.
+    4. Rejoin as a single string for SequenceMatcher.
+
+    If removing all tokens would leave an empty string, return the original
+    lowercased+stripped string so we never compare empty vs non-empty.
+    """
+    cleaned = re.sub(r"[^\w\s]", "", text.lower())
+    tokens = [t for t in cleaned.split() if t not in _NOISE_TOKENS and not t.isdigit()]
+    if not tokens:
+        return cleaned.strip()
+    return " ".join(tokens)
 
 
 class PlacesMatchQuality(str, Enum):
@@ -100,14 +167,25 @@ class GooglePlacesClient:
         geometry = first_match.get("geometry", {})
         location_data = geometry.get("location", {})
 
-        # Compute name similarity
+        # Compute name similarity using core tokens only.
+        # NER often includes location noise in the candidate name
+        # (e.g. "RAMEN KAISUGI Bangkok", "RAMEN KAISUGI Sukhumvit 33").
+        # Google Places returns just the venue name ("Ramen Kaisugi").
+        # Comparing full strings against short names unfairly lowers the ratio.
+        # Stripping a fixed suffix (city field) is fragile when NER puts a
+        # street name in city instead.  Token intersection is robust: remove
+        # known geographic / generic noise from both sides, then compare only
+        # the core venue-name tokens.
+        core_candidate = _core_tokens(name)
+        core_google = _core_tokens(matched_name)
+
         similarity = difflib.SequenceMatcher(
-            None, name.lower(), matched_name.lower()
+            None, core_candidate, core_google
         ).ratio()
 
-        if similarity >= 0.95:
+        if similarity >= 0.85:
             match_quality = PlacesMatchQuality.EXACT
-        elif similarity >= 0.80:
+        elif similarity >= 0.70:
             match_quality = PlacesMatchQuality.FUZZY
         else:
             match_quality = PlacesMatchQuality.CATEGORY_ONLY

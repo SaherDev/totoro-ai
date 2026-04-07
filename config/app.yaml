@@ -86,6 +86,7 @@ extraction:
       vision_frames: 0.55
     corroboration_bonus: 0.10
     max_score: 0.97
+    save_threshold: 0.70
   circuit_breaker_threshold: 5
   circuit_breaker_cooldown: 900
   vision:

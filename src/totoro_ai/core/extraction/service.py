@@ -30,7 +30,9 @@ class ExtractionService:
             user_id: User identifier (validated by NestJS)
 
         Returns:
-            ExtractPlaceResponse with provisional flag, places list, and status
+            ExtractPlaceResponse where every pipeline candidate appears in
+            places with its own extraction_status ("saved", "duplicate",
+            "below_threshold").
 
         Raises:
             ValueError: If raw_input is empty (→ 400)
@@ -56,27 +58,37 @@ class ExtractionService:
                 request_id=result.request_id or None,
             )
 
-        saved_ids = await self._persistence.save_and_emit(result, user_id)
+        outcomes = await self._persistence.save_and_emit(result, user_id)
 
         places = [
             SavedPlace(
-                place_id=pid,
-                place_name=r.place_name,
-                address=r.address,
-                city=r.city,
-                cuisine=r.cuisine,
-                confidence=r.confidence,
-                resolved_by=r.resolved_by.value,
-                external_provider=r.external_provider,
-                external_id=r.external_id,
+                place_id=outcome.place_id,
+                place_name=outcome.result.place_name,
+                address=outcome.result.address,
+                city=outcome.result.city,
+                cuisine=outcome.result.cuisine,
+                confidence=outcome.result.confidence,
+                resolved_by=outcome.result.resolved_by.value,
+                external_provider=outcome.result.external_provider,
+                external_id=outcome.result.external_id,
+                extraction_status=outcome.status,
             )
-            for pid, r in zip(saved_ids, result, strict=False)
+            for outcome in outcomes
         ]
+
+        # Top-level status: "saved" if any saved, else dominant non-saved status
+        statuses = {o.status for o in outcomes}
+        if "saved" in statuses:
+            top_status = "saved"
+        elif "below_threshold" in statuses:
+            top_status = "below_threshold"
+        else:
+            top_status = "duplicate"
 
         return ExtractPlaceResponse(
             provisional=False,
             places=places,
             pending_levels=[],
-            extraction_status="saved" if places else "duplicate",
+            extraction_status=top_status,
             source_url=parsed.url,
         )

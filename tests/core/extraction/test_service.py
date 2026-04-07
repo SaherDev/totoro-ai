@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
+from totoro_ai.core.extraction.persistence import PlaceSaveOutcome
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.types import (
     ExtractionLevel,
@@ -40,6 +41,36 @@ def _make_result(
     )
 
 
+def _saved_outcome(
+    result: ExtractionResult | None = None, place_id: str = "place-uuid-1"
+) -> PlaceSaveOutcome:
+    return PlaceSaveOutcome(
+        result=result or _make_result(),
+        place_id=place_id,
+        status="saved",
+    )
+
+
+def _duplicate_outcome(
+    result: ExtractionResult | None = None, place_id: str = "existing-uuid"
+) -> PlaceSaveOutcome:
+    return PlaceSaveOutcome(
+        result=result or _make_result(),
+        place_id=place_id,
+        status="duplicate",
+    )
+
+
+def _below_threshold_outcome(
+    result: ExtractionResult | None = None,
+) -> PlaceSaveOutcome:
+    return PlaceSaveOutcome(
+        result=result or _make_result(confidence=0.50),
+        place_id=None,
+        status="below_threshold",
+    )
+
+
 def _make_provisional(
     pending_levels: list[ExtractionLevel] | None = None,
 ) -> ProvisionalResponse:
@@ -67,7 +98,7 @@ def pipeline() -> MagicMock:
 @pytest.fixture
 def persistence() -> MagicMock:
     ps = MagicMock()
-    ps.save_and_emit = AsyncMock(return_value=["place-uuid-1"])
+    ps.save_and_emit = AsyncMock(return_value=[_saved_outcome()])
     return ps
 
 
@@ -114,7 +145,7 @@ async def test_run_returns_extract_place_response(
 async def test_run_saved_path_sets_provisional_false(
     service: ExtractionService,
 ) -> None:
-    """When persistence returns IDs, provisional is False."""
+    """When persistence returns saved outcomes, provisional is False."""
     response = await service.run("Fuji Ramen Bangkok", user_id="user-1")
 
     assert response.provisional is False
@@ -123,22 +154,27 @@ async def test_run_saved_path_sets_provisional_false(
 async def test_run_saved_path_extraction_status_is_saved(
     service: ExtractionService,
 ) -> None:
-    """When places are saved, extraction_status is 'saved'."""
+    """When places are saved, top-level extraction_status is 'saved'."""
     response = await service.run("Fuji Ramen Bangkok", user_id="user-1")
 
     assert response.extraction_status == "saved"
 
 
-async def test_run_saved_path_places_length_matches_saved_ids(
+async def test_run_saved_path_places_length_matches_outcomes(
     service: ExtractionService,
     pipeline: MagicMock,
     persistence: MagicMock,
 ) -> None:
-    """places list length matches the number of saved IDs returned by persistence."""
-    pipeline.run = AsyncMock(
-        return_value=[_make_result("Place A"), _make_result("Place B")]
+    """places list length matches the number of outcomes returned by persistence."""
+    result_a = _make_result("Place A", external_id="ext_a")
+    result_b = _make_result("Place B", external_id="ext_b")
+    pipeline.run = AsyncMock(return_value=[result_a, result_b])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[
+            _saved_outcome(result_a, "uuid-a"),
+            _saved_outcome(result_b, "uuid-b"),
+        ]
     )
-    persistence.save_and_emit = AsyncMock(return_value=["uuid-a", "uuid-b"])
 
     response = await service.run("some input", user_id="user-1")
 
@@ -150,9 +186,12 @@ async def test_run_saved_path_place_ids_from_persistence(
     pipeline: MagicMock,
     persistence: MagicMock,
 ) -> None:
-    """Each SavedPlace.place_id comes from the IDs returned by persistence."""
-    pipeline.run = AsyncMock(return_value=[_make_result()])
-    persistence.save_and_emit = AsyncMock(return_value=["expected-uuid"])
+    """Each SavedPlace.place_id comes from the outcome returned by persistence."""
+    result = _make_result()
+    pipeline.run = AsyncMock(return_value=[result])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_saved_outcome(result, "expected-uuid")]
+    )
 
     response = await service.run("Fuji Ramen", user_id="user-1")
 
@@ -176,7 +215,9 @@ async def test_run_saved_path_place_fields_from_extraction_result(
         external_id="ichrn_001",
     )
     pipeline.run = AsyncMock(return_value=[result])
-    persistence.save_and_emit = AsyncMock(return_value=["uuid-ichiran"])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_saved_outcome(result, "uuid-ichiran")]
+    )
 
     response = await service.run("Ichiran Fukuoka", user_id="user-1")
 
@@ -189,6 +230,7 @@ async def test_run_saved_path_place_fields_from_extraction_result(
     assert place.resolved_by == ExtractionLevel.LLM_NER.value
     assert place.external_provider == "google"
     assert place.external_id == "ichrn_001"
+    assert place.extraction_status == "saved"
 
 
 async def test_run_pending_levels_empty_on_saved_path(
@@ -201,7 +243,7 @@ async def test_run_pending_levels_empty_on_saved_path(
 
 
 # ---------------------------------------------------------------------------
-# Dedup path — all duplicates
+# Duplicate path — all candidates already in DB
 # ---------------------------------------------------------------------------
 
 
@@ -210,15 +252,60 @@ async def test_run_all_duplicates_extraction_status_is_duplicate(
     pipeline: MagicMock,
     persistence: MagicMock,
 ) -> None:
-    """When persistence returns [] (all duped), extraction_status is 'duplicate'."""
-    pipeline.run = AsyncMock(return_value=[_make_result()])
-    persistence.save_and_emit = AsyncMock(return_value=[])
+    """When all outcomes are duplicate, top-level extraction_status is 'duplicate'."""
+    result = _make_result()
+    pipeline.run = AsyncMock(return_value=[result])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_duplicate_outcome(result, "existing-uuid")]
+    )
 
     response = await service.run("Fuji Ramen", user_id="user-1")
 
     assert response.extraction_status == "duplicate"
-    assert response.places == []
     assert response.provisional is False
+
+
+async def test_run_all_duplicates_places_non_empty(
+    service: ExtractionService,
+    pipeline: MagicMock,
+    persistence: MagicMock,
+) -> None:
+    """Duplicate candidates still appear in places with extraction_status 'duplicate'."""
+    result = _make_result()
+    pipeline.run = AsyncMock(return_value=[result])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_duplicate_outcome(result, "existing-uuid")]
+    )
+
+    response = await service.run("Fuji Ramen", user_id="user-1")
+
+    assert len(response.places) == 1
+    assert response.places[0].extraction_status == "duplicate"
+    assert response.places[0].place_id == "existing-uuid"
+
+
+# ---------------------------------------------------------------------------
+# Below-threshold path
+# ---------------------------------------------------------------------------
+
+
+async def test_run_below_threshold_extraction_status(
+    service: ExtractionService,
+    pipeline: MagicMock,
+    persistence: MagicMock,
+) -> None:
+    """When all outcomes are below_threshold, top-level status is 'below_threshold'."""
+    result = _make_result(confidence=0.50)
+    pipeline.run = AsyncMock(return_value=[result])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_below_threshold_outcome(result)]
+    )
+
+    response = await service.run("The Coffee Shop", user_id="user-1")
+
+    assert response.extraction_status == "below_threshold"
+    assert response.places[0].extraction_status == "below_threshold"
+    assert response.places[0].place_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -357,8 +444,11 @@ async def test_source_url_set_to_parsed_url_on_saved_path(
     persistence: MagicMock,
 ) -> None:
     """source_url in response reflects the URL parsed from raw_input."""
-    pipeline.run = AsyncMock(return_value=[_make_result()])
-    persistence.save_and_emit = AsyncMock(return_value=["uuid-1"])
+    result = _make_result()
+    pipeline.run = AsyncMock(return_value=[result])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_saved_outcome(result, "uuid-1")]
+    )
 
     response = await service.run(
         "https://tiktok.com/v/abc check this out", user_id="user-1"
@@ -373,8 +463,11 @@ async def test_source_url_none_for_plain_text_input(
     persistence: MagicMock,
 ) -> None:
     """source_url is None when raw_input contains no URL."""
-    pipeline.run = AsyncMock(return_value=[_make_result()])
-    persistence.save_and_emit = AsyncMock(return_value=["uuid-1"])
+    result = _make_result()
+    pipeline.run = AsyncMock(return_value=[result])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_saved_outcome(result, "uuid-1")]
+    )
 
     response = await service.run("Fuji Ramen no url", user_id="user-1")
 
@@ -408,7 +501,9 @@ async def test_persistence_called_with_pipeline_results(
     """persistence.save_and_emit is called with the list returned by pipeline."""
     results = [_make_result()]
     pipeline.run = AsyncMock(return_value=results)
-    persistence.save_and_emit = AsyncMock(return_value=["uuid-1"])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_saved_outcome(results[0], "uuid-1")]
+    )
 
     await service.run("Fuji Ramen", user_id="user-1")
 
@@ -420,10 +515,7 @@ async def test_persistence_not_called_on_provisional_path(
     pipeline: MagicMock,
     persistence: MagicMock,
 ) -> None:
-    """save_and_emit is NOT called when pipeline returns ProvisionalResponse.
-
-    Provisional means no inline candidates found — persistence is not invoked.
-    """
+    """save_and_emit is NOT called when pipeline returns ProvisionalResponse."""
     pipeline.run = AsyncMock(return_value=_make_provisional())
 
     await service.run("https://tiktok.com/v/123", user_id="user-1")

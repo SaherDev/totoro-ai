@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from totoro_ai.core.events.events import PlaceSaved
-from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
+from totoro_ai.core.extraction.persistence import (
+    ExtractionPersistenceService,
+    PlaceSaveOutcome,
+)
 from totoro_ai.core.extraction.types import ExtractionLevel, ExtractionResult
 
 
@@ -89,27 +92,30 @@ async def test_new_place_is_saved_and_place_saved_dispatched(
     """A new place with external_id is saved and PlaceSaved dispatched."""
     result = _make_result()
 
-    saved_ids = await service.save_and_emit([result], user_id="user-1")
+    outcomes = await service.save_and_emit([result], user_id="user-1")
 
-    assert len(saved_ids) == 1
+    assert len(outcomes) == 1
+    assert outcomes[0].status == "saved"
+    assert outcomes[0].place_id is not None
     place_repo.save.assert_awaited_once()
     event_dispatcher.dispatch.assert_awaited_once()
     dispatched: PlaceSaved = event_dispatcher.dispatch.call_args[0][0]
-    assert dispatched.place_ids == saved_ids
+    assert dispatched.place_ids == [outcomes[0].place_id]
     assert dispatched.user_id == "user-1"
 
 
-async def test_returns_list_of_place_id_strings(
+async def test_returns_list_of_outcomes(
     service: ExtractionPersistenceService,
     place_repo: AsyncMock,
 ) -> None:
-    """save_and_emit returns list of UUID strings for saved places."""
-    saved_ids = await service.save_and_emit([_make_result()], user_id="user-1")
+    """save_and_emit returns a list of PlaceSaveOutcome objects."""
+    outcomes = await service.save_and_emit([_make_result()], user_id="user-1")
 
-    assert isinstance(saved_ids, list)
-    assert len(saved_ids) == 1
-    assert isinstance(saved_ids[0], str)
-    assert len(saved_ids[0]) > 0
+    assert isinstance(outcomes, list)
+    assert len(outcomes) == 1
+    assert isinstance(outcomes[0], PlaceSaveOutcome)
+    assert isinstance(outcomes[0].place_id, str)
+    assert len(outcomes[0].place_id) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -117,19 +123,21 @@ async def test_returns_list_of_place_id_strings(
 # ---------------------------------------------------------------------------
 
 
-async def test_duplicate_place_is_skipped(
+async def test_duplicate_place_has_duplicate_status(
     service: ExtractionPersistenceService,
     place_repo: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """When existing place found by provider+external_id, skip it."""
+    """When existing place found by provider+external_id, outcome is 'duplicate'."""
     existing = MagicMock()
     existing.id = "existing-uuid"
     place_repo.get_by_provider = AsyncMock(return_value=existing)
 
-    saved_ids = await service.save_and_emit([_make_result()], user_id="user-1")
+    outcomes = await service.save_and_emit([_make_result()], user_id="user-1")
 
-    assert saved_ids == []
+    assert len(outcomes) == 1
+    assert outcomes[0].status == "duplicate"
+    assert outcomes[0].place_id == "existing-uuid"
     place_repo.save.assert_not_awaited()
 
 
@@ -143,11 +151,11 @@ async def test_all_duplicates_no_place_saved_event(
     existing.id = "existing-uuid"
     place_repo.get_by_provider = AsyncMock(return_value=existing)
 
-    saved_ids = await service.save_and_emit(
+    outcomes = await service.save_and_emit(
         [_make_result("Place A"), _make_result("Place B")], user_id="user-1"
     )
 
-    assert saved_ids == []
+    assert all(o.status == "duplicate" for o in outcomes)
     event_dispatcher.dispatch.assert_not_awaited()
 
 
@@ -158,10 +166,60 @@ async def test_external_id_none_skips_dedup_check(
     """When external_id is None, no dedup check is performed, place is saved."""
     result = _make_result(external_id=None, external_provider=None)
 
-    saved_ids = await service.save_and_emit([result], user_id="user-1")
+    outcomes = await service.save_and_emit([result], user_id="user-1")
 
     place_repo.get_by_provider.assert_not_awaited()
-    assert len(saved_ids) == 1
+    assert len(outcomes) == 1
+    assert outcomes[0].status == "saved"
+
+
+# ---------------------------------------------------------------------------
+# Confidence threshold — below_threshold
+# ---------------------------------------------------------------------------
+
+
+async def test_below_threshold_is_not_saved(
+    service: ExtractionPersistenceService,
+    place_repo: AsyncMock,
+    event_dispatcher: AsyncMock,
+) -> None:
+    """Place with confidence below save_threshold (0.70) is not written to DB."""
+    result = _make_result(confidence=0.69)
+
+    outcomes = await service.save_and_emit([result], user_id="user-1")
+
+    assert len(outcomes) == 1
+    assert outcomes[0].status == "below_threshold"
+    assert outcomes[0].place_id is None
+    place_repo.save.assert_not_awaited()
+    event_dispatcher.dispatch.assert_not_awaited()
+
+
+async def test_at_threshold_is_saved(
+    service: ExtractionPersistenceService,
+    place_repo: AsyncMock,
+) -> None:
+    """Place with confidence exactly at save_threshold (0.70) is saved."""
+    result = _make_result(confidence=0.70)
+
+    outcomes = await service.save_and_emit([result], user_id="user-1")
+
+    assert outcomes[0].status == "saved"
+    place_repo.save.assert_awaited_once()
+
+
+async def test_all_below_threshold_no_place_saved_event(
+    service: ExtractionPersistenceService,
+    event_dispatcher: AsyncMock,
+) -> None:
+    """When all candidates are below threshold, PlaceSaved is NOT dispatched."""
+    outcomes = await service.save_and_emit(
+        [_make_result(confidence=0.50), _make_result(confidence=0.60)],
+        user_id="user-1",
+    )
+
+    assert all(o.status == "below_threshold" for o in outcomes)
+    event_dispatcher.dispatch.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -197,10 +255,10 @@ async def test_multi_place_calls_bulk_upsert_with_all_records(
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024] * 5)
     results = [_make_result(f"Place {i}", external_id=f"ext_{i}") for i in range(5)]
 
-    # Make dedup return None for all (no duplicates)
-    saved_ids = await service.save_and_emit(results, user_id="user-1")
+    outcomes = await service.save_and_emit(results, user_id="user-1")
 
-    assert len(saved_ids) == 5
+    assert len(outcomes) == 5
+    assert all(o.status == "saved" for o in outcomes)
     texts = embedder.embed.call_args[0][0]
     assert len(texts) == 5
     embedder.embed.assert_awaited_once()
@@ -215,14 +273,15 @@ async def test_embedding_failure_is_non_fatal(
     embedding_repo: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """If bulk_upsert_embeddings raises RuntimeError, place is still saved and IDs returned."""  # noqa: E501
+    """If bulk_upsert_embeddings raises RuntimeError, place is still saved and outcomes returned."""  # noqa: E501
     embedding_repo.bulk_upsert_embeddings = AsyncMock(
         side_effect=RuntimeError("DB error")
     )
 
-    saved_ids = await service.save_and_emit([_make_result()], user_id="user-1")
+    outcomes = await service.save_and_emit([_make_result()], user_id="user-1")
 
-    assert len(saved_ids) == 1
+    assert len(outcomes) == 1
+    assert outcomes[0].status == "saved"
     event_dispatcher.dispatch.assert_awaited_once()
 
 
@@ -254,7 +313,7 @@ async def test_place_saved_dispatched_before_embeddings(
 
 
 # ---------------------------------------------------------------------------
-# Multi-place: one PlaceSaved with all IDs
+# Multi-place: one PlaceSaved with all saved IDs only
 # ---------------------------------------------------------------------------
 
 
@@ -263,16 +322,42 @@ async def test_multiple_places_one_place_saved_event_with_all_ids(
     event_dispatcher: AsyncMock,
     embedder: AsyncMock,
 ) -> None:
-    """Multiple new places → one PlaceSaved event with all place_ids."""
+    """Multiple new places → one PlaceSaved event with all saved place_ids."""
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024, [0.2] * 1024])
     results = [
         _make_result("Place A", external_id="ext_a"),
         _make_result("Place B", external_id="ext_b"),
     ]
 
-    saved_ids = await service.save_and_emit(results, user_id="user-1")
+    outcomes = await service.save_and_emit(results, user_id="user-1")
 
+    saved_ids = [o.place_id for o in outcomes if o.status == "saved"]
     event_dispatcher.dispatch.assert_awaited_once()
     event: PlaceSaved = event_dispatcher.dispatch.call_args[0][0]
     assert set(event.place_ids) == set(saved_ids)
     assert len(event.place_ids) == 2
+
+
+async def test_mixed_saved_and_below_threshold_only_saved_in_event(
+    service: ExtractionPersistenceService,
+    event_dispatcher: AsyncMock,
+    embedder: AsyncMock,
+) -> None:
+    """PlaceSaved event contains only saved place IDs, not below_threshold ones."""
+    embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
+    results = [
+        _make_result("Good Place", external_id="ext_good", confidence=0.85),
+        _make_result("Low Conf", external_id="ext_low", confidence=0.50),
+    ]
+
+    outcomes = await service.save_and_emit(results, user_id="user-1")
+
+    saved = [o for o in outcomes if o.status == "saved"]
+    below = [o for o in outcomes if o.status == "below_threshold"]
+    assert len(saved) == 1
+    assert len(below) == 1
+
+    event_dispatcher.dispatch.assert_awaited_once()
+    event: PlaceSaved = event_dispatcher.dispatch.call_args[0][0]
+    assert len(event.place_ids) == 1
+    assert event.place_ids[0] == saved[0].place_id

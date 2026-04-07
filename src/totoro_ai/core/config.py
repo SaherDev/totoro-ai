@@ -89,6 +89,7 @@ class ConfidenceConfig(BaseModel):
     }
     corroboration_bonus: float = 0.10
     max_score: float = 0.97
+    save_threshold: float = 0.70
 
 
 class ExtractionThresholds(BaseModel):
