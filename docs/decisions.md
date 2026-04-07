@@ -15,6 +15,33 @@ Format:
 
 ---
 
+## ADR-048: Status polling endpoint for provisional extractions
+
+**Date:** 2026-04-07\
+**Status:** accepted\
+**Context:** Constitution Section VIII specified two HTTP endpoints (POST /v1/extract-place
+and POST /v1/consult). The extraction cascade Run 3 introduced provisional responses for
+TikTok URLs with no caption — the response returns immediately with provisional: true and a
+request_id, but the product repo had no way to retrieve the final result once background
+enrichers completed. A polling endpoint closes this gap.\
+**Decision:** Add GET /v1/extract-place/status/{request_id} as a third endpoint. It reads
+from a CacheBackend keyed by extraction:{request_id} and returns the full extraction result
+when available, or {"extraction_status": "processing"} when not. The endpoint is read-only,
+stateless on the server side, and requires no database access. It lives in
+routes/extract_place.py as part of the extract-place resource. Unknown or expired
+request_ids return {"extraction_status": "processing"} with HTTP 200 — no 4xx errors.
+Constitution Section VIII is updated to reflect three endpoints. The CacheBackend
+abstraction is introduced per ADR-038 (Protocol for all swappable dependencies):
+CacheBackend Protocol in providers/cache.py, RedisCacheBackend concrete implementation in
+providers/redis_cache.py, ExtractionStatusRepository depending on the Protocol only.\
+**Consequences:** Product repo can poll for results after provisional responses. Cache
+backend must be available for status reads; if a key is missing or expired, the endpoint
+returns "processing" gracefully — no error propagation. New endpoint requires a .bru file
+in totoro-config/bruno/. ADR-048 supersedes the "two endpoints only" constraint in
+Constitution Section VIII.
+
+---
+
 ## ADR-047: whisper-large-v3-turbo for audio transcription via Groq
 
 **Date:** 2026-04-06\

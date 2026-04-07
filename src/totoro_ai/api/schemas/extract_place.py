@@ -38,3 +38,4 @@ class ExtractPlaceResponse(BaseModel):
     pending_levels: list[str]
     extraction_status: str
     source_url: str | None
+    request_id: str | None = None  # UUID4 for provisional responses; None otherwise

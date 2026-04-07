@@ -9,6 +9,7 @@ from totoro_ai.core.events.handlers import EventHandlers
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
+from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
@@ -20,9 +21,23 @@ from totoro_ai.db.repositories import (
 )
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
-from totoro_ai.providers.llm import get_vision_extractor
+from totoro_ai.providers.cache import CacheBackend
 from totoro_ai.providers.embeddings import EmbedderProtocol, get_embedder
 from totoro_ai.providers.groq_client import GroqWhisperClient
+from totoro_ai.providers.llm import get_vision_extractor
+from totoro_ai.providers.redis_cache import RedisCacheBackend
+
+
+def get_cache_backend() -> CacheBackend:
+    """FastAPI dependency providing CacheBackend (RedisCacheBackend by default)."""
+    return RedisCacheBackend(url=get_secrets().redis.url)
+
+
+def get_status_repo(
+    cache: CacheBackend = Depends(get_cache_backend),  # noqa: B008
+) -> ExtractionStatusRepository:
+    """FastAPI dependency providing ExtractionStatusRepository."""
+    return ExtractionStatusRepository(cache=cache)
 
 
 def get_place_repo(
@@ -114,6 +129,9 @@ async def get_event_dispatcher(
             confidence_config=get_config().extraction.confidence,
         ),
         persistence=pending_persistence,
+        status_repo=ExtractionStatusRepository(
+            cache=RedisCacheBackend(url=get_secrets().redis.url)
+        ),
     )
     dispatcher.register_handler(
         "extraction_pending", pending_handler.handle  # type: ignore[arg-type]
@@ -197,9 +215,9 @@ def get_extraction_pipeline(
 
 def get_extraction_service(
     pipeline: ExtractionPipeline = Depends(get_extraction_pipeline),  # noqa: B008
-    persistence: ExtractionPersistenceService = Depends(
+    persistence: ExtractionPersistenceService = Depends(  # noqa: B008
         get_extraction_persistence
-    ),  # noqa: B008
+    ),
 ) -> ExtractionService:
     """FastAPI dependency providing ExtractionService (2 deps replacing 7)."""
     return ExtractionService(pipeline=pipeline, persistence=persistence)

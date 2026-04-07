@@ -429,3 +429,45 @@ async def test_persistence_not_called_on_provisional_path(
     await service.run("https://tiktok.com/v/123", user_id="user-1")
 
     persistence.save_and_emit.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# request_id forwarding (Run 4 — status polling)
+# ---------------------------------------------------------------------------
+
+
+async def test_provisional_response_carries_request_id(
+    service: ExtractionService,
+    pipeline: MagicMock,
+) -> None:
+    """ProvisionalResponse.request_id is forwarded to ExtractPlaceResponse."""
+    provisional = _make_provisional()
+    provisional.request_id = "550e8400-e29b-41d4-a716-446655440000"
+    pipeline.run = AsyncMock(return_value=provisional)
+
+    response = await service.run("https://tiktok.com/v/123", user_id="user-1")
+
+    assert response.request_id == "550e8400-e29b-41d4-a716-446655440000"
+
+
+async def test_provisional_response_request_id_empty_string_becomes_none(
+    service: ExtractionService,
+    pipeline: MagicMock,
+) -> None:
+    """Empty string request_id (default) becomes None in API response."""
+    provisional = _make_provisional()
+    provisional.request_id = ""  # default value
+    pipeline.run = AsyncMock(return_value=provisional)
+
+    response = await service.run("https://tiktok.com/v/123", user_id="user-1")
+
+    assert response.request_id is None
+
+
+async def test_saved_path_request_id_is_none(
+    service: ExtractionService,
+) -> None:
+    """Synchronous saved path always returns request_id=None."""
+    response = await service.run("Fuji Ramen Bangkok", user_id="user-1")
+
+    assert response.request_id is None

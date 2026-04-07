@@ -53,6 +53,7 @@ class ExtractionService:
                 pending_levels=[level.value for level in result.pending_levels],
                 extraction_status="processing",
                 source_url=parsed.url,
+                request_id=result.request_id or None,
             )
 
         saved_ids = await self._persistence.save_and_emit(result, user_id)
