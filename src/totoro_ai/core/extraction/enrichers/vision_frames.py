@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import subprocess
+import sys
 
 from totoro_ai.core.config import ExtractionVisionConfig
 from totoro_ai.core.extraction.types import (
@@ -58,6 +60,12 @@ class VisionFramesEnricher:
     ) -> None:
         self._vision_extractor = vision_extractor
         self._config = config
+        if shutil.which("ffmpeg") is None:
+            logger.warning(
+                "VisionFramesEnricher: ffmpeg binary not found on PATH — "
+                "vision frame extraction will be skipped. "
+                "Install via: brew install ffmpeg (local) or add to nixpacks.toml (Railway)."
+            )
 
     async def enrich(self, context: ExtractionContext) -> None:
         if not context.url:
@@ -100,7 +108,7 @@ class VisionFramesEnricher:
     def _capture_frames(self, url: str) -> bytes:
         """Pipe yt-dlp video stream into ffmpeg and collect PNG bytes."""
         ytdlp_proc = subprocess.Popen(
-            ["yt-dlp", "-f", "bv", "-o", "-", url],
+            [sys.executable, "-m", "yt_dlp", "-f", "bv", "-o", "-", url],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )

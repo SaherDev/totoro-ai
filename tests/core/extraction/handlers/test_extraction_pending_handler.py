@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from totoro_ai.core.extraction.handlers.extraction_pending import (
     ExtractionPendingHandler,
 )
-from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
+from totoro_ai.core.extraction.persistence import ExtractionPersistenceService, PlaceSaveOutcome
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
@@ -229,11 +229,12 @@ async def test_status_write_failed_when_validator_returns_empty_list() -> None:
 
 async def test_status_write_called_with_full_payload_on_success() -> None:
     """Handler writes full ExtractPlaceResponse-compatible dict on success."""
-    results = [_make_result("Ramen Hero")]
+    result = _make_result("Ramen Hero")
+    outcomes = [PlaceSaveOutcome(result=result, place_id="place-id-1", status="saved")]
     validator = MagicMock()
-    validator.validate = AsyncMock(return_value=results)
+    validator.validate = AsyncMock(return_value=[result])
     persistence = AsyncMock(spec=ExtractionPersistenceService)
-    persistence.save_and_emit = AsyncMock(return_value=["place-id-1"])
+    persistence.save_and_emit = AsyncMock(return_value=outcomes)
     status_repo = AsyncMock(spec=ExtractionStatusRepository)
     handler = _make_handler(
         validator=validator, persistence=persistence, status_repo=status_repo
@@ -250,15 +251,17 @@ async def test_status_write_called_with_full_payload_on_success() -> None:
     assert len(payload["places"]) == 1
     assert payload["places"][0]["place_name"] == "Ramen Hero"
     assert payload["places"][0]["place_id"] == "place-id-1"
+    assert payload["places"][0]["extraction_status"] == "saved"
 
 
 async def test_status_write_uses_request_id_from_event() -> None:
     """Handler forwards event.request_id to status_repo.write."""
-    results = [_make_result()]
+    result = _make_result()
+    outcomes = [PlaceSaveOutcome(result=result, place_id="p1", status="saved")]
     validator = MagicMock()
-    validator.validate = AsyncMock(return_value=results)
+    validator.validate = AsyncMock(return_value=[result])
     persistence = AsyncMock(spec=ExtractionPersistenceService)
-    persistence.save_and_emit = AsyncMock(return_value=["p1"])
+    persistence.save_and_emit = AsyncMock(return_value=outcomes)
     status_repo = AsyncMock(spec=ExtractionStatusRepository)
     handler = _make_handler(
         validator=validator, persistence=persistence, status_repo=status_repo
