@@ -1,11 +1,14 @@
 """FastAPI dependencies for route handlers (ADR-019)."""
 
+from __future__ import annotations
+
 from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
+from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
@@ -155,28 +158,19 @@ def get_extraction_persistence(
     )
 
 
-def get_extraction_pipeline(
-    event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
-    extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
-) -> ExtractionPipeline:
-    """FastAPI dependency providing ExtractionPipeline with all enrichers wired."""
+def _make_enrichment_pipeline() -> "EnrichmentPipeline":
+    """Build EnrichmentPipeline with singleton circuit breaker instances."""
     from totoro_ai.core.extraction.circuit_breaker import (
         CircuitBreakerEnricher,
         ParallelEnricherGroup,
     )
     from totoro_ai.core.extraction.enrichers.emoji_regex import EmojiRegexEnricher
     from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
-    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
     from totoro_ai.core.extraction.enrichers.tiktok_oembed import TikTokOEmbedEnricher
-    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
-    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
     from totoro_ai.core.extraction.enrichers.ytdlp_metadata import YtDlpMetadataEnricher
     from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
-    from totoro_ai.core.extraction.places_client import GooglePlacesClient
-    from totoro_ai.core.extraction.protocols import Enricher
-    from totoro_ai.core.extraction.validator import GooglePlacesValidator
 
-    enrichment = EnrichmentPipeline(
+    return EnrichmentPipeline(
         [
             ParallelEnricherGroup(
                 [
@@ -188,6 +182,32 @@ def get_extraction_pipeline(
             LLMNEREnricher(instructor_client=get_instructor_client("intent_parser")),
         ]
     )
+
+
+# Module-level singleton so circuit breaker state persists across requests.
+_enrichment_pipeline: "EnrichmentPipeline | None" = None
+
+
+def _get_enrichment_pipeline() -> "EnrichmentPipeline":
+    global _enrichment_pipeline
+    if _enrichment_pipeline is None:
+        _enrichment_pipeline = _make_enrichment_pipeline()
+    return _enrichment_pipeline
+
+
+def get_extraction_pipeline(
+    event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
+    extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
+) -> ExtractionPipeline:
+    """FastAPI dependency providing ExtractionPipeline with all enrichers wired."""
+    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
+    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
+    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
+    from totoro_ai.core.extraction.places_client import GooglePlacesClient
+    from totoro_ai.core.extraction.protocols import Enricher
+    from totoro_ai.core.extraction.validator import GooglePlacesValidator
+
+    enrichment = _get_enrichment_pipeline()
     validator = GooglePlacesValidator(
         places_client=GooglePlacesClient(),
         confidence_config=extraction_config.confidence,
