@@ -27,7 +27,10 @@
       "Bash(grep -r \"onboarding\\\\|OnboardingSignal\" tests/ --include=*.py)",
       "Bash(.specify/scripts/bash/create-new-feature.sh:*)",
       "Bash(git stash:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(poetry add:*)",
+      "Bash(brew install:*)",
+      "Bash(ffmpeg -version)"
     ]
   }
 }

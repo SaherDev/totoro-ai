@@ -125,6 +125,7 @@ external_services:
       - formatted_address
       - place_id
       - geometry
+      - types
   tiktok_oembed:
     base_url: https://www.tiktok.com/oembed
     timeout_seconds: 3.0

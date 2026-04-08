@@ -13,6 +13,35 @@ from totoro_ai.core.extraction.types import (
     ExtractionResult,
 )
 
+# Google Places types that indicate a geographic feature, not a venue.
+# Candidates that resolve to any of these types are rejected post-validation.
+_GEOGRAPHIC_PLACE_TYPES: frozenset[str] = frozenset(
+    {
+        "route",          # street or road
+        "street_address", # specific address on a street
+        "political",      # generic political entity
+        "locality",       # city or town
+        "sublocality",    # district or neighbourhood within a city
+        "sublocality_level_1",
+        "sublocality_level_2",
+        "sublocality_level_3",
+        "sublocality_level_4",
+        "sublocality_level_5",
+        "country",        # country
+        "administrative_area_level_1",  # state / province
+        "administrative_area_level_2",  # county / region
+        "administrative_area_level_3",
+        "administrative_area_level_4",
+        "administrative_area_level_5",
+        "neighborhood",   # neighbourhood
+        "postal_code",
+        "intersection",
+        "premise",        # building/address, not a business venue
+        "natural_feature",
+    }
+)
+
+
 # Match-quality → modifier mapping (ADR-029, plan.md Phase 5)
 _QUALITY_MODIFIERS: dict[PlacesMatchQuality, float] = {
     PlacesMatchQuality.EXACT: 1.0,
@@ -78,6 +107,11 @@ class GooglePlacesValidator:
         )
 
         if confidence == 0.0 or places_match.external_id is None:
+            return None
+
+        # Reject candidates whose Google Places types indicate a geographic
+        # feature (street, district, city, country) rather than a venue.
+        if _GEOGRAPHIC_PLACE_TYPES.intersection(places_match.place_types):
             return None
 
         return ExtractionResult(
