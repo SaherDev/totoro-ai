@@ -158,6 +158,12 @@ class TestSanitizeCity:
     def test_whitespace_stripped_from_valid_city(self) -> None:
         assert _sanitize_city("  Bangkok  ") == "Bangkok"
 
+    def test_fuzzy_typo_corrected_to_known_city(self) -> None:
+        assert _sanitize_city("bangok") == "Bangkok"
+
+    def test_unrecognised_single_word_still_rejected(self) -> None:
+        assert _sanitize_city("randomword") is None
+
 
 class TestCityExtractionScenarios:
     """Enricher-level tests for Bug 2a (hashtag city) and Bug 2b (city: null)."""
