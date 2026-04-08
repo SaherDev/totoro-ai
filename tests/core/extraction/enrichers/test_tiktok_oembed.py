@@ -42,6 +42,27 @@ class TestTikTokOEmbedEnricher:
             await enricher.enrich(ctx)
         mock_fetch.assert_not_called()
 
+    async def test_sets_platform_tiktok_on_successful_fetch(
+        self, enricher: TikTokOEmbedEnricher
+    ) -> None:
+        ctx = ExtractionContext(url="https://tiktok.com/v/123", user_id="u1")
+        with patch.object(
+            enricher, "_fetch_caption", new=AsyncMock(return_value="some caption")
+        ):
+            await enricher.enrich(ctx)
+        assert ctx.platform == "tiktok"
+
+    async def test_platform_first_write_wins(
+        self, enricher: TikTokOEmbedEnricher
+    ) -> None:
+        ctx = ExtractionContext(url="https://tiktok.com/v/123", user_id="u1")
+        ctx.platform = "instagram"
+        with patch.object(
+            enricher, "_fetch_caption", new=AsyncMock(return_value="caption")
+        ):
+            await enricher.enrich(ctx)
+        assert ctx.platform == "instagram"
+
     async def test_propagates_http_error(self, enricher: TikTokOEmbedEnricher) -> None:
         """Exceptions must NOT be caught internally — circuit breaker handles them."""
         ctx = ExtractionContext(url="https://tiktok.com/v/123", user_id="u1")

@@ -25,6 +25,8 @@ class TikTokOEmbedEnricher:
         caption = await self._fetch_caption(context.url)
         if caption and context.caption is None:
             context.caption = caption
+        if context.platform is None:
+            context.platform = "tiktok"
 
     async def _fetch_caption(self, url: str) -> str | None:
         async with httpx.AsyncClient() as client:

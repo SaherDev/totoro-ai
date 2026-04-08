@@ -32,6 +32,9 @@ class CandidatePlace:
     cuisine: str | None
     source: ExtractionLevel
     corroborated: bool = False
+    price_range: str | None = None
+    place_type: str | None = None
+    signals: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -51,6 +54,10 @@ class ExtractionContext:
     transcript: str | None = None
     candidates: list[CandidatePlace] = field(default_factory=list)
     pending_levels: list[ExtractionLevel] = field(default_factory=list)
+    platform: str | None = None
+    title: str | None = None
+    hashtags: list[str] = field(default_factory=list)
+    location_tag: str | None = None
 
 
 @dataclass

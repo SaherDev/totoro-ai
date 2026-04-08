@@ -66,7 +66,7 @@ def dedup_results_by_external_id(
 
     When two results share the same external_id:
     - Keep the one with the highest-priority resolved_by source
-      (emoji_regex wins over llm_ner — same ordering as _LEVEL_ORDER).
+      (same ordering as _LEVEL_ORDER).
     - Apply corroboration_bonus to the winner's confidence, capped at max_score.
     - Drop the other result entirely.
 

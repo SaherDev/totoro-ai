@@ -82,10 +82,16 @@ class ConfidenceConfig(BaseModel):
 
     base_scores: dict[str, float] = {
         "emoji_regex": 0.95,
-        "llm_ner": 0.80,
+        "llm_ner": 0.60,
         "subtitle_check": 0.75,
         "whisper_audio": 0.65,
         "vision_frames": 0.55,
+    }
+    signal_scores: dict[str, float] = {
+        "emoji_marker": 0.92,
+        "location_tag": 0.85,
+        "caption": 0.75,
+        "hashtag": 0.55,
     }
     corroboration_bonus: float = 0.10
     max_score: float = 0.97

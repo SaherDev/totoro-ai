@@ -104,6 +104,7 @@ class GooglePlacesValidator:
             match_modifier=modifier,
             corroborated=candidate.corroborated,
             config=self._confidence_config,
+            signals=candidate.signals or None,
         )
 
         if confidence == 0.0 or places_match.external_id is None:

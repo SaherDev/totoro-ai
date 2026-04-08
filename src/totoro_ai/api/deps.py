@@ -164,7 +164,6 @@ def _make_enrichment_pipeline() -> "EnrichmentPipeline":
         CircuitBreakerEnricher,
         ParallelEnricherGroup,
     )
-    from totoro_ai.core.extraction.enrichers.emoji_regex import EmojiRegexEnricher
     from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
     from totoro_ai.core.extraction.enrichers.tiktok_oembed import TikTokOEmbedEnricher
     from totoro_ai.core.extraction.enrichers.ytdlp_metadata import YtDlpMetadataEnricher
@@ -178,7 +177,6 @@ def _make_enrichment_pipeline() -> "EnrichmentPipeline":
                     CircuitBreakerEnricher(YtDlpMetadataEnricher()),
                 ]
             ),
-            EmojiRegexEnricher(),
             LLMNEREnricher(instructor_client=get_instructor_client("intent_parser")),
         ]
     )

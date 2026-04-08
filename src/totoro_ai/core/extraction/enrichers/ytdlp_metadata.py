@@ -21,11 +21,24 @@ class YtDlpMetadataEnricher:
         if context.caption is not None:
             return  # first-write-wins
 
-        description = await self._fetch_description(context.url)
+        data = await self._fetch_metadata(context.url)
+        if data is None:
+            return
+
+        description: str | None = data.get("description")
         if description and context.caption is None:
             context.caption = description
 
-    async def _fetch_description(self, url: str) -> str | None:
+        if context.title is None:
+            context.title = data.get("title") or None
+        if not context.hashtags:
+            context.hashtags = data.get("tags") or []
+        if context.platform is None:
+            context.platform = data.get("extractor") or "unknown"
+        if context.location_tag is None:
+            context.location_tag = data.get("location") or None
+
+    async def _fetch_metadata(self, url: str) -> dict | None:  # type: ignore[type-arg]
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -40,6 +53,4 @@ class YtDlpMetadataEnricher:
         if proc.returncode != 0:
             raise RuntimeError(f"yt-dlp exited with code {proc.returncode} for {url}")
 
-        data = json.loads(stdout)
-        description: str | None = data.get("description")
-        return description or None
+        return json.loads(stdout)  # type: ignore[no-any-return]
