@@ -69,12 +69,17 @@ def _core_tokens(text: str) -> str:
 
     If removing all tokens would leave an empty string, return the original
     lowercased+stripped string so we never compare empty vs non-empty.
+
+    If the resulting string has fewer than 4 non-space characters the token is
+    too short to compare meaningfully — returns "" so the caller classifies the
+    match as NONE.
     """
     cleaned = re.sub(r"[^\w\s]", "", text.lower())
     tokens = [t for t in cleaned.split() if t not in _NOISE_TOKENS and not t.isdigit()]
-    if not tokens:
-        return cleaned.strip()
-    return " ".join(tokens)
+    result = " ".join(tokens) if tokens else cleaned.strip()
+    if len(result.replace(" ", "")) < 4:
+        return ""
+    return result
 
 
 class PlacesMatchQuality(str, Enum):
@@ -95,7 +100,7 @@ class PlacesMatchResult(BaseModel):
     external_id: str | None = None  # provider's own ID for the place
     lat: float | None = None
     lng: float | None = None
-    place_types: list[str] = []  # Google Places 'types' field (e.g. ["restaurant", "food"])
+    place_types: list[str] = []  # Google Places 'types' (e.g. ["restaurant", "food"])
 
 
 class PlacesClient(Protocol):
@@ -188,8 +193,14 @@ class GooglePlacesClient:
             match_quality = PlacesMatchQuality.EXACT
         elif similarity >= 0.70:
             match_quality = PlacesMatchQuality.FUZZY
-        else:
+        elif similarity >= 0.35:
+            # Google found a result but the names diverge significantly.
+            # Ratios below 0.35 indicate the candidate and result share almost
+            # no token structure (e.g. "xyzzy" vs "fyzz gastropub" → 0.32) and
+            # should be classified NONE, not CATEGORY_ONLY.
             match_quality = PlacesMatchQuality.CATEGORY_ONLY
+        else:
+            match_quality = PlacesMatchQuality.NONE
 
         return PlacesMatchResult(
             match_quality=match_quality,
