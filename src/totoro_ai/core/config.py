@@ -73,9 +73,51 @@ class ConfidenceWeights(BaseModel):
     max_score: float = 0.95
 
 
+class ConfidenceConfig(BaseModel):
+    """Per-level confidence scoring config (ADR-029).
+
+    base_scores keys are ExtractionLevel.value strings (e.g. "emoji_regex").
+    max_score caps the output — no extraction path earns 1.0.
+    """
+
+    base_scores: dict[str, float] = {
+        "emoji_regex": 0.95,
+        "llm_ner": 0.60,
+        "subtitle_check": 0.75,
+        "whisper_audio": 0.65,
+        "vision_frames": 0.55,
+    }
+    signal_scores: dict[str, float] = {
+        "emoji_marker": 0.92,
+        "location_tag": 0.85,
+        "caption": 0.75,
+        "hashtag": 0.55,
+    }
+    corroboration_bonus: float = 0.10
+    max_score: float = 0.97
+    save_threshold: float = 0.70
+
+
 class ExtractionThresholds(BaseModel):
     store_silently: float = 0.70
     require_confirmation: float = 0.30
+
+
+class ExtractionVisionConfig(BaseModel):
+    max_frames: int = 5
+    scene_threshold: float = 0.3
+    timeout_seconds: float = 10.0
+
+
+class ExtractionWhisperConfig(BaseModel):
+    timeout_seconds: float = 8.0
+    audio_format: str = "opus"
+    audio_quality: str = "32k"
+
+
+class ExtractionSubtitleConfig(BaseModel):
+    output_dir: str = "/tmp/subtitles"
+    format: str = "vtt"
 
 
 class ExtractionConfig(BaseModel):
@@ -93,6 +135,12 @@ class ExtractionConfig(BaseModel):
         "confidence",
         "source",
     ]
+    confidence: ConfidenceConfig = ConfidenceConfig()
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_cooldown: float = 900.0
+    vision: ExtractionVisionConfig = ExtractionVisionConfig()
+    whisper: ExtractionWhisperConfig = ExtractionWhisperConfig()
+    subtitle: ExtractionSubtitleConfig = ExtractionSubtitleConfig()
 
 
 class ExternalServiceConfig(BaseModel):
@@ -102,6 +150,7 @@ class ExternalServiceConfig(BaseModel):
 
 class GooglePlacesConfig(ExternalServiceConfig):
     request_fields: list[str] = ["name", "formatted_address", "place_id", "geometry"]
+    default_region: str = "th"
 
 
 class ExternalServicesConfig(BaseModel):
@@ -202,10 +251,25 @@ class RankingConfig(BaseModel):
     weights: RankingWeightsConfig
 
 
+class ProviderEndpointConfig(BaseModel):
+    """Non-secret provider config (base URL, etc.). API keys live in SecretsConfig."""
+
+    base_url: str
+
+
+class AppProvidersConfig(BaseModel):
+    """Non-secret provider endpoints (base URLs). API keys live in SecretsConfig."""
+
+    groq: ProviderEndpointConfig = ProviderEndpointConfig(
+        base_url="https://api.groq.com"
+    )
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
     extraction: ExtractionConfig
+    providers: AppProvidersConfig = AppProvidersConfig()
     external_services: ExternalServicesConfig = ExternalServicesConfig()
     embeddings: EmbeddingsConfig = EmbeddingsConfig()
     system_prompts: SystemPromptsConfig = SystemPromptsConfig()
@@ -240,6 +304,7 @@ class ProvidersConfig(BaseModel):
     anthropic: ProviderKey = ProviderKey()
     voyage: ProviderKey = ProviderKey()
     google: ProviderKey = ProviderKey()
+    groq: ProviderKey = ProviderKey()
 
 
 class DatabaseConfig(BaseModel):
@@ -306,6 +371,7 @@ class _EnvSource:
                 "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY")},
                 "voyage": {"api_key": os.environ.get("VOYAGE_API_KEY")},
                 "google": {"api_key": os.environ.get("GOOGLE_API_KEY")},
+                "groq": {"api_key": os.environ.get("GROQ_API_KEY")},
             },
         }
 

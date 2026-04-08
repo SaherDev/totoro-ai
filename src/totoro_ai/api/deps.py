@@ -1,39 +1,72 @@
 """FastAPI dependencies for route handlers (ADR-019)."""
 
+from __future__ import annotations
+
 from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from totoro_ai.core.config import AppConfig, get_config
+from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
-from totoro_ai.core.extraction.dispatcher import ExtractionDispatcher
-from totoro_ai.core.extraction.places_client import GooglePlacesClient
+from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
+from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
+from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
+from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
+    EmbeddingRepository,
+    PlaceRepository,
     SQLAlchemyEmbeddingRepository,
     SQLAlchemyPlaceRepository,
     SQLAlchemyRecallRepository,
 )
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
-from totoro_ai.providers.embeddings import get_embedder
+from totoro_ai.providers.cache import CacheBackend
+from totoro_ai.providers.embeddings import EmbedderProtocol, get_embedder
+from totoro_ai.providers.groq_client import GroqWhisperClient
+from totoro_ai.providers.llm import get_vision_extractor
+from totoro_ai.providers.redis_cache import RedisCacheBackend
 
 
-def build_dispatcher() -> ExtractionDispatcher:
-    """Build ExtractionDispatcher with all configured extractors.
+def get_cache_backend() -> CacheBackend:
+    """FastAPI dependency providing CacheBackend (RedisCacheBackend by default)."""
+    return RedisCacheBackend(url=get_secrets().redis.url)
 
-    Returns:
-        ExtractionDispatcher with TikTok and plain text extractors in priority order.
-    """
-    from totoro_ai.core.extraction.extractors.plain_text import PlainTextExtractor
-    from totoro_ai.core.extraction.extractors.tiktok import TikTokExtractor
 
-    instructor_client = get_instructor_client("intent_parser")
-    return ExtractionDispatcher(
-        [TikTokExtractor(instructor_client), PlainTextExtractor(instructor_client)]
-    )
+def get_status_repo(
+    cache: CacheBackend = Depends(get_cache_backend),  # noqa: B008
+) -> ExtractionStatusRepository:
+    """FastAPI dependency providing ExtractionStatusRepository."""
+    return ExtractionStatusRepository(cache=cache)
+
+
+def get_place_repo(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> PlaceRepository:
+    """FastAPI dependency providing PlaceRepository."""
+    return SQLAlchemyPlaceRepository(db_session)
+
+
+def get_embedding_repo(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> EmbeddingRepository:
+    """FastAPI dependency providing EmbeddingRepository."""
+    return SQLAlchemyEmbeddingRepository(db_session)
+
+
+def get_extraction_config(
+    config: AppConfig = Depends(get_config),  # noqa: B008
+) -> ExtractionConfig:
+    """FastAPI dependency providing ExtractionConfig."""
+    return config.extraction
+
+
+def get_embedder_dep() -> EmbedderProtocol:
+    """FastAPI dependency providing EmbedderProtocol."""
+    return get_embedder()
 
 
 async def get_event_dispatcher(
@@ -42,23 +75,13 @@ async def get_event_dispatcher(
 ) -> EventDispatcher:
     """FastAPI dependency providing a fully wired EventDispatcher (ADR-043).
 
-    Per-request instance captures db_session and background_tasks.
-    Handler registry is built here with all domain event handlers.
-
-    Args:
-        background_tasks: FastAPI BackgroundTasks for async handler execution
-        db_session: Database session for handlers to use
-
-    Returns:
-        EventDispatcher with registered handlers
+    ExtractionPersistenceService is constructed inline here (not via
+    Depends(get_extraction_persistence)) to avoid a circular dependency:
+    get_event_dispatcher <- get_extraction_persistence <- get_event_dispatcher.
     """
-    # Build TasteModelService dependency
     taste_service = TasteModelService(session=db_session)
-
-    # Build EventHandlers
     handlers = EventHandlers(taste_service=taste_service, langfuse=None)
 
-    # Create EventDispatcher with handler registry
     dispatcher = EventDispatcher(background_tasks=background_tasks)
     dispatcher.register_handler("place_saved", handlers.on_place_saved)  # type: ignore[arg-type]
     dispatcher.register_handler(
@@ -73,28 +96,149 @@ async def get_event_dispatcher(
         "onboarding_signal", handlers.on_onboarding_signal  # type: ignore[arg-type]
     )
 
+    # Register ExtractionPendingHandler (Run 3 — inline construction, no circular dep)
+    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
+    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
+    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
+    from totoro_ai.core.extraction.handlers.extraction_pending import (
+        ExtractionPendingHandler,
+    )
+    from totoro_ai.core.extraction.places_client import GooglePlacesClient
+    from totoro_ai.core.extraction.validator import GooglePlacesValidator
+
+    pending_persistence = ExtractionPersistenceService(
+        place_repo=SQLAlchemyPlaceRepository(db_session),
+        embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
+        embedder=get_embedder(),
+        event_dispatcher=dispatcher,
+    )
+    pending_handler = ExtractionPendingHandler(
+        background_enrichers=[
+            SubtitleCheckEnricher(
+                instructor_client=get_instructor_client("intent_parser"),
+            ),
+            WhisperAudioEnricher(
+                groq_client=GroqWhisperClient(
+                    api_key=get_secrets().providers.groq.api_key or ""
+                ),
+                instructor_client=get_instructor_client("intent_parser"),
+            ),
+            VisionFramesEnricher(
+                vision_extractor=get_vision_extractor("vision_frames")
+            ),
+        ],
+        validator=GooglePlacesValidator(
+            places_client=GooglePlacesClient(),
+            confidence_config=get_config().extraction.confidence,
+        ),
+        persistence=pending_persistence,
+        status_repo=ExtractionStatusRepository(
+            cache=RedisCacheBackend(url=get_secrets().redis.url)
+        ),
+    )
+    dispatcher.register_handler(
+        "extraction_pending", pending_handler.handle  # type: ignore[arg-type]
+    )
+
     return dispatcher
 
 
-async def get_extraction_service(
-    db_session: AsyncSession = Depends(get_session),  # noqa: B008
-    config: AppConfig = Depends(get_config),  # noqa: B008
+def get_extraction_persistence(
+    place_repo: PlaceRepository = Depends(get_place_repo),  # noqa: B008
+    embedding_repo: EmbeddingRepository = Depends(get_embedding_repo),  # noqa: B008
+    embedder: EmbedderProtocol = Depends(get_embedder_dep),  # noqa: B008
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
-) -> ExtractionService:
-    """FastAPI dependency providing a fully wired ExtractionService.
-
-    Config and session are injected — override get_config in tests to avoid
-    file I/O and control thresholds/weights without touching the filesystem.
-    """
-    return ExtractionService(
-        dispatcher=build_dispatcher(),
-        places_client=GooglePlacesClient(),
-        place_repo=SQLAlchemyPlaceRepository(db_session),
-        extraction_config=config.extraction,
-        embedder=get_embedder(),
-        embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
+) -> ExtractionPersistenceService:
+    """FastAPI dependency providing ExtractionPersistenceService."""
+    return ExtractionPersistenceService(
+        place_repo=place_repo,
+        embedding_repo=embedding_repo,
+        embedder=embedder,
         event_dispatcher=event_dispatcher,
     )
+
+
+def _make_enrichment_pipeline() -> "EnrichmentPipeline":
+    """Build EnrichmentPipeline with singleton circuit breaker instances."""
+    from totoro_ai.core.extraction.circuit_breaker import (
+        CircuitBreakerEnricher,
+        ParallelEnricherGroup,
+    )
+    from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
+    from totoro_ai.core.extraction.enrichers.tiktok_oembed import TikTokOEmbedEnricher
+    from totoro_ai.core.extraction.enrichers.ytdlp_metadata import YtDlpMetadataEnricher
+    from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
+
+    return EnrichmentPipeline(
+        [
+            ParallelEnricherGroup(
+                [
+                    CircuitBreakerEnricher(TikTokOEmbedEnricher()),
+                    CircuitBreakerEnricher(YtDlpMetadataEnricher()),
+                ]
+            ),
+            LLMNEREnricher(instructor_client=get_instructor_client("intent_parser")),
+        ]
+    )
+
+
+# Module-level singleton so circuit breaker state persists across requests.
+_enrichment_pipeline: "EnrichmentPipeline | None" = None
+
+
+def _get_enrichment_pipeline() -> "EnrichmentPipeline":
+    global _enrichment_pipeline
+    if _enrichment_pipeline is None:
+        _enrichment_pipeline = _make_enrichment_pipeline()
+    return _enrichment_pipeline
+
+
+def get_extraction_pipeline(
+    event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
+    extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
+) -> ExtractionPipeline:
+    """FastAPI dependency providing ExtractionPipeline with all enrichers wired."""
+    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
+    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
+    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
+    from totoro_ai.core.extraction.places_client import GooglePlacesClient
+    from totoro_ai.core.extraction.protocols import Enricher
+    from totoro_ai.core.extraction.validator import GooglePlacesValidator
+
+    enrichment = _get_enrichment_pipeline()
+    validator = GooglePlacesValidator(
+        places_client=GooglePlacesClient(),
+        confidence_config=extraction_config.confidence,
+    )
+    background_enrichers: list[Enricher] = [
+        SubtitleCheckEnricher(
+            instructor_client=get_instructor_client("intent_parser"),
+        ),
+        WhisperAudioEnricher(
+            groq_client=GroqWhisperClient(
+                api_key=get_secrets().providers.groq.api_key or ""
+            ),
+            instructor_client=get_instructor_client("intent_parser"),
+        ),
+        VisionFramesEnricher(vision_extractor=get_vision_extractor()),
+    ]
+    return ExtractionPipeline(
+        enrichment=enrichment,
+        validator=validator,
+        background_enrichers=background_enrichers,
+        event_dispatcher=event_dispatcher,
+        extraction_config=extraction_config,
+    )
+
+
+def get_extraction_service(
+    pipeline: ExtractionPipeline = Depends(get_extraction_pipeline),  # noqa: B008
+    persistence: ExtractionPersistenceService = Depends(  # noqa: B008
+        get_extraction_persistence
+    ),
+) -> ExtractionService:
+    """FastAPI dependency providing ExtractionService (2 deps replacing 7)."""
+    return ExtractionService(pipeline=pipeline, persistence=persistence)
 
 
 async def get_recall_service(

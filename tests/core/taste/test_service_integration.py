@@ -62,7 +62,7 @@ async def test_handle_place_saved_logs_save_signal_with_correct_gain(
 ) -> None:
     await taste_service.handle_place_saved(
         user_id="user-1",
-        place_id="place-1",
+        place_ids=["place-1"],
         place_metadata={"price_range": "low"},
     )
 
@@ -80,7 +80,7 @@ async def test_handle_place_saved_moves_price_comfort_up_for_low_price_place(
     """EMA: alpha=0.03, gain=1.0, v_obs=1.0 (low), v_current=0.5 → v_new=0.515."""
     await taste_service.handle_place_saved(
         user_id="user-1",
-        place_id="place-1",
+        place_ids=["place-1"],
         place_metadata={"price_range": "low"},
     )
 
@@ -105,7 +105,7 @@ async def test_handle_place_saved_upsert_receives_no_interaction_count_arg(
 
     await taste_service.handle_place_saved(
         user_id="user-1",
-        place_id="place-1",
+        place_ids=["place-1"],
         place_metadata={"price_range": "low"},
     )
 
@@ -114,6 +114,20 @@ async def test_handle_place_saved_upsert_receives_no_interaction_count_arg(
         "user_id",
         "parameters",
     }
+
+
+async def test_handle_place_saved_logs_one_interaction_per_place_id(
+    taste_service: TasteModelService,
+) -> None:
+    """With 3 place_ids: log_interaction called 3 times, upsert called once."""
+    await taste_service.handle_place_saved(
+        user_id="user-1",
+        place_ids=["place-1", "place-2", "place-3"],
+        place_metadata={"price_range": "low"},
+    )
+
+    assert taste_service.repository.log_interaction.call_count == 3
+    taste_service.repository.upsert.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -425,8 +439,8 @@ async def test_concurrent_new_user_inserts_both_complete_without_error(
     )
 
     await asyncio.gather(
-        svc1.handle_place_saved("new-user", "place-1", {"price_range": "low"}),
-        svc2.handle_place_saved("new-user", "place-2", {"price_range": "high"}),
+        svc1.handle_place_saved("new-user", ["place-1"], {"price_range": "low"}),
+        svc2.handle_place_saved("new-user", ["place-2"], {"price_range": "high"}),
     )
 
     svc1.repository.upsert.assert_called_once()

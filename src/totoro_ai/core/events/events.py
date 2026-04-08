@@ -18,8 +18,9 @@ class PlaceSaved(DomainEvent):
     """Event: User saved a place"""
 
     event_type: str = "place_saved"
-    place_id: str
+    place_ids: list[str]
     place_metadata: dict[str, Any] = Field(default_factory=dict)
+    request_id: str = ""  # correlates with ExtractionPending.request_id
 
 
 class RecommendationAccepted(DomainEvent):

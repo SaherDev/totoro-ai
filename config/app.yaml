@@ -16,7 +16,23 @@ app:
 # Model assignments — logical roles to providers and models
 # ADR-016, ADR-020: code never hardcodes model names, always reads from config
 # ---------------------------------------------------------------------------
+providers:
+  groq:
+    base_url: https://api.groq.com
+
 models:
+  transcriber:
+    provider: groq
+    model: whisper-large-v3-turbo
+    max_tokens: 0
+    temperature: 0
+
+  vision_frames:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 512
+    temperature: 0
+
   intent_parser:
     provider: openai
     model: gpt-4o-mini
@@ -61,6 +77,29 @@ extraction:
   thresholds:
     store_silently: 0.70
     require_confirmation: 0.30
+  confidence:
+    base_scores:
+      emoji_regex: 0.95
+      llm_ner: 0.80
+      subtitle_check: 0.75
+      whisper_audio: 0.65
+      vision_frames: 0.55
+    corroboration_bonus: 0.10
+    max_score: 0.97
+    save_threshold: 0.70
+  circuit_breaker_threshold: 5
+  circuit_breaker_cooldown: 900
+  vision:
+    max_frames: 5
+    scene_threshold: 0.3
+    timeout_seconds: 10
+  whisper:
+    timeout_seconds: 8
+    audio_format: opus
+    audio_quality: 32k
+  subtitle:
+    output_dir: /tmp/subtitles
+    format: vtt
   # Place fields that can be updated on re-submission (upsert semantics)
   mutable_fields:
     - place_name
@@ -81,11 +120,13 @@ external_services:
   google_places:
     base_url: https://maps.googleapis.com/maps/api/place/findplacefromtext/json
     timeout_seconds: 5.0
+    default_region: "th"
     request_fields:
       - name
       - formatted_address
       - place_id
       - geometry
+      - types
   tiktok_oembed:
     base_url: https://www.tiktok.com/oembed
     timeout_seconds: 3.0
@@ -189,9 +230,3 @@ ranking:
     distance: 0.25
     price_fit: 0.20
     popularity: 0.15
-
-# ---------------------------------------------------------------------------
-# LLM System Prompts
-# ---------------------------------------------------------------------------
-system_prompts:
-  consult: "You are Totoro, an AI place recommendation assistant. Answer the user's query helpfully and concisely."

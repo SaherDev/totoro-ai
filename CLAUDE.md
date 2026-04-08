@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
-- 009-taste-model-audit-fixes: Added Python 3.11 (`>=3.11,<3.13`) + FastAPI 0.115, SQLAlchemy 2.0 async, Alembic, asyncpg, Pydantic 2.10, pytes
-- 008-taste-model: Added Python 3.11 + FastAPI 0.115, SQLAlchemy 2.0 async, Pydantic 2.10, asyncpg, Alembic
-- 006-recall-hybrid-search: Added Python 3.11 + FastAPI 0.115, SQLAlchemy 2.0 async, pgvector, Pydantic 2.10, voyageai ^0.3, asyncpg
+- 014-ner-enricher-redesign: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, langfuse
+- 013-extraction-status-polling: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, redis[asyncio] ^5.0 (already installed)
+- 012-extraction-cascade-run3: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy 2.0 async, instructor, openai SDK, anthropic SDK, voyageai
 
 
 ## Active Technologies
-- Python 3.11 (`>=3.11,<3.13`) + FastAPI 0.115, SQLAlchemy 2.0 async, Alembic, asyncpg, Pydantic 2.10, pytes (009-taste-model-audit-fixes)
-- PostgreSQL — modifying `places` table (add `ambiance` column), no schema change to `taste_model` (009-taste-model-audit-fixes)
+- Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, langfuse (014-ner-enricher-redesign)
+- N/A (this is a pure enricher — no DB writes) (014-ner-enricher-redesign)
 

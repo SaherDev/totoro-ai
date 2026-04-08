@@ -26,6 +26,8 @@ greenlet = "^3.3.2"
 instructor = "^1.0"
 httpx = "^0.28"
 langfuse = "^2.0"
+groq = "^0.13"
+yt-dlp = "^2026.3.17"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -61,3 +63,4 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = "langfuse"
 ignore_missing_imports = true
+

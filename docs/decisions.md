@@ -15,6 +15,60 @@ Format:
 
 ---
 
+## ADR-048: Status polling endpoint for provisional extractions
+
+**Date:** 2026-04-07\
+**Status:** accepted\
+**Context:** Constitution Section VIII specified two HTTP endpoints (POST /v1/extract-place
+and POST /v1/consult). The extraction cascade Run 3 introduced provisional responses for
+TikTok URLs with no caption — the response returns immediately with provisional: true and a
+request_id, but the product repo had no way to retrieve the final result once background
+enrichers completed. A polling endpoint closes this gap.\
+**Decision:** Add GET /v1/extract-place/status/{request_id} as a third endpoint. It reads
+from a CacheBackend keyed by extraction:{request_id} and returns the full extraction result
+when available, or {"extraction_status": "processing"} when not. The endpoint is read-only,
+stateless on the server side, and requires no database access. It lives in
+routes/extract_place.py as part of the extract-place resource. Unknown or expired
+request_ids return {"extraction_status": "processing"} with HTTP 200 — no 4xx errors.
+Constitution Section VIII is updated to reflect three endpoints. The CacheBackend
+abstraction is introduced per ADR-038 (Protocol for all swappable dependencies):
+CacheBackend Protocol in providers/cache.py, RedisCacheBackend concrete implementation in
+providers/redis_cache.py, ExtractionStatusRepository depending on the Protocol only.\
+**Consequences:** Product repo can poll for results after provisional responses. Cache
+backend must be available for status reads; if a key is missing or expired, the endpoint
+returns "processing" gracefully — no error propagation. New endpoint requires a .bru file
+in totoro-config/bruno/. ADR-048 supersedes the "two endpoints only" constraint in
+Constitution Section VIII.
+
+---
+
+## ADR-047: whisper-large-v3-turbo for audio transcription via Groq
+
+**Date:** 2026-04-06\
+**Status:** accepted\
+**Context:** WhisperAudioEnricher (Level 5) needs a speech-to-text model to transcribe
+TikTok/Instagram video audio when caption-based extraction fails. Three Groq-hosted
+Whisper models were evaluated: whisper-large-v3 (1.55B params, 299x real-time, 8.4%
+WER), whisper-large-v3-turbo (0.8B params, 216x real-time, ~10% WER), and
+distil-whisper-large-v3-en (756M params, English-only, 9.7% WER). The extraction
+pipeline has an 8-second hard timeout on the audio enricher. Use case is extracting
+restaurant/place names from short food content videos — audio is typically clear
+speech, clips are under 60 seconds, and inputs are multilingual (Thai, Japanese,
+English). Accuracy difference between v3 and turbo is ~2% WER, which does not
+materially affect place name extraction from clear speech. distil-whisper is excluded
+because it is English-only.\
+**Decision:** Use whisper-large-v3-turbo as the transcription model. Model name is
+config-driven via config/app.yaml under models.transcriber.model — never hardcoded.
+Groq free tier covers 8 hours of audio per day, sufficient for portfolio scale. If
+accuracy becomes a bottleneck under real user data, swap to whisper-large-v3 via a
+single config change — no code changes required.\
+**Consequences:** Add transcriber role to config/app.yaml. GroqWhisperClient reads
+model name from get_config().models["transcriber"].model. Switching to whisper-large-v3
+requires only a YAML change. distil-whisper is not a valid future option unless the
+product scope narrows to English-only inputs.
+
+---
+
 ## ADR-046: WholeDocument chunking adopted as embedding strategy
 
 **Date:** 2026-03-31

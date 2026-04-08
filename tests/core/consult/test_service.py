@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from totoro_ai.api.schemas.consult import ConsultResponse, Location
-from totoro_ai.core.config import get_config
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.intent.intent_parser import ParsedIntent
 
@@ -294,14 +293,16 @@ async def test_stream_calls_llm_with_system_prompt():
     ):
         pass
 
-    # Get system prompt from config
-    config = get_config()
-    system_prompt = config.system_prompts.consult
-
     # Verify LLM was called with messages format
     mock_llm.stream.assert_called_once_with(
         [
-            {"role": "system", "content": system_prompt},
+            {
+                "role": "system",
+                "content": (
+                    "You are Totoro, an AI place recommendation assistant. "
+                    "Answer the user's query helpfully and concisely."
+                ),
+            },
             {"role": "user", "content": "test query"},
         ]
     )

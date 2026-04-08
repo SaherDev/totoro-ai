@@ -81,10 +81,11 @@ Redis is exclusively owned by this repo. NestJS never connects to Redis. Use Red
 
 ## VIII. API Contract
 
-Two endpoints only:
+Three endpoints (ADR-048 added status polling on 2026-04-07):
 
 - `POST /v1/extract-place` — sequential async workflow (not LangGraph)
 - `POST /v1/consult` — LangGraph StateGraph agent
+- `GET /v1/extract-place/status/{request_id}` — cache-backed status polling for provisional extractions
 
 Full contract in `docs/api-contract.md`. NestJS is the only caller. Frontend never calls this repo directly.
 

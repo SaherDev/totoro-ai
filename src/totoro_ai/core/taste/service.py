@@ -34,22 +34,23 @@ class TasteModelService:
     async def handle_place_saved(
         self,
         user_id: str,
-        place_id: str,
+        place_ids: list[str],
         place_metadata: dict[str, Any],
     ) -> None:
         gain = self.config.taste_model.signals.save
-        await self.repository.log_interaction(
-            user_id=user_id,
-            signal_type=SignalType.SAVE,
-            place_id=place_id,
-            gain=gain,
-            context={
-                "location": place_metadata.get("location"),
-                "time_of_day": place_metadata.get("time_of_day"),
-                "session_id": None,
-                "recommendation_id": None,
-            },
-        )
+        for place_id in place_ids:
+            await self.repository.log_interaction(
+                user_id=user_id,
+                signal_type=SignalType.SAVE,
+                place_id=place_id,
+                gain=gain,
+                context={
+                    "location": place_metadata.get("location"),
+                    "time_of_day": place_metadata.get("time_of_day"),
+                    "session_id": None,
+                    "recommendation_id": None,
+                },
+            )
         await self._apply_taste_update(user_id, place_metadata, gain, is_positive=True)
 
     async def handle_recommendation_accepted(

@@ -18,6 +18,11 @@ from totoro_ai.core.intent.intent_parser import IntentParser
 from totoro_ai.providers import get_langfuse_client
 from totoro_ai.providers.llm import LLMClientProtocol
 
+_SYSTEM_PROMPT = (
+    "You are Totoro, an AI place recommendation assistant. "
+    "Answer the user's query helpfully and concisely."
+)
+
 
 class ConsultService:
     """Service for place recommendations with streaming and synchronous modes."""
@@ -209,11 +214,9 @@ class ConsultService:
             SSE events: {"token": "..."} per AI token, then {"done": true}
         """
         try:
-            config = get_config()
-            system_prompt = config.system_prompts.consult
 
             messages = [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": query},
             ]
             async for token in self._llm.stream(messages):
