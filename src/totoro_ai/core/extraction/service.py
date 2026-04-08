@@ -58,6 +58,17 @@ class ExtractionService:
                 request_id=result.request_id or None,
             )
 
+        if not result:
+            # Pipeline found no candidates and there was no URL to dispatch
+            # background enrichers against (plain text, no recognisable venue).
+            return ExtractPlaceResponse(
+                provisional=False,
+                places=[],
+                pending_levels=[],
+                extraction_status="below_threshold",
+                source_url=parsed.url,
+            )
+
         outcomes = await self._persistence.save_and_emit(result, user_id)
 
         places = [

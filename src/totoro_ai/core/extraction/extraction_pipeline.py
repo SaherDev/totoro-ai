@@ -70,6 +70,12 @@ class ExtractionPipeline:
                 results, self._extraction_config.confidence
             )
 
+        # Phase 3 only fires for URL inputs — background enrichers (subtitle,
+        # whisper, vision) all require a video/page URL to process.  Plain text
+        # inputs that produce no inline candidates have nothing to hand off.
+        if url is None:
+            return []
+
         # Phase 3: background dispatch
         request_id = str(uuid.uuid4())
         pending_levels = [
