@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from totoro_ai.core.extraction.enrichers._city_filter import sanitize_city as _sanitize_city
 from totoro_ai.core.extraction.enrichers.llm_ner import (
     LLMNEREnricher,
     _NERPlace,
     _NERResponse,
-    _sanitize_city,
 )
 from totoro_ai.core.extraction.types import (
     CandidatePlace,

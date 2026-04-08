@@ -2,6 +2,7 @@
 
 import re
 
+from totoro_ai.core.extraction.enrichers._city_filter import CITY_BLOCKLIST
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionContext,
@@ -71,6 +72,10 @@ class EmojiRegexEnricher:
         """
         for match in _HASHTAG_PATTERN.finditer(text):
             tag = match.group(1)
-            if 3 <= len(tag) <= 20 and tag.isalpha():
+            if (
+                3 <= len(tag) <= 20
+                and tag.isalpha()
+                and tag.lower() not in CITY_BLOCKLIST
+            ):
                 return tag
         return None

@@ -5,6 +5,9 @@ from typing import cast
 
 from pydantic import BaseModel
 
+from totoro_ai.core.extraction.enrichers._city_filter import (
+    sanitize_city as _sanitize_city,
+)
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionContext,
@@ -42,38 +45,6 @@ the context.
 
 Return only venues you are confident exist as real establishments.\
 """
-
-# Words that are never valid city names — content tags, topic labels, and common
-# false positives that the LLM occasionally puts into the city field.
-_CITY_BLOCKLIST: frozenset[str] = frozenset(
-    {
-        "mall",
-        "paragon",
-        "shoppingmall",
-        "food",
-        "travel",
-        "vlog",
-        "fyp",
-        "foryou",
-        "thailand",
-        "tiktok",
-        "foodie",
-        "bangkokfood",
-        "bangkokeats",
-    }
-)
-
-
-def _sanitize_city(city: str | None) -> str | None:
-    """Return None if city is a hashtag token or a known non-city label."""
-    if city is None:
-        return None
-    stripped = city.strip()
-    if stripped.startswith("#"):
-        return None
-    if stripped.lstrip("#").lower() in _CITY_BLOCKLIST:
-        return None
-    return stripped or None
 
 
 class _NERPlace(BaseModel):

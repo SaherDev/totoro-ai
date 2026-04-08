@@ -95,6 +95,12 @@ def dedup_results_by_external_id(
                 confidence_config.max_score,
             )
             winner.corroborated = True
+            # Inherit city from a lower-priority result if the winner has none.
+            if winner.city is None:
+                for r in group:
+                    if r.city is not None:
+                        winner.city = r.city
+                        break
             winners.append(winner)
 
     return no_id + winners
