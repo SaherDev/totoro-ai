@@ -156,6 +156,7 @@ class GooglePlacesClient:
                         "inputtype": "textquery",
                         "fields": fields,
                         "key": self.api_key,
+                        "region": places_config.default_region,
                     },
                     timeout=places_config.timeout_seconds,
                 )

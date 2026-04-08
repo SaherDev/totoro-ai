@@ -144,6 +144,7 @@ class ExternalServiceConfig(BaseModel):
 
 class GooglePlacesConfig(ExternalServiceConfig):
     request_fields: list[str] = ["name", "formatted_address", "place_id", "geometry"]
+    default_region: str = "th"
 
 
 class ExternalServicesConfig(BaseModel):

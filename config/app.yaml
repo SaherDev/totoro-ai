@@ -120,6 +120,7 @@ external_services:
   google_places:
     base_url: https://maps.googleapis.com/maps/api/place/findplacefromtext/json
     timeout_seconds: 5.0
+    default_region: "th"
     request_fields:
       - name
       - formatted_address
