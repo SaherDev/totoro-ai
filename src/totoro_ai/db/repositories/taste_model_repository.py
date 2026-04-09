@@ -48,8 +48,7 @@ class SQLAlchemyTasteModelRepository:
             .values(
                 parameters=parameters,
                 interaction_count=TasteModel.interaction_count + 1,
-                confidence=1
-                - func.exp(-(TasteModel.interaction_count + 1) / 10.0),
+                confidence=1 - func.exp(-(TasteModel.interaction_count + 1) / 10.0),
             )
         )
         result = await self.session.execute(stmt)
@@ -75,8 +74,7 @@ class SQLAlchemyTasteModelRepository:
                 set_=dict(
                     parameters=parameters,
                     interaction_count=TasteModel.interaction_count + 1,
-                    confidence=1
-                    - func.exp(-(TasteModel.interaction_count + 1) / 10.0),
+                    confidence=1 - func.exp(-(TasteModel.interaction_count + 1) / 10.0),
                 ),
             )
         )

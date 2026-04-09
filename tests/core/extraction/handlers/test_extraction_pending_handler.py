@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 from totoro_ai.core.extraction.handlers.extraction_pending import (
     ExtractionPendingHandler,
 )
-from totoro_ai.core.extraction.persistence import ExtractionPersistenceService, PlaceSaveOutcome
+from totoro_ai.core.extraction.persistence import (
+    ExtractionPersistenceService,
+    PlaceSaveOutcome,
+)
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
@@ -112,7 +115,9 @@ async def test_dedup_called_after_enrichers() -> None:
     async def add_e1(context: ExtractionContext) -> None:
         context.candidates.append(
             CandidatePlace(
-                name="Ramen House", city=None, cuisine=None,
+                name="Ramen House",
+                city=None,
+                cuisine=None,
                 source=ExtractionLevel.SUBTITLE_CHECK,
             )
         )
@@ -120,7 +125,9 @@ async def test_dedup_called_after_enrichers() -> None:
     async def add_e2(context: ExtractionContext) -> None:
         context.candidates.append(
             CandidatePlace(
-                name="Ramen House", city=None, cuisine=None,
+                name="Ramen House",
+                city=None,
+                cuisine=None,
                 source=ExtractionLevel.WHISPER_AUDIO,
             )
         )
@@ -145,7 +152,9 @@ async def test_validator_called_with_enriched_candidates() -> None:
     async def add_candidate(context: ExtractionContext) -> None:
         context.candidates.append(
             CandidatePlace(
-                name="Sushi Bar", city=None, cuisine=None,
+                name="Sushi Bar",
+                city=None,
+                cuisine=None,
                 source=ExtractionLevel.SUBTITLE_CHECK,
             )
         )

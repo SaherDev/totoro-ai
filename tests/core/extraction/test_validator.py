@@ -153,7 +153,9 @@ async def test_all_none_external_id_returns_none() -> None:
 async def test_five_candidates_validated_in_parallel() -> None:
     call_order: list[str] = []
 
-    async def fake_validate(name: str, location: str | None = None) -> PlacesMatchResult:  # noqa: E501
+    async def fake_validate(
+        name: str, location: str | None = None
+    ) -> PlacesMatchResult:  # noqa: E501
         call_order.append(name)
         return _make_match(external_id=f"id_{name}")
 
@@ -178,7 +180,9 @@ async def test_runtime_error_on_one_does_not_crash_batch() -> None:
     good_match = _make_match(external_id="good_id", validated_name="Good Place")
     call_count = 0
 
-    async def fake_validate(name: str, location: str | None = None) -> PlacesMatchResult:  # noqa: E501
+    async def fake_validate(
+        name: str, location: str | None = None
+    ) -> PlacesMatchResult:  # noqa: E501
         nonlocal call_count
         call_count += 1
         if name == "Bad Place":

@@ -44,7 +44,11 @@ class RankingService:
             taste_sim = self._compute_taste_similarity(candidate, taste_vector)
 
             # Compute distance score if search_location is available
-            if search_location and candidate.lat is not None and candidate.lng is not None:
+            if (
+                search_location
+                and candidate.lat is not None
+                and candidate.lng is not None
+            ):
                 distance_m = haversine_m(
                     search_location["lat"],
                     search_location["lng"],
@@ -90,7 +94,11 @@ class RankingService:
             scored_candidate = candidate.model_copy(
                 update={
                     "distance": distance_m
-                    if (search_location and candidate.lat is not None and candidate.lng is not None)
+                    if (
+                        search_location
+                        and candidate.lat is not None
+                        and candidate.lng is not None
+                    )
                     else 0.0
                 }
             )

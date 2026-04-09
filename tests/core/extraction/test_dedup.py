@@ -3,7 +3,10 @@
 import pytest
 
 from totoro_ai.core.config import ConfidenceConfig
-from totoro_ai.core.extraction.dedup import dedup_candidates, dedup_results_by_external_id
+from totoro_ai.core.extraction.dedup import (
+    dedup_candidates,
+    dedup_results_by_external_id,
+)
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionContext,
@@ -152,8 +155,12 @@ def _make_result(
     )
 
 
-def _config(corroboration_bonus: float = 0.10, max_score: float = 0.97) -> ConfidenceConfig:
-    return ConfidenceConfig(corroboration_bonus=corroboration_bonus, max_score=max_score)
+def _config(
+    corroboration_bonus: float = 0.10, max_score: float = 0.97
+) -> ConfidenceConfig:
+    return ConfidenceConfig(
+        corroboration_bonus=corroboration_bonus, max_score=max_score
+    )
 
 
 def test_single_result_unchanged() -> None:
@@ -184,7 +191,9 @@ def test_corroboration_bonus_applied_to_winner() -> None:
     """Winner gets corroboration_bonus added to confidence, capped at max_score."""
     emoji = _make_result(resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.76)
     ner = _make_result(resolved_by=ExtractionLevel.LLM_NER, confidence=0.64)
-    out = dedup_results_by_external_id([emoji, ner], _config(corroboration_bonus=0.10, max_score=0.97))
+    out = dedup_results_by_external_id(
+        [emoji, ner], _config(corroboration_bonus=0.10, max_score=0.97)
+    )
 
     assert out[0].confidence == pytest.approx(0.86)
     assert out[0].corroborated is True
@@ -194,7 +203,9 @@ def test_corroboration_bonus_capped_at_max_score() -> None:
     """Bonus does not push confidence above max_score."""
     emoji = _make_result(resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.95)
     ner = _make_result(resolved_by=ExtractionLevel.LLM_NER, confidence=0.80)
-    out = dedup_results_by_external_id([emoji, ner], _config(corroboration_bonus=0.10, max_score=0.97))
+    out = dedup_results_by_external_id(
+        [emoji, ner], _config(corroboration_bonus=0.10, max_score=0.97)
+    )
 
     assert out[0].confidence == pytest.approx(0.97)
 

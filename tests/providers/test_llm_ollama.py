@@ -3,13 +3,20 @@
 from unittest.mock import patch
 
 from totoro_ai.core.config import AppConfig, load_yaml_config
-from totoro_ai.providers.llm import InstructorClient, OpenAILLMClient, get_instructor_client, get_llm
+from totoro_ai.providers.llm import (
+    InstructorClient,
+    OpenAILLMClient,
+    get_instructor_client,
+    get_llm,
+)
 
 
 def _config_with_ollama() -> AppConfig:
     """Load real app.yaml and overlay ollama provider."""
     data = load_yaml_config("app.yaml")
-    data.setdefault("providers", {})["ollama"] = {"base_url": "http://localhost:11434/v1"}
+    data.setdefault("providers", {})["ollama"] = {
+        "base_url": "http://localhost:11434/v1"
+    }
     return AppConfig(**data)
 
 
@@ -22,7 +29,9 @@ def _mock_config(provider: str, model: str) -> AppConfig:
         "max_tokens": 512,
         "temperature": 0,
     }
-    data.setdefault("providers", {})["ollama"] = {"base_url": "http://localhost:11434/v1"}
+    data.setdefault("providers", {})["ollama"] = {
+        "base_url": "http://localhost:11434/v1"
+    }
     return AppConfig(**data)
 
 
@@ -55,8 +64,10 @@ def test_instructor_client_accepts_base_url() -> None:
 def test_get_llm_returns_openai_client_for_ollama_provider() -> None:
     """get_llm('intent_parser') with provider=ollama returns OpenAILLMClient."""
     cfg = _mock_config("ollama", "gemma4:e2b")
-    with patch("totoro_ai.providers.llm.get_config", return_value=cfg), \
-         patch("totoro_ai.providers.llm.get_secrets"):
+    with (
+        patch("totoro_ai.providers.llm.get_config", return_value=cfg),
+        patch("totoro_ai.providers.llm.get_secrets"),
+    ):
         client = get_llm("intent_parser")
     assert isinstance(client, OpenAILLMClient)
     assert client._client.base_url.host == "localhost"
@@ -65,9 +76,12 @@ def test_get_llm_returns_openai_client_for_ollama_provider() -> None:
 def test_get_instructor_client_returns_instructor_for_ollama_provider() -> None:
     """get_instructor_client('intent_parser') with provider=ollama returns InstructorClient with JSON mode."""
     import instructor as _instructor
+
     cfg = _mock_config("ollama", "gemma4:e2b")
-    with patch("totoro_ai.providers.llm.get_config", return_value=cfg), \
-         patch("totoro_ai.providers.llm.get_secrets"):
+    with (
+        patch("totoro_ai.providers.llm.get_config", return_value=cfg),
+        patch("totoro_ai.providers.llm.get_secrets"),
+    ):
         client = get_instructor_client("intent_parser")
     assert isinstance(client, InstructorClient)
     assert client._openai_client.base_url.host == "localhost"

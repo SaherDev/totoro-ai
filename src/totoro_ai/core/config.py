@@ -149,7 +149,9 @@ class ExternalServiceConfig(BaseModel):
 
 
 class GooglePlacesConfig(ExternalServiceConfig):
-    nearbysearch_url: str = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    nearbysearch_url: str = (
+        "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    )
     request_fields: list[str] = ["name", "formatted_address", "place_id", "geometry"]
     default_region: str = "th"
 

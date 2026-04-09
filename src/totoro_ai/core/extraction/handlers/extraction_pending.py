@@ -6,7 +6,10 @@ import logging
 from typing import Any
 
 from totoro_ai.core.extraction.dedup import dedup_candidates
-from totoro_ai.core.extraction.persistence import ExtractionPersistenceService, PlaceSaveOutcome
+from totoro_ai.core.extraction.persistence import (
+    ExtractionPersistenceService,
+    PlaceSaveOutcome,
+)
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.extraction.types import ExtractionPending
 from totoro_ai.core.extraction.validator import PlacesValidatorProtocol

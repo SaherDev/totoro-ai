@@ -151,7 +151,9 @@ async def test_same_external_id_deduped_after_validation() -> None:
     )
     pipeline, _, _, _ = _make_pipeline(validator_returns=[emoji_result, ner_result])
 
-    output = await pipeline.run(url=None, user_id="u1", supplementary_text="RAMEN KAISUGI Bangkok")
+    output = await pipeline.run(
+        url=None, user_id="u1", supplementary_text="RAMEN KAISUGI Bangkok"
+    )
 
     assert isinstance(output, list)
     assert len(output) == 1

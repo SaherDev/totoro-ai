@@ -17,26 +17,26 @@ from totoro_ai.core.places import PlacesClient, PlacesMatchQuality
 # Candidates that resolve to any of these types are rejected post-validation.
 _GEOGRAPHIC_PLACE_TYPES: frozenset[str] = frozenset(
     {
-        "route",          # street or road
-        "street_address", # specific address on a street
-        "political",      # generic political entity
-        "locality",       # city or town
-        "sublocality",    # district or neighbourhood within a city
+        "route",  # street or road
+        "street_address",  # specific address on a street
+        "political",  # generic political entity
+        "locality",  # city or town
+        "sublocality",  # district or neighbourhood within a city
         "sublocality_level_1",
         "sublocality_level_2",
         "sublocality_level_3",
         "sublocality_level_4",
         "sublocality_level_5",
-        "country",        # country
+        "country",  # country
         "administrative_area_level_1",  # state / province
         "administrative_area_level_2",  # county / region
         "administrative_area_level_3",
         "administrative_area_level_4",
         "administrative_area_level_5",
-        "neighborhood",   # neighbourhood
+        "neighborhood",  # neighbourhood
         "postal_code",
         "intersection",
-        "premise",        # building/address, not a business venue
+        "premise",  # building/address, not a business venue
         "natural_feature",
     }
 )
@@ -88,9 +88,7 @@ class GooglePlacesValidator:
         results = [r for r in raw if isinstance(r, ExtractionResult)]
         return results if results else None
 
-    async def _validate_one(
-        self, candidate: CandidatePlace
-    ) -> ExtractionResult | None:
+    async def _validate_one(self, candidate: CandidatePlace) -> ExtractionResult | None:
         try:
             places_match = await self._places_client.validate_place(
                 name=candidate.name, location=candidate.city

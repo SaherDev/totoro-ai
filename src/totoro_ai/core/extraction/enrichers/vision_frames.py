@@ -84,7 +84,9 @@ class VisionFramesEnricher:
 
     async def _run(self, context: ExtractionContext) -> None:
         png_bytes = await asyncio.get_running_loop().run_in_executor(
-            None, self._capture_frames, context.url  # type: ignore[arg-type]  # guarded above
+            None,
+            self._capture_frames,
+            context.url,  # type: ignore[arg-type]  # guarded above
         )
         if not png_bytes:
             return
@@ -115,12 +117,18 @@ class VisionFramesEnricher:
         ffmpeg_proc = subprocess.Popen(
             [
                 "ffmpeg",
-                "-i", "pipe:0",
-                "-vf", _build_ffmpeg_vf(self._config.scene_threshold),
-                "-vsync", "vfr",
-                "-frames:v", str(self._config.max_frames),
-                "-f", "image2pipe",
-                "-vcodec", "png",
+                "-i",
+                "pipe:0",
+                "-vf",
+                _build_ffmpeg_vf(self._config.scene_threshold),
+                "-vsync",
+                "vfr",
+                "-frames:v",
+                str(self._config.max_frames),
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
                 "-",
             ],
             stdin=ytdlp_proc.stdout,

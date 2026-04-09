@@ -321,9 +321,7 @@ async def test_run_provisional_response_sets_provisional_true(
     """When pipeline returns ProvisionalResponse, provisional is True."""
     pipeline.run = AsyncMock(return_value=_make_provisional())
 
-    response = await service.run(
-        "https://tiktok.com/v/123", user_id="user-1"
-    )
+    response = await service.run("https://tiktok.com/v/123", user_id="user-1")
 
     assert response.provisional is True
     persistence.save_and_emit.assert_not_awaited()
@@ -336,9 +334,7 @@ async def test_run_provisional_response_places_is_empty(
     """ProvisionalResponse path returns empty places list."""
     pipeline.run = AsyncMock(return_value=_make_provisional())
 
-    response = await service.run(
-        "https://tiktok.com/v/123", user_id="user-1"
-    )
+    response = await service.run("https://tiktok.com/v/123", user_id="user-1")
 
     assert response.places == []
 
@@ -350,9 +346,7 @@ async def test_run_provisional_response_extraction_status_is_processing(
     """ProvisionalResponse path sets extraction_status to 'processing'."""
     pipeline.run = AsyncMock(return_value=_make_provisional())
 
-    response = await service.run(
-        "https://tiktok.com/v/123", user_id="user-1"
-    )
+    response = await service.run("https://tiktok.com/v/123", user_id="user-1")
 
     assert response.extraction_status == "processing"
 
@@ -369,9 +363,7 @@ async def test_run_provisional_pending_levels_populated(
     ]
     pipeline.run = AsyncMock(return_value=_make_provisional(pending_levels=pending))
 
-    response = await service.run(
-        "https://tiktok.com/v/123", user_id="user-1"
-    )
+    response = await service.run("https://tiktok.com/v/123", user_id="user-1")
 
     assert set(response.pending_levels) == {
         ExtractionLevel.SUBTITLE_CHECK.value,
@@ -390,9 +382,7 @@ async def test_pipeline_called_with_url_from_parsed_input(
     pipeline: MagicMock,
 ) -> None:
     """pipeline.run receives the URL extracted from raw_input."""
-    await service.run(
-        "https://tiktok.com/v/999 great ramen spot", user_id="user-1"
-    )
+    await service.run("https://tiktok.com/v/999 great ramen spot", user_id="user-1")
 
     call_kwargs = pipeline.run.call_args
     assert call_kwargs.kwargs["url"] == "https://tiktok.com/v/999"
@@ -403,9 +393,7 @@ async def test_pipeline_called_with_supplementary_text(
     pipeline: MagicMock,
 ) -> None:
     """pipeline.run receives the supplementary text stripped from raw_input."""
-    await service.run(
-        "https://tiktok.com/v/999 great ramen spot", user_id="user-1"
-    )
+    await service.run("https://tiktok.com/v/999 great ramen spot", user_id="user-1")
 
     call_kwargs = pipeline.run.call_args
     assert call_kwargs.kwargs["supplementary_text"] == "great ramen spot"
@@ -481,9 +469,7 @@ async def test_source_url_set_on_provisional_path(
     """source_url in provisional response reflects the parsed URL."""
     pipeline.run = AsyncMock(return_value=_make_provisional())
 
-    response = await service.run(
-        "https://tiktok.com/v/xyz", user_id="user-1"
-    )
+    response = await service.run("https://tiktok.com/v/xyz", user_id="user-1")
 
     assert response.source_url == "https://tiktok.com/v/xyz"
 

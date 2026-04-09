@@ -154,9 +154,7 @@ class GooglePlacesClient:
         core_candidate = _normalize(name)
         core_google = _normalize(matched_name)
 
-        similarity = difflib.SequenceMatcher(
-            None, core_candidate, core_google
-        ).ratio()
+        similarity = difflib.SequenceMatcher(None, core_candidate, core_google).ratio()
 
         if similarity >= 0.85:
             match_quality = PlacesMatchQuality.EXACT
@@ -205,7 +203,9 @@ class GooglePlacesClient:
         }
 
         # Add radius — fallback to config default if not in filters
-        params["radius"] = filters.get("radius") or get_config().consult.radius_defaults.default
+        params["radius"] = (
+            filters.get("radius") or get_config().consult.radius_defaults.default
+        )
 
         # Add open_now if present
         if filters.get("opennow"):

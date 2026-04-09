@@ -118,9 +118,7 @@ class TestLLMNEREnricher:
         """Case 2: no platform set → user message contains 'platform: unknown'."""
         client = _mock_instructor([])
         enricher = LLMNEREnricher(instructor_client=client)
-        ctx = ExtractionContext(
-            url=None, user_id="u1", supplementary_text="Nobu Tokyo"
-        )
+        ctx = ExtractionContext(url=None, user_id="u1", supplementary_text="Nobu Tokyo")
         await enricher.enrich(ctx)
         call_args = client.extract.call_args
         messages = call_args.kwargs["messages"]
