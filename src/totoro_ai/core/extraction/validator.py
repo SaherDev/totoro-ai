@@ -7,11 +7,11 @@ from typing import Protocol
 
 from totoro_ai.core.config import ConfidenceConfig
 from totoro_ai.core.extraction.confidence import calculate_confidence
-from totoro_ai.core.places import PlacesClient, PlacesMatchQuality
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionResult,
 )
+from totoro_ai.core.places import PlacesClient, PlacesMatchQuality
 
 # Google Places types that indicate a geographic feature, not a venue.
 # Candidates that resolve to any of these types are rejected post-validation.
@@ -125,4 +125,6 @@ class GooglePlacesValidator:
             corroborated=candidate.corroborated,
             external_provider=places_match.external_provider,
             external_id=places_match.external_id,
+            lat=places_match.lat,
+            lng=places_match.lng,
         )
