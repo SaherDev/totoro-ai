@@ -23,6 +23,7 @@ class RecallResult(BaseModel):
     lat: float | None = None
     lng: float | None = None
     source_url: str | None = None
+    external_id: str | None = None
     saved_at: datetime = Field(description="When user saved this place")
     match_reason: str = Field(
         description="Why this result was returned: vector, text, or both"

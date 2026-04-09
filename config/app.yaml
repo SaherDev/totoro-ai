@@ -240,3 +240,4 @@ ranking:
     distance: 0.25
     price_fit: 0.20
     popularity: 0.15
+    source_boost: 0.15

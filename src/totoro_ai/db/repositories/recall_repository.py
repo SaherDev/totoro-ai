@@ -24,6 +24,7 @@ class RecallRow(TypedDict):
     lat: float | None
     lng: float | None
     source_url: str | None
+    external_id: str | None
     saved_at: datetime
     match_reason: str
 
@@ -190,6 +191,7 @@ class SQLAlchemyRecallRepository:
                 p.lat,
                 p.lng,
                 p.source_url,
+                p.external_id,
                 p.created_at AS saved_at,
                 CASE
                     WHEN c.matched_vector AND c.matched_text
@@ -240,6 +242,7 @@ class SQLAlchemyRecallRepository:
                 p.lat,
                 p.lng,
                 p.source_url,
+                p.external_id,
                 p.created_at AS saved_at,
                 'Matched by name or cuisine (semantic unavailable)' AS match_reason
             FROM places p

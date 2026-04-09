@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 from totoro_ai.core.config import ConfidenceConfig
-from totoro_ai.core.extraction.places_client import (
+from totoro_ai.core.places.places_client import (
     PlacesMatchQuality,
     PlacesMatchResult,
 )

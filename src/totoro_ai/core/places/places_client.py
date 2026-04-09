@@ -196,9 +196,8 @@ class GooglePlacesClient:
             "key": self.api_key,
         }
 
-        # Add radius if present
-        if "radius" in filters:
-            params["radius"] = filters["radius"]
+        # Add radius — fallback to config default if not in filters
+        params["radius"] = filters.get("radius") or get_config().consult.radius_defaults.default
 
         # Add open_now if present
         if filters.get("opennow"):

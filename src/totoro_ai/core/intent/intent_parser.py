@@ -10,13 +10,6 @@ from totoro_ai.providers import get_instructor_client, get_langfuse_client
 class ParsedIntent(BaseModel):
     """Structured representation of user intent extracted from a query."""
 
-    cuisine: str | None = None
-    """Cuisine type (e.g., 'ramen', 'sushi'), or None if not specified."""
-
-    venue_type: str | None = None
-    """Venue type (e.g., 'club', 'bar', 'lounge'), or None if not
-    specified."""
-
     occasion: str | None = None
     """Context/occasion (e.g., 'date night', 'quick lunch'), or None if
     not specified."""
@@ -91,9 +84,8 @@ class IntentParser:
             "You are an intent extraction assistant. Extract structured "
             "intent from place recommendation queries.\n"
             "\n"
-            "Extract: cuisine (e.g., ramen, pizza), venue_type (e.g., club, bar), "
-            "occasion (e.g., date night), price_range (low/mid/high), and radius "
-            "in metres.\n"
+            "Extract: occasion (e.g., date night), price_range (low/mid/high), radius "
+            "in metres, and discovery_filters for Google Places API.\n"
             "\n"
             "Radius inference:\n"
             "- Detect proximity signals in any language: 'nearby', 'walking distance', "
@@ -112,11 +104,32 @@ class IntentParser:
             "or has no location signal → return search_location as null. "
             "The system will use the user's device GPS location as fallback.\n"
             "\n"
-            "Extract validate_candidates (true if query signals live validation like "
-            "'open now', 'open tonight').\n"
+            "Extract discovery_filters as a dict for the Google Places Nearby Search API.\n"
+            "This is the PRIMARY source of filters — it maps all cuisine and venue "
+            "signals into Google Places API query parameters.\n"
             "\n"
-            "Extract discovery_filters (dict to pass to place discovery API with "
-            "keys like 'opennow', 'type', 'keyword').\n"
+            "Rules:\n"
+            "- If query mentions a cuisine or venue type → set 'type' to the closest "
+            "Google Places type:\n"
+            "  ramen, sushi, pizza, burger, thai food, any cuisine → 'restaurant'\n"
+            "  coffee, cafe, coffee shop → 'cafe'\n"
+            "  bar, pub, beer → 'bar'\n"
+            "  club, nightclub → 'night_club'\n"
+            "  hotel, hostel, resort → 'lodging'\n"
+            "  AND set 'keyword' to the specific cuisine or venue name from the query "
+            "(e.g. 'ramen', 'coffee shop', 'rooftop bar')\n"
+            "- If query signals 'open now' or 'currently open' → add 'opennow': true\n"
+            "- Combine all relevant filters in discovery_filters dict. This is the "
+            "only place cuisine/venue mappings should appear.\n"
+            "\n"
+            "Examples:\n"
+            "- 'cheap ramen nearby' → discovery_filters: {'type': 'restaurant', 'keyword': 'ramen'}\n"
+            "- 'coffee shop open now' → discovery_filters: {'type': 'cafe', 'keyword': 'coffee shop', 'opennow': true}\n"
+            "- 'bar near Asok' → discovery_filters: {'type': 'bar'}\n"
+            "- 'dinner nearby' → discovery_filters: {'type': 'restaurant', 'keyword': 'dinner'}\n"
+            "\n"
+            "Set validate_candidates to true if and only if discovery_filters contains "
+            "'opennow': true.\n"
             "\n"
             "Return null for fields not mentioned."
         )

@@ -58,7 +58,10 @@ class TestRecallServiceHappyPath:
                 "address": "123 Main St",
                 "cuisine": "Japanese",
                 "price_range": "$$",
+                "lat": 13.7563,
+                "lng": 100.5018,
                 "source_url": "https://example.com",
+                "external_id": "ChIJ1234567890",
                 "saved_at": datetime.now(),
                 "match_reason": "vector_and_text",
             }
@@ -177,7 +180,10 @@ class TestRecallServiceEmbeddingFailure:
                 "address": "123 St",
                 "cuisine": "Japanese",
                 "price_range": "$$",
+                "lat": 13.7563,
+                "lng": 100.5018,
                 "source_url": "https://example.com",
+                "external_id": "ChIJ1234567890",
                 "saved_at": datetime.now(),
                 "match_reason": "text",
             }

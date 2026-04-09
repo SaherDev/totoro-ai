@@ -81,6 +81,11 @@ class RankingService:
                 + popularity_score * popularity_weight
             )
 
+            # Apply source boost for saved places
+            if candidate.source == "saved":
+                final_score += weights.source_boost
+                final_score = min(1.0, final_score)
+
             # Create a copy of the candidate with scores
             scored_candidate = candidate.model_copy(
                 update={

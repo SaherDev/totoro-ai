@@ -90,11 +90,7 @@ class ConsultService:
             for recall_result in recall_results.results:
                 candidate = saved_mapper.map(recall_result)
 
-                # Apply intent filters (cuisine, price_range, radius)
-                if intent.cuisine and candidate.cuisine:
-                    # Simple substring matching for MVP
-                    if intent.cuisine.lower() not in candidate.cuisine.lower():
-                        continue
+                # Apply intent filters (price_range, radius)
                 if intent.price_range and candidate.price_range != intent.price_range:
                     continue
 
@@ -167,15 +163,26 @@ class ConsultService:
                 )
             )
 
-        # Step 4: Deduplication by place_id (saved entry wins)
+        # Step 4: Deduplication by external_id (when available), then place_id
+        # When a saved and discovered candidate share the same external_id,
+        # keep the saved version; otherwise deduplicate by place_id
         all_candidates = saved_candidates + discovered_candidates
-        seen_ids = set()
+        seen_place_ids = set()
+        seen_external_ids = set()
         deduplicated: list[Candidate] = []
 
         for candidate in all_candidates:
-            if candidate.place_id not in seen_ids:
+            # Check external_id first (e.g., Google place_id for both saved and discovered)
+            if candidate.external_id:
+                if candidate.external_id not in seen_external_ids:
+                    deduplicated.append(candidate)
+                    seen_external_ids.add(candidate.external_id)
+                    # Also track place_id to avoid duplicating via that path
+                    seen_place_ids.add(candidate.place_id)
+            # Fallback to place_id deduplication
+            elif candidate.place_id not in seen_place_ids:
                 deduplicated.append(candidate)
-                seen_ids.add(candidate.place_id)
+                seen_place_ids.add(candidate.place_id)
 
         # Step 5: Conditional validation of saved candidates
         if intent.validate_candidates and saved_candidates:
@@ -202,11 +209,18 @@ class ConsultService:
             deduplicated = [
                 c for c in deduplicated if c.source == "discovered" or c in valid_candidates
             ]
+        elif not intent.validate_candidates:
+            reasoning_steps.append(
+                ReasoningStep(
+                    step="validation",
+                    summary="Validation skipped (no live constraints in query)",
+                )
+            )
         else:
             reasoning_steps.append(
                 ReasoningStep(
                     step="validation",
-                    summary="Validation skipped (no live constraints)",
+                    summary="Validation skipped (no saved candidates to validate — open now enforced via discovery filters)",
                 )
             )
 

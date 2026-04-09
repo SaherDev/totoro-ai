@@ -255,6 +255,7 @@ class RankingWeightsConfig(BaseModel):
     distance: float
     price_fit: float
     popularity: float
+    source_boost: float = 0.15
 
 
 class RankingConfig(BaseModel):

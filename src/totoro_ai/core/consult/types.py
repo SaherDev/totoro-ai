@@ -21,6 +21,7 @@ class Candidate(BaseModel):
     price_range: str | None = None  # "low" | "mid" | "high" | None
     lat: float | None = None
     lng: float | None = None
+    external_id: str | None = None
     source: str = Field(...)  # "saved" | "discovered"
     popularity_score: float = Field(
         default=0.5, ge=0.0, le=1.0, description="Normalized rating 0.0–1.0"
@@ -61,6 +62,7 @@ class RecallResultToCandidateMapper:
             price_range=recall_result.price_range,
             lat=recall_result.lat,
             lng=recall_result.lng,
+            external_id=recall_result.external_id,
             source="saved",
             popularity_score=0.5,  # Default for saved places without ratings
             ambiance=None,
@@ -120,6 +122,7 @@ class ExternalCandidateMapper:
             price_range=self._map_price_level(google_result.get("price_level")),
             lat=location.get("lat"),
             lng=location.get("lng"),
+            external_id=google_result.get("place_id"),
             source="discovered",
             popularity_score=popularity_score,
             ambiance=None,
