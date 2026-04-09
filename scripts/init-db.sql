@@ -1,2 +1,2 @@
--- Enable pgvector extension for vector similarity search
+-- Enable pgvector on the default AI database (totoro)
 CREATE EXTENSION IF NOT EXISTS vector;
