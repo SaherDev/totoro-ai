@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 016-chat-assistant-service: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, OpenAI SDK, Langfuse
 - 015-consult-pipeline: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, langfuse, httpx, sqlalchemy async
 - 014-ner-enricher-redesign: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, langfuse
-- 013-extraction-status-polling: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, redis[asyncio] ^5.0 (already installed)
 
 
 ## Active Technologies
-- Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, langfuse, httpx, sqlalchemy async (015-consult-pipeline)
-- PostgreSQL (existing places table — no new migrations) (015-consult-pipeline)
+- Python 3.11 + FastAPI 0.115, Pydantic 2.10, OpenAI SDK, Langfuse (016-chat-assistant-service)
+- None (stateless — no DB, no Redis) (016-chat-assistant-service)
 
