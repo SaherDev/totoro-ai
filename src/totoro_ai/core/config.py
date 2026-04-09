@@ -2,17 +2,17 @@
 
 Two singletons:
 - get_config()   → AppConfig    from config/app.yaml (committed, non-secret)
-- get_secrets()  → SecretsConfig from config/.local.yaml → env vars (never committed)
+- get_secrets()  → SecretsConfig from .env → env vars (never committed)
 
 All other modules import from here. Nobody calls load_yaml_config() directly.
 """
 
-import os
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 import yaml
 from pydantic import BaseModel
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
 # Low-level YAML loader (internal — use get_config / get_secrets instead)
@@ -307,89 +307,29 @@ def get_config() -> AppConfig:
 
 
 # ---------------------------------------------------------------------------
-# SecretsConfig — secrets from config/.local.yaml or environment variables
+# SecretsConfig — flat secrets from .env or environment variables
 # ---------------------------------------------------------------------------
 
-
-class ProviderKey(BaseModel):
-    api_key: str | None = None
+_ENV_FILE = find_project_root() / ".env"
 
 
-class ProvidersConfig(BaseModel):
-    openai: ProviderKey = ProviderKey()
-    anthropic: ProviderKey = ProviderKey()
-    voyage: ProviderKey = ProviderKey()
-    google: ProviderKey = ProviderKey()
-    groq: ProviderKey = ProviderKey()
+class SecretsConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-
-class DatabaseConfig(BaseModel):
-    url: str
-
-
-class RedisConfig(BaseModel):
-    url: str = ""
-
-
-class SecretsConfig(BaseModel):
-    database: DatabaseConfig
-    redis: RedisConfig = RedisConfig()
-    providers: ProvidersConfig = ProvidersConfig()
-
-
-# ---------------------------------------------------------------------------
-# Secrets sources — tried in order by get_secrets()
-# ---------------------------------------------------------------------------
-
-
-class _SecretsSource(Protocol):
-    def load(self) -> dict[str, Any] | None: ...
-
-
-class _YamlFileSource:
-    """Load secrets from config/.local.yaml (local dev)."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    def load(self) -> dict[str, Any] | None:
-        """Return parsed YAML dict, or None if file does not exist."""
-        if not self._path.exists():
-            return None
-        try:
-            with self._path.open() as f:
-                result = yaml.safe_load(f)
-        except yaml.YAMLError as err:
-            raise ValueError(f"Invalid YAML in {self._path}: {err}") from err
-        if not isinstance(result, dict):
-            raise ValueError(
-                f"Expected a YAML mapping in {self._path}, got {type(result).__name__}"
-            )
-        return result
-
-
-class _EnvSource:
-    """Load secrets from environment variables (Railway production)."""
-
-    def load(self) -> dict[str, Any]:
-        """Return secrets dict from env vars. DATABASE_URL is required."""
-        url = os.environ.get("DATABASE_URL")
-        if not url:
-            raise ValueError(
-                "DATABASE_URL environment variable is required but not set. "
-                "In local dev, create config/.local.yaml instead."
-            )
-        return {
-            "database": {"url": url},
-            "redis": {"url": os.environ.get("REDIS_URL", "")},
-            "providers": {
-                "openai": {"api_key": os.environ.get("OPENAI_API_KEY")},
-                "anthropic": {"api_key": os.environ.get("ANTHROPIC_API_KEY")},
-                "voyage": {"api_key": os.environ.get("VOYAGE_API_KEY")},
-                "google": {"api_key": os.environ.get("GOOGLE_API_KEY")},
-                "groq": {"api_key": os.environ.get("GROQ_API_KEY")},
-            },
-        }
+    DATABASE_URL: str
+    REDIS_URL: str = ""
+    OPENAI_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: str | None = None
+    VOYAGE_API_KEY: str | None = None
+    GOOGLE_API_KEY: str | None = None
+    GROQ_API_KEY: str | None = None
+    LANGFUSE_PUBLIC_KEY: str | None = None
+    LANGFUSE_SECRET_KEY: str | None = None
+    LANGFUSE_HOST: str | None = None
 
 
 _secrets: SecretsConfig | None = None
@@ -398,18 +338,10 @@ _secrets: SecretsConfig | None = None
 def get_secrets() -> SecretsConfig:
     """Return the SecretsConfig singleton.
 
-    Sources tried in order:
-    1. config/.local.yaml  (local dev)
-    2. Environment variables (Railway production)
+    Reads from .env (local dev) and environment variables (Railway).
+    Environment variables take precedence over .env values.
     """
     global _secrets
     if _secrets is None:
-        sources: list[_SecretsSource] = [
-            _YamlFileSource(find_project_root() / "config" / ".local.yaml"),
-            _EnvSource(),
-        ]
-        raw = next((r for s in sources if (r := s.load()) is not None), None)
-        if raw is None:
-            raise ValueError("No secrets source returned a configuration")
-        _secrets = SecretsConfig(**raw)
+        _secrets = SecretsConfig()
     return _secrets

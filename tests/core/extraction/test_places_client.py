@@ -32,7 +32,7 @@ def _patched_client() -> GooglePlacesClient:
     ) as mock_secrets, patch(
         "totoro_ai.core.places.places_client.get_config"
     ) as mock_config:
-        mock_secrets.return_value.providers.google.api_key = "fake-key"
+        mock_secrets.return_value.GOOGLE_API_KEY = "fake-key"
         cfg = MagicMock()
         cfg.external_services.google_places.base_url = (
             "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"

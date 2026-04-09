@@ -16,7 +16,7 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 def _get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        url = get_secrets().database.url
+        url = get_secrets().DATABASE_URL
         # Ensure asyncpg driver is used
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)

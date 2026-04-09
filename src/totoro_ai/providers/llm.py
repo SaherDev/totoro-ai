@@ -298,7 +298,7 @@ def get_llm(role: str) -> LLMClientProtocol:
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            api_key=secrets.providers.anthropic.api_key,
+            api_key=secrets.ANTHROPIC_API_KEY,
         )
 
     if provider == "openai":
@@ -306,7 +306,7 @@ def get_llm(role: str) -> LLMClientProtocol:
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            api_key=secrets.providers.openai.api_key,
+            api_key=secrets.OPENAI_API_KEY,
         )
 
     if provider == "ollama":
@@ -354,7 +354,7 @@ def get_instructor_client(role: str) -> InstructorClient:
 
     return InstructorClient(
         model=role_config.model,
-        api_key=get_secrets().providers.openai.api_key,
+        api_key=get_secrets().OPENAI_API_KEY,
     )
 
 
@@ -369,7 +369,7 @@ def get_vision_extractor(role: str = "vision_frames") -> VisionExtractorProtocol
     if role_config.provider == "openai":
         return OpenAIVisionExtractor(
             model=role_config.model,
-            api_key=secrets.providers.openai.api_key,
+            api_key=secrets.OPENAI_API_KEY,
         )
 
     raise ValueError(f"Unsupported provider for vision extractor: {role_config.provider}")

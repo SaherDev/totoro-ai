@@ -87,7 +87,7 @@ class GooglePlacesClient:
 
     def __init__(self) -> None:
         """Initialize with API key from config."""
-        self.api_key = get_secrets().providers.google.api_key
+        self.api_key = get_secrets().GOOGLE_API_KEY
 
         if not self.api_key:
             raise ValueError("Google API key not configured")

@@ -37,7 +37,7 @@ from totoro_ai.providers.redis_cache import RedisCacheBackend
 
 def get_cache_backend() -> CacheBackend:
     """FastAPI dependency providing CacheBackend (RedisCacheBackend by default)."""
-    return RedisCacheBackend(url=get_secrets().redis.url)
+    return RedisCacheBackend(url=get_secrets().REDIS_URL)
 
 
 def get_status_repo(
@@ -123,7 +123,7 @@ async def get_event_dispatcher(
             ),
             WhisperAudioEnricher(
                 groq_client=GroqWhisperClient(
-                    api_key=get_secrets().providers.groq.api_key or ""
+                    api_key=get_secrets().GROQ_API_KEY or ""
                 ),
                 instructor_client=get_instructor_client("intent_parser"),
             ),
@@ -137,7 +137,7 @@ async def get_event_dispatcher(
         ),
         persistence=pending_persistence,
         status_repo=ExtractionStatusRepository(
-            cache=RedisCacheBackend(url=get_secrets().redis.url)
+            cache=RedisCacheBackend(url=get_secrets().REDIS_URL)
         ),
     )
     dispatcher.register_handler(
@@ -220,7 +220,7 @@ def get_extraction_pipeline(
         ),
         WhisperAudioEnricher(
             groq_client=GroqWhisperClient(
-                api_key=get_secrets().providers.groq.api_key or ""
+                api_key=get_secrets().GROQ_API_KEY or ""
             ),
             instructor_client=get_instructor_client("intent_parser"),
         ),

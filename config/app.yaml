@@ -1,5 +1,5 @@
 # Totoro AI — non-secret application config
-# Secrets (API keys, DB/Redis URLs) live in config/.local.yaml (gitignored)
+# Secrets (API keys, DB/Redis URLs) live in .env (gitignored symlink)
 # ADR-015: YAML config loader for non-secret settings
 # ADR-016: logical-role-to-provider mapping
 # ADR-029: consolidated non-secret config into app.yaml
