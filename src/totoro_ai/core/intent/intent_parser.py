@@ -70,7 +70,8 @@ class IntentParser:
 
         Args:
             query: Raw natural language query from user
-            location: Optional location dict from request as {'lat': float, 'lng': float}
+            location: Optional location dict from request
+                {'lat': float, 'lng': float}
 
         Returns:
             ParsedIntent with extracted fields (null if not mentioned)
@@ -87,26 +88,37 @@ class IntentParser:
         radius_defaults = config.consult.radius_defaults
 
         system_prompt = (
-            f"You are an intent extraction assistant. Extract structured "
-            f"intent from place recommendation queries. "
-            f"\n"
-            f"Extract: cuisine (e.g., ramen, pizza), venue_type (e.g., club, bar), "
-            f"occasion (e.g., date night), price_range (low/mid/high), and radius in metres. "
-            f"\n"
-            f"Radius inference:"
-            f"- Detect proximity signals in any language: 'nearby', 'walking distance', "
-            f"'قريب مني' (close to me in Arabic), '附近' (nearby in Chinese), etc."
-            f"- 'nearby' → {radius_defaults.nearby}m"
-            f"- 'walking distance' → {radius_defaults.walking}m"
-            f"- No proximity signal → return null (fallback to {radius_defaults.default}m)"
-            f"\n"
-            f"Extract validate_candidates (true if query signals live validation like "
-            f"'open now', 'open tonight'). "
-            f"\n"
-            f"Extract discovery_filters (dict to pass to place discovery API with keys like "
-            f"'opennow', 'type', 'keyword'). "
-            f"\n"
-            f"Return null for fields not mentioned."
+            "You are an intent extraction assistant. Extract structured "
+            "intent from place recommendation queries.\n"
+            "\n"
+            "Extract: cuisine (e.g., ramen, pizza), venue_type (e.g., club, bar), "
+            "occasion (e.g., date night), price_range (low/mid/high), and radius "
+            "in metres.\n"
+            "\n"
+            "Radius inference:\n"
+            "- Detect proximity signals in any language: 'nearby', 'walking distance', "
+            "'قريب مني' (close to me in Arabic), '附近' (nearby in Chinese), etc.\n"
+            f"- 'nearby' → {radius_defaults.nearby}m\n"
+            f"- 'walking distance' → {radius_defaults.walking}m\n"
+            f"- No proximity signal → return null "
+            f"(fallback to {radius_defaults.default}m)\n"
+            "\n"
+            "Extract search_location: Use your world knowledge to resolve named "
+            "destinations to coordinates.\n"
+            "- If query names a destination ('in Tokyo', 'in Sukhumvit', 'in Bali', "
+            "'next to Asok BTS', 'near Shibuya') → return search_location as "
+            "{\"lat\": <float>, \"lng\": <float>} for that destination.\n"
+            "- If query implies current location ('nearby', 'near me', 'around here') "
+            "or has no location signal → return search_location as null. "
+            "The system will use the user's device GPS location as fallback.\n"
+            "\n"
+            "Extract validate_candidates (true if query signals live validation like "
+            "'open now', 'open tonight').\n"
+            "\n"
+            "Extract discovery_filters (dict to pass to place discovery API with "
+            "keys like 'opennow', 'type', 'keyword').\n"
+            "\n"
+            "Return null for fields not mentioned."
         )
 
         messages = [
@@ -133,12 +145,12 @@ class IntentParser:
                 ),
             )
 
-            # Set search_location: request location takes precedence
-            # TODO Phase 4: Implement location geocoding for query location signals
-            if location:
+            # Set search_location: LLM-resolved destination takes precedence
+            # Request location is fallback only (when LLM returns null)
+            if result.search_location is None and location:
                 result.search_location = location
-            # If no request location, search_location stays None
-            # (ConsultService will handle graceful fallback)
+            # If LLM resolved a destination, use it; if not and request location
+            # is missing, ConsultService will handle graceful fallback with None
 
             if generation:
                 generation.end(output=result.model_dump())
