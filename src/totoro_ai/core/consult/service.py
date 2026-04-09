@@ -67,9 +67,15 @@ class ConsultService:
         Raises:
             ValueError: If intent parsing fails (HTTP 500 from route handler)
         """
-        # Step 1: Parse intent from query
-        search_location_dict = {"lat": location.lat, "lng": location.lng} if location else None
-        intent = await self._intent_parser.parse(query, location=search_location_dict)
+        # Step 1: Parse intent from query, then resolve search location
+        intent = await self._intent_parser.parse(query)
+
+        if intent.search_location_name:
+            intent.search_location = await self._places_client.geocode(
+                intent.search_location_name
+            )
+        if intent.search_location is None and location:
+            intent.search_location = {"lat": location.lat, "lng": location.lng}
 
         # Update radius with config default if LLM returned null
         from totoro_ai.core.config import get_config
@@ -185,7 +191,8 @@ class ConsultService:
                 seen_place_ids.add(candidate.place_id)
 
         # Step 5: Conditional validation of saved candidates
-        if intent.validate_candidates and saved_candidates:
+        validate_candidates = bool(intent.discovery_filters.get("opennow", False))
+        if validate_candidates and saved_candidates:
             valid_candidates = []
             for candidate in saved_candidates:
                 try:
@@ -209,7 +216,7 @@ class ConsultService:
             deduplicated = [
                 c for c in deduplicated if c.source == "discovered" or c in valid_candidates
             ]
-        elif not intent.validate_candidates:
+        elif not validate_candidates:
             reasoning_steps.append(
                 ReasoningStep(
                     step="validation",

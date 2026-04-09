@@ -1,5 +1,6 @@
 """Intent extraction from natural language queries using Instructor."""
 
+import textwrap
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -7,30 +8,36 @@ from pydantic import BaseModel
 from totoro_ai.providers import get_instructor_client, get_langfuse_client
 
 
+class _IntentLLMOutput(BaseModel):
+    """Schema for LLM extraction only. Not used outside this module."""
+
+    occasion: str | None = None
+    price_range: str | None = None
+    radius: int | None = None
+    discovery_filters: dict[str, Any] = {}
+    search_location_name: str | None = None
+
+
 class ParsedIntent(BaseModel):
     """Structured representation of user intent extracted from a query."""
 
     occasion: str | None = None
-    """Context/occasion (e.g., 'date night', 'quick lunch'), or None if
-    not specified."""
+    """Context/occasion (e.g., 'date night', 'quick lunch'), or None if not specified.
+    """
 
     price_range: str | None = None
-    """Price range preference ('low', 'mid', 'high'), or None if not
-    specified."""
+    """Price range preference ('low', 'mid', 'high'), or None if not specified."""
 
     radius: int | None = None
-    """Preferred search radius in meters (inferred from proximity signals like
-    'nearby', 'walking distance'). LLM returns null when no radius signal
+    """Preferred search radius in meters. LLM returns null when no radius signal
     detected; falls back to config default."""
-
-    constraints: list[str] = []
-    """Dietary, access, or other requirements (empty list if none)."""
-
-    validate_candidates: bool = False
-    """True if query signals validation is needed (e.g., 'open now', 'open tonight')."""
 
     discovery_filters: dict[str, Any] = {}
     """Filters to pass to PlacesClient.discover() (e.g., opennow, type, keyword)."""
+
+    search_location_name: str | None = None
+    """Raw location name extracted by LLM (e.g., 'Sukhumvit', 'Asok BTS').
+    Preserved for observability; coordinates live in search_location."""
 
     search_location: dict[str, float] | None = None
     """Resolved search location as {'lat': float, 'lng': float}, or None if
@@ -48,26 +55,18 @@ class IntentParser:
         """Initialize IntentParser with Instructor client for schema extraction."""
         self._client = get_instructor_client("intent_parser")
 
-    async def parse(
-        self, query: str, location: dict[str, float] | None = None
-    ) -> ParsedIntent:
+    async def parse(self, query: str) -> ParsedIntent:
         """Extract structured intent from a raw natural language query.
 
         Uses GPT-4o-mini via Instructor for reliable structured extraction.
-        Resolves search_location from:
-        1. Request location (if provided)
-        2. Location signal in query (resolved via geocoding if present)
-        3. None (if neither source available)
-
-        Pydantic validation automatically enforces schema constraints.
+        search_location is always None here — ConsultService resolves coordinates
+        from search_location_name after parsing.
 
         Args:
             query: Raw natural language query from user
-            location: Optional location dict from request
-                {'lat': float, 'lng': float}
 
         Returns:
-            ParsedIntent with extracted fields (null if not mentioned)
+            ParsedIntent with extracted fields; search_location always None
 
         Raises:
             ValidationError: If LLM response fails Pydantic validation
@@ -80,59 +79,44 @@ class IntentParser:
         config = get_config()
         radius_defaults = config.consult.radius_defaults
 
-        system_prompt = (
-            "You are an intent extraction assistant. Extract structured "
-            "intent from place recommendation queries.\n"
-            "\n"
-            "Extract: occasion (e.g., date night), price_range (low/mid/high), radius "
-            "in metres, and discovery_filters for Google Places API.\n"
-            "\n"
-            "Radius inference:\n"
-            "- Detect proximity signals in any language: 'nearby', 'walking distance', "
-            "'قريب مني' (close to me in Arabic), '附近' (nearby in Chinese), etc.\n"
-            f"- 'nearby' → {radius_defaults.nearby}m\n"
-            f"- 'walking distance' → {radius_defaults.walking}m\n"
-            f"- No proximity signal → return null "
-            f"(fallback to {radius_defaults.default}m)\n"
-            "\n"
-            "Extract search_location: Use your world knowledge to resolve named "
-            "destinations to coordinates.\n"
-            "- If query names a destination ('in Tokyo', 'in Sukhumvit', 'in Bali', "
-            "'next to Asok BTS', 'near Shibuya') → return search_location as "
-            "{\"lat\": <float>, \"lng\": <float>} for that destination.\n"
-            "- If query implies current location ('nearby', 'near me', 'around here') "
-            "or has no location signal → return search_location as null. "
-            "The system will use the user's device GPS location as fallback.\n"
-            "\n"
-            "Extract discovery_filters as a dict for the Google Places Nearby Search API.\n"
-            "This is the PRIMARY source of filters — it maps all cuisine and venue "
-            "signals into Google Places API query parameters.\n"
-            "\n"
-            "Rules:\n"
-            "- If query mentions a cuisine or venue type → set 'type' to the closest "
-            "Google Places type:\n"
-            "  ramen, sushi, pizza, burger, thai food, any cuisine → 'restaurant'\n"
-            "  coffee, cafe, coffee shop → 'cafe'\n"
-            "  bar, pub, beer → 'bar'\n"
-            "  club, nightclub → 'night_club'\n"
-            "  hotel, hostel, resort → 'lodging'\n"
-            "  AND set 'keyword' to the specific cuisine or venue name from the query "
-            "(e.g. 'ramen', 'coffee shop', 'rooftop bar')\n"
-            "- If query signals 'open now' or 'currently open' → add 'opennow': true\n"
-            "- Combine all relevant filters in discovery_filters dict. This is the "
-            "only place cuisine/venue mappings should appear.\n"
-            "\n"
-            "Examples:\n"
-            "- 'cheap ramen nearby' → discovery_filters: {'type': 'restaurant', 'keyword': 'ramen'}\n"
-            "- 'coffee shop open now' → discovery_filters: {'type': 'cafe', 'keyword': 'coffee shop', 'opennow': true}\n"
-            "- 'bar near Asok' → discovery_filters: {'type': 'bar'}\n"
-            "- 'dinner nearby' → discovery_filters: {'type': 'restaurant', 'keyword': 'dinner'}\n"
-            "\n"
-            "Set validate_candidates to true if and only if discovery_filters contains "
-            "'opennow': true.\n"
-            "\n"
-            "Return null for fields not mentioned."
-        )
+        system_prompt = textwrap.dedent(f"""\
+            Extract structured intent from a place recommendation query. Return a JSON object with these fields:
+
+            - occasion: string or null. Why the user wants this place (e.g. "date night", "work lunch", "solo breakfast").
+            - price_range: "low" | "mid" | "high" | null. Map signals like "cheap", "budget" → "low". "nice", "upscale", "fancy" → "high". "moderate", "not too expensive" → "mid".
+            - radius: integer (metres) or null. Infer from proximity language in any language:
+              - "nearby", "near me", "around here", "قريب", "附近" → {radius_defaults.nearby}
+              - "walking distance" → {radius_defaults.walking}
+              - No proximity signal → null (system applies {radius_defaults.default} as fallback)
+            - search_location_name: string or null. Extract the location name exactly as mentioned in the query ("Tokyo", "Sukhumvit", "Asok BTS", "Shibuya"). Do not resolve to coordinates. If the query implies current location or names no place → null.
+            - discovery_filters: dict for Google Places Nearby Search API. This is the primary filter source. Build it from these rules:
+              - Set "type" to the closest Google Places type:
+                Any cuisine or food mention → "restaurant"
+                Coffee, cafe → "cafe"
+                Bar, pub, beer → "bar"
+                Club, nightclub → "night_club"
+                Hotel, hostel, resort → "lodging"
+              - Set "keyword" to the specific term from the query (e.g. "ramen", "rooftop bar", "coffee shop"). Omit "keyword" if the query has no specific term beyond the type.
+              - Add "opennow": true only if the query explicitly asks for currently open places.
+              - If the query has no venue or cuisine signal → empty dict {{}}.
+
+            Return null for any field the query does not address. Do not invent values.
+
+            Examples:
+            Query: "cheap ramen nearby"
+            Output: {{"occasion": null, "price_range": "low", "radius": {radius_defaults.nearby}, "search_location_name": null, "discovery_filters": {{"type": "restaurant", "keyword": "ramen"}}}}
+
+            Query: "nice dinner in Sukhumvit for a date"
+            Output: {{"occasion": "date night", "price_range": "high", "radius": null, "search_location_name": "Sukhumvit", "discovery_filters": {{"type": "restaurant", "keyword": "dinner"}}}}
+
+            Query: "coffee shop open now"
+            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "cafe", "keyword": "coffee shop", "opennow": true}}}}
+
+            Query: "bar near Asok"
+            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": "Asok", "discovery_filters": {{"type": "bar"}}}}
+
+            Query: "somewhere to eat"
+            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "restaurant"}}}}""")
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -147,23 +131,21 @@ class IntentParser:
             )
 
         try:
-            # Instructor.extract() validates against schema
-            # Raises ValidationError if response doesn't match
-            # (propagates to FastAPI as 422)
-            result = cast(
-                ParsedIntent,
+            llm_output = cast(
+                _IntentLLMOutput,
                 await self._client.extract(
-                    ParsedIntent,
+                    _IntentLLMOutput,
                     messages=messages,
                 ),
             )
 
-            # Set search_location: LLM-resolved destination takes precedence
-            # Request location is fallback only (when LLM returns null)
-            if result.search_location is None and location:
-                result.search_location = location
-            # If LLM resolved a destination, use it; if not and request location
-            # is missing, ConsultService will handle graceful fallback with None
+            result = ParsedIntent(
+                occasion=llm_output.occasion,
+                price_range=llm_output.price_range,
+                radius=llm_output.radius,
+                discovery_filters=llm_output.discovery_filters,
+                search_location_name=llm_output.search_location_name,
+            )
 
             if generation:
                 generation.end(output=result.model_dump())

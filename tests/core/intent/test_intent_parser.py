@@ -5,24 +5,25 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import ValidationError
 
-from totoro_ai.core.intent.intent_parser import IntentParser, ParsedIntent
+from totoro_ai.core.intent.intent_parser import (
+    IntentParser,
+    ParsedIntent,
+    _IntentLLMOutput,
+)
 
 
-@pytest.mark.asyncio
 async def test_parse_returns_parsed_intent() -> None:
     """Test that parse() returns a ParsedIntent model."""
     with patch(
         "totoro_ai.core.intent.intent_parser.get_instructor_client"
     ) as mock_get_client:
-        # Mock the instructor client to return a ParsedIntent
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
 
-        mock_client.extract.return_value = ParsedIntent(
+        mock_client.extract.return_value = _IntentLLMOutput(
             occasion="date night",
             price_range=None,
             radius=None,
-            constraints=[],
             discovery_filters={"type": "restaurant", "keyword": "ramen"},
         )
 
@@ -34,7 +35,6 @@ async def test_parse_returns_parsed_intent() -> None:
         assert result.occasion == "date night"
 
 
-@pytest.mark.asyncio
 async def test_parse_extracts_discovery_filters_and_occasion() -> None:
     """Test parse() correctly extracts discovery_filters and occasion fields."""
     with patch(
@@ -43,11 +43,10 @@ async def test_parse_extracts_discovery_filters_and_occasion() -> None:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
 
-        mock_client.extract.return_value = ParsedIntent(
+        mock_client.extract.return_value = _IntentLLMOutput(
             occasion="quick lunch",
             price_range="low",
             radius=800,
-            constraints=["vegetarian"],
             discovery_filters={"type": "restaurant", "keyword": "sushi"},
         )
 
@@ -58,10 +57,8 @@ async def test_parse_extracts_discovery_filters_and_occasion() -> None:
         assert result.occasion == "quick lunch"
         assert result.price_range == "low"
         assert result.radius == 800
-        assert result.constraints == ["vegetarian"]
 
 
-@pytest.mark.asyncio
 async def test_parse_returns_null_for_missing_fields() -> None:
     """Test parse() returns None for fields not mentioned."""
     with patch(
@@ -70,12 +67,10 @@ async def test_parse_returns_null_for_missing_fields() -> None:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
 
-        # Only discovery_filters is specified, others are None
-        mock_client.extract.return_value = ParsedIntent(
+        mock_client.extract.return_value = _IntentLLMOutput(
             occasion=None,
             price_range=None,
             radius=None,
-            constraints=[],
             discovery_filters={"type": "restaurant", "keyword": "pizza"},
         )
 
@@ -86,23 +81,20 @@ async def test_parse_returns_null_for_missing_fields() -> None:
         assert result.occasion is None
         assert result.price_range is None
         assert result.radius is None
-        assert result.constraints == []
 
 
-@pytest.mark.asyncio
 async def test_parse_extracts_discovery_filters_for_non_food_venues() -> None:
-    """Test parse() correctly extracts discovery_filters with type for non-food venues."""
+    """Test parse() extracts discovery_filters with type for non-food venues."""
     with patch(
         "totoro_ai.core.intent.intent_parser.get_instructor_client"
     ) as mock_get_client:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
 
-        mock_client.extract.return_value = ParsedIntent(
+        mock_client.extract.return_value = _IntentLLMOutput(
             occasion="date night",
             price_range=None,
             radius=None,
-            constraints=[],
             discovery_filters={"type": "night_club"},
         )
 
@@ -113,7 +105,6 @@ async def test_parse_extracts_discovery_filters_for_non_food_venues() -> None:
         assert result.occasion == "date night"
 
 
-@pytest.mark.asyncio
 async def test_parse_propagates_validation_error() -> None:
     """Test parse() propagates ValidationError on schema failures."""
     with patch(
@@ -122,15 +113,51 @@ async def test_parse_propagates_validation_error() -> None:
         mock_client = AsyncMock()
         mock_get_client.return_value = mock_client
 
-        # Create a ParsedIntent with invalid data to trigger ValidationError
         try:
-            # This will raise ValidationError for invalid radius type
-            ParsedIntent(cuisine="ramen", radius="invalid")  # type: ignore[arg-type]
+            _IntentLLMOutput(radius="invalid")  # type: ignore[arg-type]
         except ValidationError as e:
             mock_client.extract.side_effect = e
 
         parser = IntentParser()
 
-        # Verify that ValidationError is propagated (not caught)
         with pytest.raises(ValidationError):
             await parser.parse("invalid query")
+
+
+async def test_parse_passes_through_search_location_name() -> None:
+    """LLM-extracted location name appears in ParsedIntent; search_location stays None."""
+    with patch(
+        "totoro_ai.core.intent.intent_parser.get_instructor_client"
+    ) as mock_get_client:
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        mock_client.extract.return_value = _IntentLLMOutput(
+            search_location_name="Asok",
+            discovery_filters={"type": "bar"},
+        )
+
+        parser = IntentParser()
+        result = await parser.parse("bar near Asok")
+
+        assert result.search_location_name == "Asok"
+        assert result.search_location is None
+
+
+async def test_parse_search_location_always_none() -> None:
+    """parse() never resolves coordinates — search_location is always None."""
+    with patch(
+        "totoro_ai.core.intent.intent_parser.get_instructor_client"
+    ) as mock_get_client:
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        mock_client.extract.return_value = _IntentLLMOutput(
+            search_location_name=None,
+            discovery_filters={"type": "restaurant"},
+        )
+
+        parser = IntentParser()
+        result = await parser.parse("pizza restaurants")
+
+        assert result.search_location is None

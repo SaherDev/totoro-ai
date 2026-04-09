@@ -81,6 +81,14 @@ class PlacesClient(Protocol):
         """
         ...
 
+    async def geocode(self, place_name: str) -> dict[str, float] | None:
+        """Resolve a place name to coordinates.
+
+        Returns:
+            {'lat': float, 'lng': float} or None if not found or on failure
+        """
+        ...
+
 
 class GooglePlacesClient:
     """Google Places API client for place validation, discovery, and validation (ADR-049, ADR-022)."""
@@ -224,6 +232,45 @@ class GooglePlacesClient:
 
         data = response.json()
         return data.get("results", [])
+
+    async def geocode(self, place_name: str) -> dict[str, float] | None:
+        """Resolve a place name to coordinates using the Places Text Search API.
+
+        Reuses the findplacefromtext endpoint — same URL and auth as validate_place.
+        Returns {'lat': float, 'lng': float} or None on failure or no results.
+        """
+        config = get_config()
+        places_config = config.external_services.google_places
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    places_config.base_url,
+                    params={
+                        "input": place_name,
+                        "inputtype": "textquery",
+                        "fields": "geometry",
+                        "key": self.api_key,
+                        "region": places_config.default_region,
+                    },
+                    timeout=places_config.timeout_seconds,
+                )
+                response.raise_for_status()
+        except (httpx.HTTPError, httpx.TimeoutException):
+            return None
+
+        data = response.json()
+        candidates = data.get("candidates")
+        if not candidates:
+            return None
+
+        location = candidates[0].get("geometry", {}).get("location", {})
+        lat = location.get("lat")
+        lng = location.get("lng")
+        if lat is None or lng is None:
+            return None
+
+        return {"lat": float(lat), "lng": float(lng)}
 
     async def validate(self, candidate: Any, filters: dict[str, Any]) -> bool:
         """
