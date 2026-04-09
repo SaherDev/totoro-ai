@@ -16,6 +16,7 @@ class _IntentLLMOutput(BaseModel):
     radius: int | None = None
     discovery_filters: dict[str, Any] = {}
     search_location_name: str | None = None
+    enriched_query: str | None = None
 
 
 class ParsedIntent(BaseModel):
@@ -46,6 +47,11 @@ class ParsedIntent(BaseModel):
     - Geocoded city/neighborhood (if query names a destination)
     - Geocoded street address (if query contains an address)
     """
+
+    enriched_query: str | None = None
+    """Original query rewritten to include user memory context. Used for
+    recall (vector search) and Google Places keyword. Falls back to raw
+    query if no memories apply."""
 
 
 class IntentParser:
@@ -93,6 +99,7 @@ class IntentParser:
               - "walking distance" → {radius_defaults.walking}
               - No proximity signal → null (system applies {radius_defaults.default} as fallback)
             - search_location_name: string or null. Extract the location name exactly as mentioned in the query ("Tokyo", "Sukhumvit", "Asok BTS", "Shibuya"). Do not resolve to coordinates. If the query implies current location or names no place → null.
+            - enriched_query: string. Rewrite the original query into a short, search-optimized phrase that incorporates user preferences. Examples: query "dinner nearby" + preference "I only eat omakase" → "omakase restaurant nearby". query "somewhere to eat" + preference "I'm vegetarian" → "vegetarian restaurant". If no preferences, return the original query unchanged.
             - discovery_filters: dict for Google Places Nearby Search API. This is the primary filter source. Build it from these rules:
               - Set "type" to the closest Google Places type:
                 Any cuisine or food mention → "restaurant"
@@ -100,7 +107,7 @@ class IntentParser:
                 Bar, pub, beer → "bar"
                 Club, nightclub → "night_club"
                 Hotel, hostel, resort → "lodging"
-              - Set "keyword" by combining the user's dietary/cuisine preferences (if provided) with the query term. User preferences always apply: "I only eat omakase" + "dinner" → "omakase dinner". "I'm vegetarian" + "lunch" → "vegetarian lunch". If only preferences exist, use them alone as keyword. Omit "keyword" only if neither the message nor preferences provide a specific term.
+              - Set "keyword" from user preferences and query. If user preferences contain a specific cuisine or dietary term (e.g. "omakase", "vegetarian", "halal"), use that as the keyword — do NOT combine it with generic meal words like "dinner", "lunch", "food". Only combine if the query adds a specific term (e.g. preference "halal" + query "ramen" → "halal ramen"). Omit "keyword" only if neither preferences nor query provide a specific term.
               - Add "opennow": true only if the query explicitly asks for currently open places.
               - If the query has no venue or cuisine signal → empty dict {{}}.
 
@@ -108,19 +115,16 @@ class IntentParser:
 
             Examples:
             Query: "cheap ramen nearby"
-            Output: {{"occasion": null, "price_range": "low", "radius": {radius_defaults.nearby}, "search_location_name": null, "discovery_filters": {{"type": "restaurant", "keyword": "ramen"}}}}
+            Output: {{"occasion": null, "price_range": "low", "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "cheap ramen nearby", "discovery_filters": {{"type": "restaurant", "keyword": "ramen"}}}}
 
             Query: "nice dinner in Sukhumvit for a date"
-            Output: {{"occasion": "date night", "price_range": "high", "radius": null, "search_location_name": "Sukhumvit", "discovery_filters": {{"type": "restaurant", "keyword": "dinner"}}}}
+            Output: {{"occasion": "date night", "price_range": "high", "radius": null, "search_location_name": "Sukhumvit", "enriched_query": "nice dinner in Sukhumvit for a date", "discovery_filters": {{"type": "restaurant", "keyword": "dinner"}}}}
 
-            Query: "coffee shop open now"
-            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "cafe", "keyword": "coffee shop", "opennow": true}}}}
+            Query: "somewhere to eat", preferences: ["I only eat omakase"]
+            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "enriched_query": "omakase restaurant", "discovery_filters": {{"type": "restaurant", "keyword": "omakase"}}}}
 
-            Query: "bar near Asok"
-            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": "Asok", "discovery_filters": {{"type": "bar"}}}}
-
-            Query: "somewhere to eat"
-            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "restaurant"}}}}"""
+            Query: "dinner nearby", preferences: ["I'm vegetarian", "I eat late"]
+            Output: {{"occasion": "dinner", "price_range": null, "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "vegetarian dinner nearby", "discovery_filters": {{"type": "restaurant", "keyword": "vegetarian"}}}}"""
         )
 
         # Build user message with memories injected (ADR-010, ADR-044)
@@ -160,6 +164,7 @@ class IntentParser:
                 radius=llm_output.radius,
                 discovery_filters=llm_output.discovery_filters,
                 search_location_name=llm_output.search_location_name,
+                enriched_query=llm_output.enriched_query or query,
             )
 
             if generation:

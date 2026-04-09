@@ -116,8 +116,9 @@ class ConsultService:
         # Build reasoning steps tracking
         reasoning_steps: list[ReasoningStep] = []
 
-        # Step 2: Retrieve saved places
-        recall_results = await self._recall_service.run(query, user_id)
+        # Step 2: Retrieve saved places (use enriched_query for better recall)
+        search_query = intent.enriched_query or query
+        recall_results = await self._recall_service.run(search_query, user_id)
         saved_candidates: list[Candidate] = []
 
         if recall_results.results:
