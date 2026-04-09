@@ -30,7 +30,10 @@
       "Bash(python3:*)",
       "Bash(poetry add:*)",
       "Bash(brew install:*)",
-      "Bash(ffmpeg -version)"
+      "Bash(ffmpeg -version)",
+      "Bash(git checkout:*)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(git rm:*)"
     ]
   }
 }

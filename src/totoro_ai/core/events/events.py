@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from totoro_ai.core.memory.schemas import PersonalFact
+
 
 class DomainEvent(BaseModel):
     """Base class for all domain events"""
@@ -45,3 +47,14 @@ class OnboardingSignal(DomainEvent):
     event_type: str = "onboarding_signal"
     place_id: str
     confirmed: bool
+
+
+class PersonalFactsExtracted(DomainEvent):
+    """Event: Personal facts extracted from user message.
+
+    Fired after every intent classification. Handler persists facts to
+    user_memories table. Payload may contain empty list if no facts were extracted.
+    """
+
+    event_type: str = "personal_facts_extracted"
+    personal_facts: list[PersonalFact]

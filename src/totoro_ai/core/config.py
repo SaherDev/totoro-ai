@@ -266,6 +266,19 @@ class RankingConfig(BaseModel):
     weights: RankingWeightsConfig
 
 
+class MemoryConfidenceConfig(BaseModel):
+    """Personal fact confidence thresholds."""
+
+    stated: float = 0.9
+    inferred: float = 0.6
+
+
+class MemoryConfig(BaseModel):
+    """User memory layer configuration."""
+
+    confidence: MemoryConfidenceConfig = MemoryConfidenceConfig()
+
+
 class ProviderEndpointConfig(BaseModel):
     """Non-secret provider config (base URL, etc.). API keys live in SecretsConfig."""
 
@@ -295,6 +308,7 @@ class AppConfig(BaseModel):
     recall: RecallConfig = RecallConfig()
     taste_model: TasteModelConfig
     ranking: RankingConfig
+    memory: MemoryConfig = MemoryConfig()
 
 
 _config: AppConfig | None = None

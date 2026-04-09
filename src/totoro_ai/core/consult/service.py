@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from totoro_ai.api.schemas.consult import (
     ConsultResponse,
@@ -25,6 +26,9 @@ from totoro_ai.db.repositories.consult_log_repository import (
     ConsultLogRepository,
     NullConsultLogRepository,
 )
+
+if TYPE_CHECKING:
+    from totoro_ai.core.memory.service import UserMemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +53,19 @@ class ConsultService:
         places_client: PlacesClient,
         taste_service: TasteModelService,
         ranking_service: RankingService,
+        memory_service: "UserMemoryService",
         consult_log_repo: ConsultLogRepository | None = None,
     ) -> None:
-        """Initialize ConsultService with 5 required and 1 optional dependency (ADR-019)."""
+        """Initialize ConsultService with dependencies (ADR-019, ADR-038).
+
+        Injects UserMemoryService for loading user facts during intent parsing.
+        """
         self._intent_parser = intent_parser
         self._recall_service = recall_service
         self._places_client = places_client
         self._taste_service = taste_service
         self._ranking_service = ranking_service
+        self._memory = memory_service
         self._consult_log_repo: ConsultLogRepository = (
             consult_log_repo
             if consult_log_repo is not None
@@ -82,8 +91,11 @@ class ConsultService:
         Raises:
             ValueError: If intent parsing fails (HTTP 500 from route handler)
         """
-        # Step 1: Parse intent from query, then resolve search location
-        intent = await self._intent_parser.parse(query)
+        # Load user memories for context injection (ADR-010)
+        user_memories = await self._memory.load_memories(user_id)
+
+        # Step 1: Parse intent from query with user context, then resolve search location
+        intent = await self._intent_parser.parse(query, user_memories=user_memories)
 
         if intent.search_location_name:
             intent.search_location = await self._places_client.geocode(

@@ -11,6 +11,8 @@ from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_s
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
+from totoro_ai.core.memory.repository import SQLAlchemyUserMemoryRepository
+from totoro_ai.core.memory.service import UserMemoryService
 from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
@@ -41,11 +43,6 @@ from totoro_ai.providers.llm import get_vision_extractor
 from totoro_ai.providers.redis_cache import RedisCacheBackend
 
 
-def get_chat_assistant_service() -> ChatAssistantService:
-    """FastAPI dependency providing ChatAssistantService."""
-    return ChatAssistantService()
-
-
 def get_cache_backend() -> CacheBackend:
     """FastAPI dependency providing CacheBackend (RedisCacheBackend by default)."""
     return RedisCacheBackend(url=get_secrets().REDIS_URL)
@@ -72,6 +69,27 @@ def get_embedding_repo(
     return SQLAlchemyEmbeddingRepository(db_session)
 
 
+def get_user_memory_service(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> UserMemoryService:
+    """FastAPI dependency providing UserMemoryService.
+
+    CRITICAL (ADR-038): SQLAlchemyUserMemoryRepository is constructed ONLY here.
+    No other dependency function or module instantiates the repository implementation.
+    """
+    return UserMemoryService(repo=SQLAlchemyUserMemoryRepository(db_session))
+
+
+def get_chat_assistant_service(
+    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
+) -> ChatAssistantService:
+    """FastAPI dependency providing ChatAssistantService.
+
+    Injects UserMemoryService for context injection (ADR-010, ADR-038).
+    """
+    return ChatAssistantService(memory_service=memory_service)
+
+
 def get_extraction_config(
     config: AppConfig = Depends(get_config),  # noqa: B008
 ) -> ExtractionConfig:
@@ -87,6 +105,7 @@ def get_embedder_dep() -> EmbedderProtocol:
 async def get_event_dispatcher(
     background_tasks: BackgroundTasks,
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
+    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
 ) -> EventDispatcher:
     """FastAPI dependency providing a fully wired EventDispatcher (ADR-043).
 
@@ -95,7 +114,11 @@ async def get_event_dispatcher(
     get_event_dispatcher <- get_extraction_persistence <- get_event_dispatcher.
     """
     taste_service = TasteModelService(session=db_session)
-    handlers = EventHandlers(taste_service=taste_service, langfuse=None)
+    handlers = EventHandlers(
+        taste_service=taste_service,
+        memory_service=memory_service,
+        langfuse=None,
+    )
 
     dispatcher = EventDispatcher(background_tasks=background_tasks)
     dispatcher.register_handler("place_saved", handlers.on_place_saved)  # type: ignore[arg-type]
@@ -110,6 +133,10 @@ async def get_event_dispatcher(
     dispatcher.register_handler(
         "onboarding_signal",
         handlers.on_onboarding_signal,  # type: ignore[arg-type]
+    )
+    dispatcher.register_handler(
+        "personal_facts_extracted",
+        handlers.on_personal_facts_extracted,  # type: ignore[arg-type]
     )
 
     # Register ExtractionPendingHandler (Run 3 — inline construction, no circular dep)
@@ -277,12 +304,14 @@ async def get_consult_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
     config: AppConfig = Depends(get_config),  # noqa: B008
     consult_log_repo: ConsultLogRepository = Depends(get_consult_log_repo),  # noqa: B008
+    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
 ) -> ConsultService:
     """FastAPI dependency providing a fully wired ConsultService.
 
     Wires the 6-step pipeline dependencies: intent parser, recall service,
     places client, taste model service, and ranking service.
-    Also injects ConsultLogRepository for persistence (FR-010).
+    Also injects ConsultLogRepository for persistence (FR-010) and
+    UserMemoryService for context injection (ADR-010, ADR-038).
     """
     return ConsultService(
         intent_parser=IntentParser(),
@@ -294,6 +323,7 @@ async def get_consult_service(
         places_client=GooglePlacesClient(),
         taste_service=TasteModelService(session=db_session),
         ranking_service=RankingService(),
+        memory_service=memory_service,
         consult_log_repo=consult_log_repo,
     )
 
@@ -305,15 +335,21 @@ async def get_chat_service(
     assistant_service: ChatAssistantService = Depends(  # noqa: B008
         get_chat_assistant_service
     ),
+    event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
+    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
 ) -> ChatService:
     """FastAPI dependency providing a fully wired ChatService (ADR-019, ADR-052).
 
-    Injects all four downstream services. ConsultService is responsible for
-    consult log persistence — ChatService holds no DB repository.
+    Injects all four downstream services plus event dispatcher and memory service.
+    ConsultService is responsible for consult log persistence — ChatService holds
+    no DB repository. PersonalFactsExtracted events fire after intent classification
+    to enable asynchronous memory persistence (ADR-043).
     """
     return ChatService(
         extraction_service=extraction_service,
         consult_service=consult_service,
         recall_service=recall_service,
         assistant_service=assistant_service,
+        event_dispatcher=event_dispatcher,
+        memory_service=memory_service,
     )

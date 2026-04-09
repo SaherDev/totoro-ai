@@ -253,3 +253,12 @@ ranking:
     price_fit: 0.20
     popularity: 0.15
     source_boost: 0.15
+
+# ---------------------------------------------------------------------------
+# User Memory Configuration
+# Personal fact extraction confidence thresholds
+# ---------------------------------------------------------------------------
+memory:
+  confidence:
+    stated: 0.9
+    inferred: 0.6

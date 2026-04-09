@@ -1,10 +1,13 @@
 """Conversational food and dining advisor service."""
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from totoro_ai.api.errors import LLMUnavailableError
 from totoro_ai.providers.llm import get_llm
 from totoro_ai.providers.tracing import get_langfuse_client
+
+if TYPE_CHECKING:
+    from totoro_ai.core.memory.service import UserMemoryService
 
 _SYSTEM_PROMPT = """\
 You are a knowledgeable food and dining advisor with deep expertise in global food \
@@ -34,14 +37,17 @@ Be conversational. Be specific. Avoid generic travel-guide language.\
 
 
 class ChatAssistantService:
-    """Stateless conversational food and dining advisor.
+    """Conversational food and dining advisor with user context injection.
 
     Takes a user message and returns a direct LLM response.
     No RAG, no vector search, no ranking.
+    Injects user memories into the system prompt for personalized advice.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, memory_service: "UserMemoryService") -> None:
+        """Initialize with memory service for context injection (ADR-010, ADR-038)."""
         self._llm = get_llm("chat_assistant")
+        self._memory = memory_service
 
     async def run(self, message: str, user_id: str) -> str:
         """Run the chat assistant for a single message.
@@ -56,6 +62,9 @@ class ChatAssistantService:
         Raises:
             LLMUnavailableError: If the LLM call fails or times out.
         """
+        # Load user memories for context injection (ADR-010)
+        user_memories = await self._memory.load_memories(user_id)
+
         lf = get_langfuse_client()
         generation = (
             lf.generation(
@@ -66,8 +75,26 @@ class ChatAssistantService:
             else None
         )
 
+        # Build system prompt with user context injection (ADR-044: XML-wrapped)
+        system_prompt = _SYSTEM_PROMPT
+        if user_memories:
+            memories_xml = "\n".join(
+                f"    <memory>{mem}</memory>" for mem in user_memories
+            )
+            system_prompt += f"""\n
+<user_context>
+<memories>
+{memories_xml}
+</memories>
+</user_context>
+
+Consider these user facts when answering. Use them to tailor your advice \
+to their preferences and constraints. Never reference or contradict the \
+facts directly — only use them to provide more personalized guidance.
+"""
+
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": message},
         ]
 

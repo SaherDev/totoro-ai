@@ -55,7 +55,9 @@ class IntentParser:
         """Initialize IntentParser with Instructor client for schema extraction."""
         self._client = get_instructor_client("intent_parser")
 
-    async def parse(self, query: str) -> ParsedIntent:
+    async def parse(
+        self, query: str, user_memories: list[str] | None = None
+    ) -> ParsedIntent:
         """Extract structured intent from a raw natural language query.
 
         Uses GPT-4o-mini via Instructor for reliable structured extraction.
@@ -64,6 +66,7 @@ class IntentParser:
 
         Args:
             query: Raw natural language query from user
+            user_memories: Optional list of user's personal facts (ADR-010)
 
         Returns:
             ParsedIntent with extracted fields; search_location always None
@@ -117,6 +120,19 @@ class IntentParser:
 
             Query: "somewhere to eat"
             Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "restaurant"}}}}""")
+
+        # Inject user memories as context (ADR-010, ADR-044: XML-wrapped for safety)
+        if user_memories:
+            memories_xml = "\n".join(f"    <memory>{mem}</memory>" for mem in user_memories)
+            system_prompt += f"""\n
+<user_context>
+<memories>
+{memories_xml}
+</memories>
+</user_context>
+
+Consider these user facts when interpreting the query. Use them to enhance intent parsing (e.g., if the user is vegetarian, infer dietary preferences from their query). Never contradict or reference the facts directly in the output — only use them to improve interpretation.
+"""
 
         messages = [
             {"role": "system", "content": system_prompt},

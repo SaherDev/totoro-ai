@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 018-user-memory-layer: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, Langfuse, Instructor (for IntentParser)
 - 017-unified-chat-router: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, OpenAI SDK, Langfuse
 - 016-chat-assistant-service: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, OpenAI SDK, Langfuse
-- 015-consult-pipeline: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, instructor, openai SDK, langfuse, httpx, sqlalchemy async
 
 
 ## Active Technologies
-- Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, OpenAI SDK, Langfuse (017-unified-chat-router)
-- PostgreSQL (pgvector) — new `consult_logs` table via Alembic migration (017-unified-chat-router)
+- Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, Langfuse, Instructor (for IntentParser) (018-user-memory-layer)
+- PostgreSQL (`user_memories` table via Alembic) (018-user-memory-layer)
 

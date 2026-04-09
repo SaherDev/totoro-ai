@@ -12,12 +12,14 @@ from langfuse import Langfuse
 
 from totoro_ai.core.events.events import (
     OnboardingSignal,
+    PersonalFactsExtracted,
     PlaceSaved,
     RecommendationAccepted,
     RecommendationRejected,
 )
 
 if TYPE_CHECKING:
+    from totoro_ai.core.memory.service import UserMemoryService
     from totoro_ai.core.taste.service import TasteModelService
 
 logger = logging.getLogger(__name__)
@@ -27,15 +29,20 @@ class EventHandlers:
     """Container for event handler functions"""
 
     def __init__(
-        self, taste_service: "TasteModelService", langfuse: Langfuse | None = None
+        self,
+        taste_service: "TasteModelService",
+        memory_service: "UserMemoryService",
+        langfuse: Langfuse | None = None,
     ) -> None:
         """Initialize handlers with dependencies
 
         Args:
             taste_service: TasteModelService instance
+            memory_service: UserMemoryService instance
             langfuse: Optional Langfuse client for tracing
         """
         self.taste_service = taste_service
+        self.memory_service = memory_service
         self.langfuse = langfuse
 
     async def on_place_saved(self, event: PlaceSaved) -> None:
@@ -151,6 +158,51 @@ class EventHandlers:
             if self.langfuse:
                 self.langfuse.capture_message(
                     message=f"OnboardingSignal handler error: {exc}",
+                    level="error",
+                    metadata={"event_id": event.event_id, "user_id": event.user_id},
+                )
+                self.langfuse.flush()
+
+    async def on_personal_facts_extracted(self, event: PersonalFactsExtracted) -> None:
+        """Handle personal facts extracted event - persist to user_memories.
+
+        Skips if personal_facts is empty. Catches and logs all exceptions
+        via Langfuse; never raises (per ADR-043: failures don't block responses).
+        """
+        if not event.personal_facts:
+            return
+
+        try:
+            from totoro_ai.core.config import get_config
+
+            config = get_config()
+            await self.memory_service.save_facts(
+                user_id=event.user_id,
+                facts=event.personal_facts,
+                confidence_config=config.memory.confidence,
+            )
+            if self.langfuse:
+                self.langfuse.capture_message(
+                    message="PersonalFactsExtracted event handled",
+                    level="info",
+                    metadata={
+                        "event_id": event.event_id,
+                        "user_id": event.user_id,
+                        "facts_count": len(event.personal_facts),
+                    },
+                )
+        except Exception as exc:
+            logger.error(
+                f"Failed to save personal facts: {exc}",
+                exc_info=True,
+                extra={
+                    "user_id": event.user_id,
+                    "facts_count": len(event.personal_facts),
+                },
+            )
+            if self.langfuse:
+                self.langfuse.capture_message(
+                    message=f"PersonalFactsExtracted handler error: {exc}",
                     level="error",
                     metadata={"event_id": event.event_id, "user_id": event.user_id},
                 )

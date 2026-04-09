@@ -164,3 +164,31 @@ class ConsultLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class UserMemory(Base):
+    """Append-only store of personal facts extracted from user messages.
+
+    Extracted facts are deduped at database level via UNIQUE(user_id, memory).
+    No foreign key to users table (Constitution VI: cross-repo boundary).
+    """
+
+    __tablename__ = "user_memories"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "memory",
+            name="uq_user_memories_user_memory",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    memory: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
