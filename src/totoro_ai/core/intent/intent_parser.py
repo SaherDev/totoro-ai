@@ -100,7 +100,7 @@ class IntentParser:
                 Bar, pub, beer → "bar"
                 Club, nightclub → "night_club"
                 Hotel, hostel, resort → "lodging"
-              - Set "keyword" to the specific term from the query (e.g. "ramen", "rooftop bar", "coffee shop"). Omit "keyword" if the query has no specific term beyond the type.
+              - Set "keyword" by combining the user's dietary/cuisine preferences (if provided) with the query term. User preferences always apply: "I only eat omakase" + "dinner" → "omakase dinner". "I'm vegetarian" + "lunch" → "vegetarian lunch". If only preferences exist, use them alone as keyword. Omit "keyword" only if neither the message nor preferences provide a specific term.
               - Add "opennow": true only if the query explicitly asks for currently open places.
               - If the query has no venue or cuisine signal → empty dict {{}}.
 
@@ -123,25 +123,20 @@ class IntentParser:
             Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "restaurant"}}}}"""
         )
 
-        # Inject user memories as context (ADR-010, ADR-044: XML-wrapped for safety)
+        # Build user message with memories injected (ADR-010, ADR-044)
+        # Memories go in the user message, not system prompt, because Instructor
+        # uses function calling mode where the model extracts from user content.
         if user_memories:
-            memories_xml = "\n".join(
-                f"    <memory>{mem}</memory>" for mem in user_memories
-            )
-            system_prompt += f"""\n
-            <user_context>
-            <memories>
-            {memories_xml}
-            </memories>
-            </user_context>
-
-            Consider these user facts when interpreting the query. Use them to enhance intent parsing (e.g., if the user is vegetarian, infer dietary preferences from their query). Never contradict or reference the facts directly in the output — only use them to improve interpretation.
-            """
+            memories_text = ", ".join(f'"{m}"' for m in user_memories)
+            user_content = f"User preferences: [{memories_text}]\n\nQuery: {query}"
+        else:
+            user_content = query
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query},
+            {"role": "user", "content": user_content},
         ]
+
 
         generation = None
         if lf:

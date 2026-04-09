@@ -93,9 +93,11 @@ class ConsultService:
         """
         # Load user memories for context injection (ADR-010)
         user_memories = await self._memory.load_memories(user_id)
+        logger.info("Loaded %d memories for user %s", len(user_memories), user_id)
 
         # Step 1: Parse intent from query with user context, then resolve search location
         intent = await self._intent_parser.parse(query, user_memories=user_memories)
+        logger.info("Parsed intent for user %s: %s", user_id, intent.model_dump())
 
         if intent.search_location_name:
             intent.search_location = await self._places_client.geocode(
