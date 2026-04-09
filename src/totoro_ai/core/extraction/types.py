@@ -73,6 +73,8 @@ class ExtractionResult:
     corroborated: bool
     external_provider: str | None
     external_id: str | None
+    lat: float | None = None
+    lng: float | None = None
 
 
 @dataclass

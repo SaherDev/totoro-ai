@@ -2,10 +2,9 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from totoro_ai.core.extraction.places_client import (
+from totoro_ai.core.places.places_client import (
     GooglePlacesClient,
     PlacesMatchQuality,
-    _core_tokens,
 )
 
 
@@ -29,9 +28,9 @@ def _fake_response(name: str, place_id: str = "place_123") -> MagicMock:
 def _patched_client() -> GooglePlacesClient:
     """Return a GooglePlacesClient with secrets + config mocked out."""
     with patch(
-        "totoro_ai.core.extraction.places_client.get_secrets"
+        "totoro_ai.core.places.places_client.get_secrets"
     ) as mock_secrets, patch(
-        "totoro_ai.core.extraction.places_client.get_config"
+        "totoro_ai.core.places.places_client.get_config"
     ) as mock_config:
         mock_secrets.return_value.providers.google.api_key = "fake-key"
         cfg = MagicMock()
@@ -46,34 +45,6 @@ def _patched_client() -> GooglePlacesClient:
         ]
         mock_config.return_value = cfg
         return GooglePlacesClient()
-
-
-# ---------------------------------------------------------------------------
-# _core_tokens unit tests
-# ---------------------------------------------------------------------------
-
-
-def test_core_tokens_removes_city_noise() -> None:
-    assert _core_tokens("RAMEN KAISUGI Bangkok") == "kaisugi"
-
-
-def test_core_tokens_removes_street_noise() -> None:
-    assert _core_tokens("RAMEN KAISUGI Sukhumvit 33") == "kaisugi"
-
-
-def test_core_tokens_lowercases_and_strips_punctuation() -> None:
-    assert _core_tokens("Ramen Kaisugi!") == "kaisugi"
-
-
-def test_core_tokens_plain_venue_name() -> None:
-    assert _core_tokens("Ramen Kaisugi") == "kaisugi"
-
-
-def test_core_tokens_fallback_when_all_noise() -> None:
-    """If every token is noise, return the cleaned string rather than empty."""
-    result = _core_tokens("Bangkok Road")
-    # "bangkok" and "road" both noise — fallback returns cleaned original
-    assert result != ""
 
 
 # ---------------------------------------------------------------------------

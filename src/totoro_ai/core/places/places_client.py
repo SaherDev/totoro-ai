@@ -1,9 +1,9 @@
-"""Google Places API client for place validation."""
+"""Google Places API client for place validation and discovery."""
 
 import difflib
 import re
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 from pydantic import BaseModel
@@ -47,7 +47,7 @@ class PlacesMatchResult(BaseModel):
 
 
 class PlacesClient(Protocol):
-    """Protocol for place validation against an external database."""
+    """Protocol for place validation, discovery, and validation against external database."""
 
     async def validate_place(
         self, name: str, location: str | None = None
@@ -55,9 +55,35 @@ class PlacesClient(Protocol):
         """Validate a place name and return match result."""
         ...
 
+    async def discover(
+        self, search_location: dict[str, float], filters: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Discover places near a location using Nearby Search.
+
+        Args:
+            search_location: {"lat": float, "lng": float}
+            filters: {"opennow": bool, "type": str, "keyword": str, ...}
+
+        Returns:
+            List of place result dicts from Google Places API
+        """
+        ...
+
+    async def validate(self, candidate: Any, filters: dict[str, Any]) -> bool:
+        """Validate a candidate place against filter constraints.
+
+        Args:
+            candidate: Candidate object with lat, lng, place_id, place_name
+            filters: {"opennow": bool, ...}
+
+        Returns:
+            True if candidate passes all constraints, False otherwise
+        """
+        ...
+
 
 class GooglePlacesClient:
-    """Google Places API client for place validation (ADR-022)."""
+    """Google Places API client for place validation, discovery, and validation (ADR-049, ADR-022)."""
 
     def __init__(self) -> None:
         """Initialize with API key from config."""
@@ -146,3 +172,84 @@ class GooglePlacesClient:
             lng=location_data.get("lng"),
             place_types=first_match.get("types", []),
         )
+
+    async def discover(
+        self, search_location: dict[str, float], filters: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """
+        Discover places near a location using Google Places Nearby Search.
+
+        Args:
+            search_location: {"lat": float, "lng": float}
+            filters: {"opennow": bool, "type": str, "keyword": str, ...}
+
+        Returns:
+            List of place result dicts from Google Places API
+
+        """
+        config = get_config()
+        places_config = config.external_services.google_places
+
+        # Build request parameters
+        params: dict[str, Any] = {
+            "location": f"{search_location['lat']},{search_location['lng']}",
+            "key": self.api_key,
+        }
+
+        # Add radius — fallback to config default if not in filters
+        params["radius"] = filters.get("radius") or get_config().consult.radius_defaults.default
+
+        # Add open_now if present
+        if filters.get("opennow"):
+            params["opennow"] = "true"
+
+        # Add type if present
+        if "type" in filters:
+            params["type"] = filters["type"]
+
+        # Add keyword if present
+        if "keyword" in filters:
+            params["keyword"] = filters["keyword"]
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    places_config.nearbysearch_url,
+                    params=params,
+                    timeout=places_config.timeout_seconds,
+                )
+                response.raise_for_status()
+            except (httpx.HTTPError, httpx.TimeoutException) as e:
+                raise RuntimeError(f"Google Places Nearby Search API error: {e}") from e
+
+        data = response.json()
+        return data.get("results", [])
+
+    async def validate(self, candidate: Any, filters: dict[str, Any]) -> bool:
+        """
+        Validate a candidate place against filter constraints.
+
+        Currently supports: opennow constraint via Nearby Search.
+
+        Args:
+            candidate: Candidate object with lat, lng, place_id, place_name
+            filters: {"opennow": bool, ...}
+
+        Returns:
+            True if candidate passes all constraints, False otherwise
+
+        """
+        # If no constraints, candidate passes
+        if not filters:
+            return True
+
+        # If opennow is required, re-query the Nearby Search to verify
+        if filters.get("opennow"):
+            results = await self.discover(
+                {"lat": candidate.lat, "lng": candidate.lng},
+                {"opennow": True, "keyword": candidate.place_name},
+            )
+            # Check if this place_id appears in the opennow results
+            return any(r.get("place_id") == candidate.place_id for r in results)
+
+        return True

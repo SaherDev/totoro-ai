@@ -74,7 +74,10 @@ class RecallService:
                 address=row["address"],
                 cuisine=row["cuisine"],
                 price_range=row["price_range"],
+                lat=row["lat"],
+                lng=row["lng"],
                 source_url=row["source_url"],
+                external_id=row["external_id"],
                 saved_at=row["saved_at"],
                 match_reason=row["match_reason"],
             )

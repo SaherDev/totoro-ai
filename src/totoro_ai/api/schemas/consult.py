@@ -1,6 +1,6 @@
 """Request and response schemas for POST /v1/consult endpoint."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class Location(BaseModel):
@@ -16,7 +16,6 @@ class ConsultRequest(BaseModel):
     user_id: str
     query: str
     location: Location | None = None
-    stream: bool = False
 
 
 class PlaceResult(BaseModel):
@@ -26,7 +25,7 @@ class PlaceResult(BaseModel):
     address: str
     reasoning: str
     source: str  # "saved" | "discovered"
-    photos: list[str] = Field(min_length=1)
+    photos: list[str] = []
 
 
 class ReasoningStep(BaseModel):

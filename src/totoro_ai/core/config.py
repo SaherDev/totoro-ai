@@ -149,6 +149,7 @@ class ExternalServiceConfig(BaseModel):
 
 
 class GooglePlacesConfig(ExternalServiceConfig):
+    nearbysearch_url: str = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
     request_fields: list[str] = ["name", "formatted_address", "place_id", "geometry"]
     default_region: str = "th"
 
@@ -175,10 +176,21 @@ class SystemPromptsConfig(BaseModel):
     )
 
 
+class RadiusDefaultsConfig(BaseModel):
+    """Default radius values for intent parsing (in metres)."""
+
+    default: int
+    nearby: int
+    walking: int
+
+
 class ConsultConfig(BaseModel):
     max_alternatives: int = 2
     placeholder_photo_url: str = "https://placehold.co/800x450.webp"
     response_timeout_seconds: int = 10
+    radius_defaults: RadiusDefaultsConfig = RadiusDefaultsConfig(
+        default=2000, nearby=1000, walking=500
+    )
 
 
 class RecallConfig(BaseModel):
@@ -243,6 +255,7 @@ class RankingWeightsConfig(BaseModel):
     distance: float
     price_fit: float
     popularity: float
+    source_boost: float = 0.15
 
 
 class RankingConfig(BaseModel):

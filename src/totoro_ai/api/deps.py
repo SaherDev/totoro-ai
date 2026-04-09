@@ -6,6 +6,7 @@ from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
+from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
 from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
@@ -13,6 +14,9 @@ from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
+from totoro_ai.core.intent.intent_parser import IntentParser
+from totoro_ai.core.places import GooglePlacesClient
+from totoro_ai.core.ranking.service import RankingService
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
@@ -103,8 +107,8 @@ async def get_event_dispatcher(
     from totoro_ai.core.extraction.handlers.extraction_pending import (
         ExtractionPendingHandler,
     )
-    from totoro_ai.core.extraction.places_client import GooglePlacesClient
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
+    from totoro_ai.core.places import GooglePlacesClient
 
     pending_persistence = ExtractionPersistenceService(
         place_repo=SQLAlchemyPlaceRepository(db_session),
@@ -158,7 +162,7 @@ def get_extraction_persistence(
     )
 
 
-def _make_enrichment_pipeline() -> "EnrichmentPipeline":
+def _make_enrichment_pipeline() -> EnrichmentPipeline:
     """Build EnrichmentPipeline with singleton circuit breaker instances."""
     from totoro_ai.core.extraction.circuit_breaker import (
         CircuitBreakerEnricher,
@@ -183,10 +187,10 @@ def _make_enrichment_pipeline() -> "EnrichmentPipeline":
 
 
 # Module-level singleton so circuit breaker state persists across requests.
-_enrichment_pipeline: "EnrichmentPipeline | None" = None
+_enrichment_pipeline: EnrichmentPipeline | None = None
 
 
-def _get_enrichment_pipeline() -> "EnrichmentPipeline":
+def _get_enrichment_pipeline() -> EnrichmentPipeline:
     global _enrichment_pipeline
     if _enrichment_pipeline is None:
         _enrichment_pipeline = _make_enrichment_pipeline()
@@ -201,9 +205,9 @@ def get_extraction_pipeline(
     from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
     from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
     from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
-    from totoro_ai.core.extraction.places_client import GooglePlacesClient
     from totoro_ai.core.extraction.protocols import Enricher
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
+    from totoro_ai.core.places import GooglePlacesClient
 
     enrichment = _get_enrichment_pipeline()
     validator = GooglePlacesValidator(
@@ -250,4 +254,26 @@ async def get_recall_service(
         embedder=get_embedder(),
         recall_repo=SQLAlchemyRecallRepository(db_session),
         config=config.recall,
+    )
+
+
+async def get_consult_service(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+    config: AppConfig = Depends(get_config),  # noqa: B008
+) -> ConsultService:
+    """FastAPI dependency providing a fully wired ConsultService.
+
+    Wires the 6-step pipeline dependencies: intent parser, recall service,
+    places client, taste model service, and ranking service.
+    """
+    return ConsultService(
+        intent_parser=IntentParser(),
+        recall_service=RecallService(
+            embedder=get_embedder(),
+            recall_repo=SQLAlchemyRecallRepository(db_session),
+            config=config.recall,
+        ),
+        places_client=GooglePlacesClient(),
+        taste_service=TasteModelService(session=db_session),
+        ranking_service=RankingService(),
     )

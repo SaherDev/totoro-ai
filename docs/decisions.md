@@ -15,6 +15,26 @@ Format:
 
 ---
 
+## ADR-050: LangGraph parallelization deferred to Phase 4
+
+**Date:** 2026-04-09\
+**Status:** accepted\
+**Context:** The consult pipeline consists of six sequential steps: intent parsing, retrieve saved, discover external, validate (conditional), rank, and build response. ADR-009 proposes parallelizing Steps 2 and 3 (retrieval and discovery) via LangGraph branches. Implementing this now adds complexity (graph definition, parallel branch orchestration, result merging) without measurable latency benefit — both steps run in milliseconds, far below user perception threshold (~200ms). The Phase 3 scope must remain tight to ship the full six-step pipeline with all conflict resolutions (C1–C10).\
+**Decision:** Implement the six-step pipeline sequentially in Phase 3. Steps 2 and 3 run one after the other, not in parallel. If user-facing latency becomes a concern post-launch or in Phase 4 latency profiling, implement LangGraph branches per ADR-009 without changing the public API, ConsultService logic, or response contract. The sequential implementation is correct and produces identical results; parallelization is a pure optimization.\
+**Consequences:** Phase 3 deliverable ships without LangGraph. The sequential pipeline remains the default behavior. Future Phase 4 optimization gates on measured latency data, not speculative performance concerns. ConsultService.consult() method signature and logic remain stable across sequential and parallel implementations.
+
+---
+
+## ADR-049: PlacesClient Protocol move from extraction to places module
+
+**Date:** 2026-04-09\
+**Status:** accepted\
+**Context:** PlacesClient Protocol was defined in core/extraction/places_client.py with only validate_place(name, location) method, serving extraction's place validation use case. The consult pipeline (Phase 3) requires two additional methods: discover(search_location, filters) for Google Places Nearby Search and validate(candidate, filters) for conditional validation of saved candidates. The Protocol should encompass all three methods. Additionally, placing the Protocol in extraction creates coupling — ConsultService should not depend on extraction module. A dedicated places module establishes a clear abstraction boundary and enables future place-related logic (taste model, place caching) to depend on places without extraction coupling.\
+**Decision:** Create core/places/ module with __init__.py. Move PlacesClient Protocol and GooglePlacesClient from core/extraction/places_client.py to core/places/places_client.py. Extend PlacesClient Protocol with discover(search_location: dict, filters: dict) -> list[dict] and validate(candidate: Candidate, filters: dict) -> bool. Implement both methods on GooglePlacesClient. Update all imports in core/extraction/ files that referenced the old path. ConsultService imports from core/places only.\
+**Consequences:** core/extraction/ no longer owns the places abstraction. ConsultService depends on core/places, not extraction, breaking the extraction coupling. The Protocol is now the contract for all place operations: validation (extraction), discovery (consult retrieval), and validation of saved candidates (consult conditional validation). Future place integrations (alternative providers, caching layers) depend on core/places and extend the Protocol.
+
+---
+
 ## ADR-048: Status polling endpoint for provisional extractions
 
 **Date:** 2026-04-07\
