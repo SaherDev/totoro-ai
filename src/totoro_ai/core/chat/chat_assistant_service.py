@@ -75,27 +75,17 @@ class ChatAssistantService:
             else None
         )
 
-        # Build system prompt with user context injection (ADR-044: XML-wrapped)
-        system_prompt = _SYSTEM_PROMPT
+        # Build user message with memories injected (ADR-010, ADR-044)
+        # Memories go in the user message for consistent behavior across models.
         if user_memories:
-            memories_xml = "\n".join(
-                f"    <memory>{mem}</memory>" for mem in user_memories
-            )
-            system_prompt += f"""\n
-<user_context>
-<memories>
-{memories_xml}
-</memories>
-</user_context>
-
-Consider these user facts when answering. Use them to tailor your advice \
-to their preferences and constraints. Never reference or contradict the \
-facts directly — only use them to provide more personalized guidance.
-"""
+            memories_text = ", ".join(f'"{m}"' for m in user_memories)
+            user_content = f"User preferences: [{memories_text}]\n\nQuestion: {message}"
+        else:
+            user_content = message
 
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": message},
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
         ]
 
         try:
