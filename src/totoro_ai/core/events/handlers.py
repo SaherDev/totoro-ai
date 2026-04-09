@@ -168,39 +168,19 @@ class EventHandlers:
 
         Skips if personal_facts is empty. Catches and logs all exceptions
         via Langfuse; never raises (per ADR-043: failures don't block responses).
-
-        CRITICAL: Creates a fresh async session for the background task because
-        the request's session is already closed by the time this handler runs.
-        Background tasks execute AFTER the HTTP response is sent.
         """
         if not event.personal_facts:
             return
 
         try:
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-            from totoro_ai.core.config import get_config, get_secrets
-            from totoro_ai.core.memory.repository import (
-                SQLAlchemyUserMemoryRepository,
-            )
-            from totoro_ai.core.memory.service import UserMemoryService
-            from totoro_ai.db.session import _get_engine
+            from totoro_ai.core.config import get_config
 
             config = get_config()
-
-            # Create fresh session for background task (request session is dead)
-            engine = _get_engine()
-            async_session_factory = async_sessionmaker(
-                engine, class_=AsyncSession, expire_on_commit=False
+            await self.memory_service.save_facts(
+                user_id=event.user_id,
+                facts=event.personal_facts,
+                confidence_config=config.memory.confidence,
             )
-            async with async_session_factory() as session:
-                repo = SQLAlchemyUserMemoryRepository(session)
-                service = UserMemoryService(repo=repo)
-                await service.save_facts(
-                    user_id=event.user_id,
-                    facts=event.personal_facts,
-                    confidence_config=config.memory.confidence,
-                )
 
             if self.langfuse:
                 self.langfuse.capture_message(

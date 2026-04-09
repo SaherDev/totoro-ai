@@ -49,8 +49,9 @@ class TestSQLAlchemyUserMemoryRepository:
     async def test_save_calls_execute(
         self, repo: SQLAlchemyUserMemoryRepository, mock_session: MagicMock
     ) -> None:
-        """save() calls session.execute() with insert statement."""
+        """save() calls session.execute() and flush() with insert statement."""
         mock_session.execute = AsyncMock()
+        mock_session.flush = AsyncMock()
 
         await repo.save(
             user_id="user-1",
@@ -60,6 +61,7 @@ class TestSQLAlchemyUserMemoryRepository:
         )
 
         mock_session.execute.assert_called_once()
+        mock_session.flush.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_load_success(
