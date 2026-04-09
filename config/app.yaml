@@ -19,6 +19,8 @@ app:
 providers:
   groq:
     base_url: https://api.groq.com
+  ollama:
+    base_url: http://localhost:11434/v1
 
 models:
   transcriber:
@@ -38,6 +40,7 @@ models:
     model: gpt-4o-mini
     max_tokens: 512
     temperature: 0
+  # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
 
   embedder:
     provider: voyage
@@ -55,6 +58,7 @@ models:
     model: gpt-4o-mini
     max_tokens: 256
     temperature: 0
+  # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
 
 # ---------------------------------------------------------------------------
 # Extraction pipeline — confidence weights and decision thresholds

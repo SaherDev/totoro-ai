@@ -263,6 +263,9 @@ class AppProvidersConfig(BaseModel):
     groq: ProviderEndpointConfig = ProviderEndpointConfig(
         base_url="https://api.groq.com"
     )
+    ollama: ProviderEndpointConfig = ProviderEndpointConfig(
+        base_url="http://localhost:11434/v1"
+    )
 
 
 class AppConfig(BaseModel):
