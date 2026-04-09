@@ -4,6 +4,7 @@ from fastapi import APIRouter, FastAPI
 from sqlalchemy import text
 
 from totoro_ai.api.errors import register_error_handlers
+from totoro_ai.api.routes.chat_assistant import router as chat_assistant_router
 from totoro_ai.api.routes.consult import router as consult_router
 from totoro_ai.api.routes.extract_place import router as extract_place_router
 from totoro_ai.api.routes.feedback import router as feedback_router
@@ -42,6 +43,7 @@ async def health() -> dict[str, str]:
 
 
 # Include routers
+router.include_router(chat_assistant_router, prefix="")
 router.include_router(consult_router, prefix="")
 router.include_router(extract_place_router, prefix="")
 router.include_router(feedback_router, prefix="")

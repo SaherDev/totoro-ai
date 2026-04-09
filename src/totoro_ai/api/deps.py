@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
 from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
@@ -33,6 +34,11 @@ from totoro_ai.providers.embeddings import EmbedderProtocol, get_embedder
 from totoro_ai.providers.groq_client import GroqWhisperClient
 from totoro_ai.providers.llm import get_vision_extractor
 from totoro_ai.providers.redis_cache import RedisCacheBackend
+
+
+def get_chat_assistant_service() -> ChatAssistantService:
+    """FastAPI dependency providing ChatAssistantService."""
+    return ChatAssistantService()
 
 
 def get_cache_backend() -> CacheBackend:
