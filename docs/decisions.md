@@ -15,6 +15,26 @@ Format:
 
 ---
 
+## ADR-053: This repo owns consult_logs table for AI recommendation history
+
+**Date:** 2026-04-09\
+**Status:** accepted\
+**Context:** Feature 017 needs to persist AI-generated recommendation history for feedback loops and taste model improvement. The product table `recommendations` is owned by NestJS (per Constitution Section VI and the two-repo boundary). Naming the new table `recommendations` would create a write-ownership conflict — two separate migration tools (Alembic and Prisma) would potentially manage the same table name in the same PostgreSQL instance.\
+**Decision:** This repo adds a `consult_logs` table (not `recommendations`) via Alembic. The table stores AI recommendation results: user_id, query, response (JSONB), intent, accepted (nullable), selected_place_id (nullable), created_at. NestJS continues to own its `recommendations` table via Prisma. The two tables serve different purposes and are never joined. ConsultService persists consult log records; write failures are logged and do not fail the caller response (FR-010).\
+**Consequences:** Zero write-ownership conflict. This repo's Alembic migrations remain isolated to AI data. NestJS Prisma migrations remain isolated to product data. Future taste model improvement pipelines read from consult_logs to derive feedback signals without depending on the NestJS recommendations table.
+
+---
+
+## ADR-052: Consolidate routes into routes/chat.py — supersedes ADR-018
+
+**Date:** 2026-04-09\
+**Status:** accepted\
+**Context:** Feature 017 introduces a unified `/v1/chat` entry point for all conversational API traffic. Prior to this change, each intent had its own route module: `routes/extract_place.py`, `routes/consult.py`, `routes/recall.py`, and `routes/chat_assistant.py`. ADR-018 mandated separate route modules per endpoint. With a single `/v1/chat` entry point, individual route modules are redundant — all routing is handled by `ChatService.run()` dispatching by classified intent.\
+**Decision:** `routes/chat.py` is the single route module for all conversational API traffic. The four individual route modules (`extract_place.py`, `consult.py`, `recall.py`, `chat_assistant.py`) are deleted. The feedback route (`routes/feedback.py`) is preserved unchanged. `routes/chat.py` depends on `ChatService` via `Depends(get_chat_service)`. ADR-018 is superseded by this decision.\
+**Consequences:** Four route modules are removed. The API surface for conversational requests shrinks to one endpoint: `POST /v1/chat`. The product repo must update its HTTP client to call `/v1/chat` instead of the four old endpoints. The `feedback` route remains at its existing path — this ADR does not affect it.
+
+---
+
 ## ADR-050: LangGraph parallelization deferred to Phase 4
 
 **Date:** 2026-04-09\

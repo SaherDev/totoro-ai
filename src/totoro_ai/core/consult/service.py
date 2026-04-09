@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from totoro_ai.api.schemas.consult import (
     ConsultResponse,
     Location,
@@ -19,6 +21,12 @@ from totoro_ai.core.ranking.service import RankingService
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.core.utils.geo import haversine_m
+from totoro_ai.db.repositories.consult_log_repository import (
+    ConsultLogRepository,
+    NullConsultLogRepository,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ConsultService:
@@ -31,6 +39,7 @@ class ConsultService:
     4. Validate saved candidates (conditional)
     5. Rank all candidates
     6. Build response with top 3 + reasoning steps
+    7. Persist consult log (write failure does not fail the response)
     """
 
     def __init__(
@@ -40,13 +49,19 @@ class ConsultService:
         places_client: PlacesClient,
         taste_service: TasteModelService,
         ranking_service: RankingService,
+        consult_log_repo: ConsultLogRepository | None = None,
     ) -> None:
-        """Initialize ConsultService with 5 dependencies (ADR-019)."""
+        """Initialize ConsultService with 5 required and 1 optional dependency (ADR-019)."""
         self._intent_parser = intent_parser
         self._recall_service = recall_service
         self._places_client = places_client
         self._taste_service = taste_service
         self._ranking_service = ranking_service
+        self._consult_log_repo: ConsultLogRepository = (
+            consult_log_repo
+            if consult_log_repo is not None
+            else NullConsultLogRepository()
+        )
 
     async def consult(
         self,
@@ -214,7 +229,9 @@ class ConsultService:
 
             # Filter all_candidates to only include validated saved or discovered
             deduplicated = [
-                c for c in deduplicated if c.source == "discovered" or c in valid_candidates
+                c
+                for c in deduplicated
+                if c.source == "discovered" or c in valid_candidates
             ]
         elif not validate_candidates:
             reasoning_steps.append(
@@ -250,7 +267,7 @@ class ConsultService:
 
         if not top_candidates:
             # No candidates available (empty state)
-            return ConsultResponse(
+            empty_response = ConsultResponse(
                 primary=PlaceResult(
                     place_name="No matches found",
                     address="",
@@ -261,6 +278,8 @@ class ConsultService:
                 alternatives=[],
                 reasoning_steps=reasoning_steps,
             )
+            await self._persist_consult_log(user_id, query, empty_response)
+            return empty_response
 
         # Map candidates to PlaceResult
         primary_result = self._candidate_to_place_result(top_candidates[0])
@@ -276,11 +295,38 @@ class ConsultService:
             )
         )
 
-        return ConsultResponse(
+        response = ConsultResponse(
             primary=primary_result,
             alternatives=alternatives_results,
             reasoning_steps=reasoning_steps,
         )
+
+        # Persist consult log (FR-010: write failures are logged, not propagated)
+        await self._persist_consult_log(user_id, query, response)
+
+        return response
+
+    async def _persist_consult_log(
+        self,
+        user_id: str,
+        query: str,
+        response: ConsultResponse,
+    ) -> None:
+        """Attempt to persist a consult log record. Failures are logged, not raised."""
+        try:
+            from totoro_ai.db.models import ConsultLog
+
+            log = ConsultLog(
+                user_id=user_id,
+                query=query,
+                response=response.model_dump(),
+                intent="consult",
+            )
+            await self._consult_log_repo.save(log)
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist consult log for user %s: %s", user_id, exc
+            )
 
     @staticmethod
     def _candidate_to_place_result(candidate: Candidate) -> PlaceResult:
@@ -301,7 +347,9 @@ class ConsultService:
         elif candidate.popularity_score >= 0.6:
             reasoning_parts.append("popular")
 
-        reasoning = ", ".join(reasoning_parts) if reasoning_parts else "Recommended for you"
+        reasoning = (
+            ", ".join(reasoning_parts) if reasoning_parts else "Recommended for you"
+        )
 
         return PlaceResult(
             place_name=candidate.place_name,

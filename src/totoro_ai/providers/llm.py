@@ -52,11 +52,15 @@ class OpenAIVisionExtractor:
         ]
 
         langfuse = get_langfuse_client()
-        generation = langfuse.generation(
-            name="vision_frames_enricher",
-            input={"frame_count": len(frames)},
-            model=self._model,
-        ) if langfuse else None
+        generation = (
+            langfuse.generation(
+                name="vision_frames_enricher",
+                input={"frame_count": len(frames)},
+                model=self._model,
+            )
+            if langfuse
+            else None
+        )
 
         try:
             response = await self._client.chat.completions.create(
@@ -318,6 +322,15 @@ def get_llm(role: str) -> LLMClientProtocol:
             base_url=get_config().providers.ollama.base_url,
         )
 
+    if provider == "groq":
+        return OpenAILLMClient(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            api_key=secrets.GROQ_API_KEY,
+            base_url=get_config().providers.groq.base_url + "/openai/v1",
+        )
+
     raise ValueError(f"Unsupported provider: {provider}")
 
 
@@ -372,4 +385,6 @@ def get_vision_extractor(role: str = "vision_frames") -> VisionExtractorProtocol
             api_key=secrets.OPENAI_API_KEY,
         )
 
-    raise ValueError(f"Unsupported provider for vision extractor: {role_config.provider}")
+    raise ValueError(
+        f"Unsupported provider for vision extractor: {role_config.provider}"
+    )

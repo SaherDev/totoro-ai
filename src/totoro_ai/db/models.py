@@ -1,9 +1,10 @@
 from datetime import datetime
 from enum import Enum as PyEnum
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -137,6 +138,29 @@ class InteractionLog(Base):
     )
     gain: Mapped[float] = mapped_column(Float, nullable=False)
     context: Mapped[dict] = mapped_column(JSONB, nullable=False)  # type: ignore[type-arg]
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ConsultLog(Base):
+    """Append-only record of AI consult recommendations (ADR-053).
+
+    Table owned by this repo (Alembic). Distinct from the NestJS 'recommendations'
+    table — see ADR-053 for write-ownership split.
+    """
+
+    __tablename__ = "consult_logs"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    response: Mapped[dict] = mapped_column(JSONB, nullable=False)  # type: ignore[type-arg]
+    intent: Mapped[str] = mapped_column(String, nullable=False)
+    accepted: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    selected_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

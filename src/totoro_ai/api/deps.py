@@ -6,6 +6,7 @@ from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
+from totoro_ai.core.chat.service import ChatService
 from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
@@ -26,6 +27,10 @@ from totoro_ai.db.repositories import (
     SQLAlchemyEmbeddingRepository,
     SQLAlchemyPlaceRepository,
     SQLAlchemyRecallRepository,
+)
+from totoro_ai.db.repositories.consult_log_repository import (
+    ConsultLogRepository,
+    SQLAlchemyConsultLogRepository,
 )
 from totoro_ai.db.session import get_session
 from totoro_ai.providers import get_instructor_client
@@ -103,7 +108,8 @@ async def get_event_dispatcher(
         handlers.on_recommendation_rejected,  # type: ignore[arg-type]
     )
     dispatcher.register_handler(
-        "onboarding_signal", handlers.on_onboarding_signal  # type: ignore[arg-type]
+        "onboarding_signal",
+        handlers.on_onboarding_signal,  # type: ignore[arg-type]
     )
 
     # Register ExtractionPendingHandler (Run 3 — inline construction, no circular dep)
@@ -128,9 +134,7 @@ async def get_event_dispatcher(
                 instructor_client=get_instructor_client("intent_parser"),
             ),
             WhisperAudioEnricher(
-                groq_client=GroqWhisperClient(
-                    api_key=get_secrets().GROQ_API_KEY or ""
-                ),
+                groq_client=GroqWhisperClient(api_key=get_secrets().GROQ_API_KEY or ""),
                 instructor_client=get_instructor_client("intent_parser"),
             ),
             VisionFramesEnricher(
@@ -147,7 +151,8 @@ async def get_event_dispatcher(
         ),
     )
     dispatcher.register_handler(
-        "extraction_pending", pending_handler.handle  # type: ignore[arg-type]
+        "extraction_pending",
+        pending_handler.handle,  # type: ignore[arg-type]
     )
 
     return dispatcher
@@ -225,9 +230,7 @@ def get_extraction_pipeline(
             instructor_client=get_instructor_client("intent_parser"),
         ),
         WhisperAudioEnricher(
-            groq_client=GroqWhisperClient(
-                api_key=get_secrets().GROQ_API_KEY or ""
-            ),
+            groq_client=GroqWhisperClient(api_key=get_secrets().GROQ_API_KEY or ""),
             instructor_client=get_instructor_client("intent_parser"),
         ),
         VisionFramesEnricher(vision_extractor=get_vision_extractor()),
@@ -263,14 +266,23 @@ async def get_recall_service(
     )
 
 
+def get_consult_log_repo(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> ConsultLogRepository:
+    """FastAPI dependency providing a fully wired ConsultLogRepository (ADR-053)."""
+    return SQLAlchemyConsultLogRepository(db_session)
+
+
 async def get_consult_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
     config: AppConfig = Depends(get_config),  # noqa: B008
+    consult_log_repo: ConsultLogRepository = Depends(get_consult_log_repo),  # noqa: B008
 ) -> ConsultService:
     """FastAPI dependency providing a fully wired ConsultService.
 
     Wires the 6-step pipeline dependencies: intent parser, recall service,
     places client, taste model service, and ranking service.
+    Also injects ConsultLogRepository for persistence (FR-010).
     """
     return ConsultService(
         intent_parser=IntentParser(),
@@ -282,4 +294,26 @@ async def get_consult_service(
         places_client=GooglePlacesClient(),
         taste_service=TasteModelService(session=db_session),
         ranking_service=RankingService(),
+        consult_log_repo=consult_log_repo,
+    )
+
+
+async def get_chat_service(
+    extraction_service: ExtractionService = Depends(get_extraction_service),  # noqa: B008
+    consult_service: ConsultService = Depends(get_consult_service),  # noqa: B008
+    recall_service: RecallService = Depends(get_recall_service),  # noqa: B008
+    assistant_service: ChatAssistantService = Depends(  # noqa: B008
+        get_chat_assistant_service
+    ),
+) -> ChatService:
+    """FastAPI dependency providing a fully wired ChatService (ADR-019, ADR-052).
+
+    Injects all four downstream services. ConsultService is responsible for
+    consult log persistence — ChatService holds no DB repository.
+    """
+    return ChatService(
+        extraction_service=extraction_service,
+        consult_service=consult_service,
+        recall_service=recall_service,
+        assistant_service=assistant_service,
     )

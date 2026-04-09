@@ -5,12 +5,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from totoro_ai.api.errors import LLMUnavailableError
-from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService, _SYSTEM_PROMPT
+from totoro_ai.core.chat.chat_assistant_service import (
+    ChatAssistantService,
+)
 
 
-@patch("totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None)
+@patch(
+    "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None
+)
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
-async def test_run_happy_path(mock_get_llm: MagicMock, mock_langfuse: MagicMock) -> None:
+async def test_run_happy_path(
+    mock_get_llm: MagicMock, mock_langfuse: MagicMock
+) -> None:
     """Service returns the LLM response string on success."""
     mock_llm = AsyncMock()
     mock_llm.complete.return_value = "Tokyo is outstanding for food."
@@ -23,7 +29,9 @@ async def test_run_happy_path(mock_get_llm: MagicMock, mock_langfuse: MagicMock)
     mock_llm.complete.assert_called_once()
 
 
-@patch("totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None)
+@patch(
+    "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None
+)
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
 async def test_run_llm_failure_raises_llm_unavailable_error(
     mock_get_llm: MagicMock, mock_langfuse: MagicMock
@@ -63,7 +71,9 @@ async def test_run_tracks_langfuse_generation(mock_get_llm: MagicMock) -> None:
     mock_generation.end.assert_called_once()
 
 
-@patch("totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None)
+@patch(
+    "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None
+)
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
 async def test_system_prompt_passed_to_llm(
     mock_get_llm: MagicMock, mock_langfuse: MagicMock
