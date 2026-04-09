@@ -100,8 +100,11 @@ class ConsultService:
         logger.info("Parsed intent for user %s: %s", user_id, intent.model_dump())
 
         if intent.search_location_name:
+            location_bias = (
+                {"lat": location.lat, "lng": location.lng} if location else None
+            )
             intent.search_location = await self._places_client.geocode(
-                intent.search_location_name
+                intent.search_location_name, location_bias=location_bias
             )
         if intent.search_location is None and location:
             intent.search_location = {"lat": location.lat, "lng": location.lng}
@@ -154,11 +157,15 @@ class ConsultService:
         # Step 3: Discover external candidates via Google Places API
         discovered_candidates: list[Candidate] = []
 
+        # Use enriched_query as Google Places keyword (includes memory context)
+        discovery_filters = dict(intent.discovery_filters)
+        discovery_filters["keyword"] = intent.enriched_query or query
+
         if intent.search_location:
             try:
                 discovery_results = await self._places_client.discover(
                     intent.search_location,
-                    intent.discovery_filters | {"radius": intent.radius},
+                    discovery_filters | {"radius": intent.radius},
                 )
 
                 external_mapper = ExternalCandidateMapper()

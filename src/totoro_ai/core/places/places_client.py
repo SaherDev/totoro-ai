@@ -81,8 +81,16 @@ class PlacesClient(Protocol):
         """
         ...
 
-    async def geocode(self, place_name: str) -> dict[str, float] | None:
+    async def geocode(
+        self,
+        place_name: str,
+        location_bias: dict[str, float] | None = None,
+    ) -> dict[str, float] | None:
         """Resolve a place name to coordinates.
+
+        Args:
+            place_name: Place name to geocode
+            location_bias: Optional {'lat': float, 'lng': float} to bias results
 
         Returns:
             {'lat': float, 'lng': float} or None if not found or on failure
@@ -233,26 +241,38 @@ class GooglePlacesClient:
         data = response.json()
         return data.get("results", [])
 
-    async def geocode(self, place_name: str) -> dict[str, float] | None:
+    async def geocode(
+        self,
+        place_name: str,
+        location_bias: dict[str, float] | None = None,
+    ) -> dict[str, float] | None:
         """Resolve a place name to coordinates using the Places Text Search API.
 
         Reuses the findplacefromtext endpoint — same URL and auth as validate_place.
+        When location_bias is provided, results are biased toward that area
+        (e.g., "Sukhumvit" resolves to Bangkok instead of Rayong).
         Returns {'lat': float, 'lng': float} or None on failure or no results.
         """
         config = get_config()
         places_config = config.external_services.google_places
 
+        params: dict[str, Any] = {
+            "input": place_name,
+            "inputtype": "textquery",
+            "fields": "geometry",
+            "key": self.api_key,
+            "region": places_config.default_region,
+        }
+        if location_bias:
+            params["locationbias"] = (
+                f"circle:50000@{location_bias['lat']},{location_bias['lng']}"
+            )
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     places_config.base_url,
-                    params={
-                        "input": place_name,
-                        "inputtype": "textquery",
-                        "fields": "geometry",
-                        "key": self.api_key,
-                        "region": places_config.default_region,
-                    },
+                    params=params,
                     timeout=places_config.timeout_seconds,
                 )
                 response.raise_for_status()

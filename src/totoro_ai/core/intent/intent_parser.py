@@ -107,7 +107,7 @@ class IntentParser:
                 Bar, pub, beer → "bar"
                 Club, nightclub → "night_club"
                 Hotel, hostel, resort → "lodging"
-              - Set "keyword" from user preferences and query. If user preferences contain a specific cuisine or dietary term (e.g. "omakase", "vegetarian", "halal"), use that as the keyword — do NOT combine it with generic meal words like "dinner", "lunch", "food". Only combine if the query adds a specific term (e.g. preference "halal" + query "ramen" → "halal ramen"). Omit "keyword" only if neither preferences nor query provide a specific term.
+              - Do NOT set "keyword" in discovery_filters. The keyword is handled separately via enriched_query.
               - Add "opennow": true only if the query explicitly asks for currently open places.
               - If the query has no venue or cuisine signal → empty dict {{}}.
 
@@ -115,16 +115,16 @@ class IntentParser:
 
             Examples:
             Query: "cheap ramen nearby"
-            Output: {{"occasion": null, "price_range": "low", "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "cheap ramen nearby", "discovery_filters": {{"type": "restaurant", "keyword": "ramen"}}}}
+            Output: {{"occasion": null, "price_range": "low", "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "cheap ramen nearby", "discovery_filters": {{"type": "restaurant"}}}}
 
             Query: "nice dinner in Sukhumvit for a date"
-            Output: {{"occasion": "date night", "price_range": "high", "radius": null, "search_location_name": "Sukhumvit", "enriched_query": "nice dinner in Sukhumvit for a date", "discovery_filters": {{"type": "restaurant", "keyword": "dinner"}}}}
+            Output: {{"occasion": "date night", "price_range": "high", "radius": null, "search_location_name": "Sukhumvit", "enriched_query": "nice dinner in Sukhumvit for a date", "discovery_filters": {{"type": "restaurant"}}}}
 
             Query: "somewhere to eat", preferences: ["I only eat omakase"]
-            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "enriched_query": "omakase restaurant", "discovery_filters": {{"type": "restaurant", "keyword": "omakase"}}}}
+            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "enriched_query": "omakase restaurant", "discovery_filters": {{"type": "restaurant"}}}}
 
             Query: "dinner nearby", preferences: ["I'm vegetarian", "I eat late"]
-            Output: {{"occasion": "dinner", "price_range": null, "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "vegetarian dinner nearby", "discovery_filters": {{"type": "restaurant", "keyword": "vegetarian"}}}}"""
+            Output: {{"occasion": "dinner", "price_range": null, "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "vegetarian dinner nearby", "discovery_filters": {{"type": "restaurant"}}}}"""
         )
 
         # Build user message with memories injected (ADR-010, ADR-044)
