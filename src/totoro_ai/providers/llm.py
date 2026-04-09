@@ -216,6 +216,7 @@ class InstructorClient:
         model: str,
         api_key: str | None = None,
         base_url: str | None = None,
+        mode: instructor.Mode = instructor.Mode.TOOLS,
     ) -> None:
         """Initialize Instructor client with OpenAI backend.
 
@@ -223,10 +224,12 @@ class InstructorClient:
             model: Model name (e.g., 'gpt-4o-mini')
             api_key: OpenAI API key (uses env if None)
             base_url: Override base URL (e.g., for Ollama's OpenAI-compatible endpoint)
+            mode: Instructor extraction mode. Use Mode.JSON for models that don't
+                  support tool calls (e.g., Ollama local models).
         """
         self._model = model
         self._openai_client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
-        self._client = instructor.from_openai(self._openai_client)
+        self._client = instructor.from_openai(self._openai_client, mode=mode)
 
     async def extract(
         self,
@@ -346,6 +349,7 @@ def get_instructor_client(role: str) -> InstructorClient:
             model=role_config.model,
             base_url=get_config().providers.ollama.base_url,
             api_key="ollama",
+            mode=instructor.Mode.JSON,
         )
 
     return InstructorClient(

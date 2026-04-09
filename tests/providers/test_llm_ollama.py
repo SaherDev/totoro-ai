@@ -63,10 +63,12 @@ def test_get_llm_returns_openai_client_for_ollama_provider() -> None:
 
 
 def test_get_instructor_client_returns_instructor_for_ollama_provider() -> None:
-    """get_instructor_client('intent_parser') with provider=ollama returns InstructorClient."""
+    """get_instructor_client('intent_parser') with provider=ollama returns InstructorClient with JSON mode."""
+    import instructor as _instructor
     cfg = _mock_config("ollama", "gemma4:e2b")
     with patch("totoro_ai.providers.llm.get_config", return_value=cfg), \
          patch("totoro_ai.providers.llm.get_secrets"):
         client = get_instructor_client("intent_parser")
     assert isinstance(client, InstructorClient)
     assert client._openai_client.base_url.host == "localhost"
+    assert client._client.mode == _instructor.Mode.JSON
