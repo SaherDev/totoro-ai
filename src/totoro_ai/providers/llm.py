@@ -174,11 +174,12 @@ class OpenAILLMClient:
         max_tokens: int = 1024,
         temperature: float = 1.0,
         api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         self._model = model
         self._max_tokens = max_tokens
         self._temperature = temperature
-        self._client = openai.AsyncOpenAI(api_key=api_key)
+        self._client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     async def complete(self, messages: list[dict[str, str]]) -> str:
         typed = cast(list[ChatCompletionMessageParam], messages)
@@ -210,15 +211,21 @@ class OpenAILLMClient:
 class InstructorClient:
     """Instructor-patched OpenAI client for structured extraction (ADR-020)."""
 
-    def __init__(self, model: str, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
         """Initialize Instructor client with OpenAI backend.
 
         Args:
             model: Model name (e.g., 'gpt-4o-mini')
             api_key: OpenAI API key (uses env if None)
+            base_url: Override base URL (e.g., for Ollama's OpenAI-compatible endpoint)
         """
         self._model = model
-        self._openai_client = openai.AsyncOpenAI(api_key=api_key)
+        self._openai_client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self._client = instructor.from_openai(self._openai_client)
 
     async def extract(
@@ -299,6 +306,15 @@ def get_llm(role: str) -> LLMClientProtocol:
             api_key=secrets.providers.openai.api_key,
         )
 
+    if provider == "ollama":
+        return OpenAILLMClient(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            api_key="ollama",
+            base_url=get_config().providers.ollama.base_url,
+        )
+
     raise ValueError(f"Unsupported provider: {provider}")
 
 
@@ -320,9 +336,16 @@ def get_instructor_client(role: str) -> InstructorClient:
     """
     role_config = get_config().models[role]
 
-    if role_config.provider != "openai":
+    if role_config.provider not in ("openai", "ollama"):
         raise ValueError(
-            f"Instructor only supports OpenAI provider, got: {role_config.provider}"
+            f"Instructor only supports openai/ollama providers, got: {role_config.provider}"
+        )
+
+    if role_config.provider == "ollama":
+        return InstructorClient(
+            model=role_config.model,
+            base_url=get_config().providers.ollama.base_url,
+            api_key="ollama",
         )
 
     return InstructorClient(
