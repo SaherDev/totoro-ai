@@ -1,6 +1,6 @@
 """Request and response schemas for POST /v1/consult endpoint."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class Location(BaseModel):

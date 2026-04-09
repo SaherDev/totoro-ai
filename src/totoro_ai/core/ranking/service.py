@@ -1,5 +1,4 @@
 import math
-from typing import Any
 
 from totoro_ai.core.config import get_config
 from totoro_ai.core.consult.types import Candidate

@@ -86,9 +86,9 @@ class ConsultService:
         saved_candidates: list[Candidate] = []
 
         if recall_results.results:
-            mapper = RecallResultToCandidateMapper()
+            saved_mapper = RecallResultToCandidateMapper()
             for recall_result in recall_results.results:
-                candidate = mapper.map(recall_result)
+                candidate = saved_mapper.map(recall_result)
 
                 # Apply intent filters (cuisine, price_range, radius)
                 if intent.cuisine and candidate.cuisine:
@@ -129,9 +129,9 @@ class ConsultService:
                     intent.discovery_filters | {"radius": intent.radius},
                 )
 
-                mapper = ExternalCandidateMapper()
+                external_mapper = ExternalCandidateMapper()
                 for google_result in discovery_results:
-                    candidate = mapper.map(google_result)
+                    candidate = external_mapper.map(google_result)
 
                     # Compute distance from search_location
                     if candidate.lat and candidate.lng:
@@ -151,12 +151,12 @@ class ConsultService:
                         summary=f"Found {len(discovered_candidates)} external candidates via Google Places",
                     )
                 )
-            except RuntimeError as e:
+            except RuntimeError:
                 # External provider failure: graceful fallback to saved candidates only
                 reasoning_steps.append(
                     ReasoningStep(
                         step="discovery",
-                        summary=f"External discovery skipped (provider unavailable)",
+                        summary="External discovery skipped (provider unavailable)",
                     )
                 )
         else:
