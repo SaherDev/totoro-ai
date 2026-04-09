@@ -1,6 +1,6 @@
 """Intent extraction from natural language queries using Instructor."""
 
-from typing import cast
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -26,10 +26,26 @@ class ParsedIntent(BaseModel):
     specified."""
 
     radius: int | None = None
-    """Preferred search radius in meters, or None if not specified."""
+    """Preferred search radius in meters (inferred from proximity signals like
+    'nearby', 'walking distance'). LLM returns null when no radius signal
+    detected; falls back to config default."""
 
     constraints: list[str] = []
     """Dietary, access, or other requirements (empty list if none)."""
+
+    validate_candidates: bool = False
+    """True if query signals validation is needed (e.g., 'open now', 'open tonight')."""
+
+    discovery_filters: dict[str, Any] = {}
+    """Filters to pass to PlacesClient.discover() (e.g., opennow, type, keyword)."""
+
+    search_location: dict[str, float] | None = None
+    """Resolved search location as {'lat': float, 'lng': float}, or None if
+    no location signal and request location not provided. Resolution sources:
+    - Request location (if provided)
+    - Geocoded city/neighborhood (if query names a destination)
+    - Geocoded street address (if query contains an address)
+    """
 
 
 class IntentParser:
@@ -39,14 +55,22 @@ class IntentParser:
         """Initialize IntentParser with Instructor client for schema extraction."""
         self._client = get_instructor_client("intent_parser")
 
-    async def parse(self, query: str) -> ParsedIntent:
+    async def parse(
+        self, query: str, location: dict[str, float] | None = None
+    ) -> ParsedIntent:
         """Extract structured intent from a raw natural language query.
 
         Uses GPT-4o-mini via Instructor for reliable structured extraction.
+        Resolves search_location from:
+        1. Request location (if provided)
+        2. Location signal in query (resolved via geocoding if present)
+        3. None (if neither source available)
+
         Pydantic validation automatically enforces schema constraints.
 
         Args:
             query: Raw natural language query from user
+            location: Optional location dict from request as {'lat': float, 'lng': float}
 
         Returns:
             ParsedIntent with extracted fields (null if not mentioned)
@@ -57,12 +81,32 @@ class IntentParser:
         """
         lf = get_langfuse_client()
 
+        from totoro_ai.core.config import get_config
+
+        config = get_config()
+        radius_defaults = config.consult.radius_defaults
+
         system_prompt = (
-            "You are an intent extraction assistant. Extract structured "
-            "intent from place recommendation queries (restaurants, clubs, "
-            "bars, etc.). Extract cuisine (e.g., ramen, pizza) and/or "
-            "venue_type (e.g., club, bar, lounge, cafe). "
-            "Return null for fields not mentioned."
+            f"You are an intent extraction assistant. Extract structured "
+            f"intent from place recommendation queries. "
+            f"\n"
+            f"Extract: cuisine (e.g., ramen, pizza), venue_type (e.g., club, bar), "
+            f"occasion (e.g., date night), price_range (low/mid/high), and radius in metres. "
+            f"\n"
+            f"Radius inference:"
+            f"- Detect proximity signals in any language: 'nearby', 'walking distance', "
+            f"'قريب مني' (close to me in Arabic), '附近' (nearby in Chinese), etc."
+            f"- 'nearby' → {radius_defaults.nearby}m"
+            f"- 'walking distance' → {radius_defaults.walking}m"
+            f"- No proximity signal → return null (fallback to {radius_defaults.default}m)"
+            f"\n"
+            f"Extract validate_candidates (true if query signals live validation like "
+            f"'open now', 'open tonight'). "
+            f"\n"
+            f"Extract discovery_filters (dict to pass to place discovery API with keys like "
+            f"'opennow', 'type', 'keyword'). "
+            f"\n"
+            f"Return null for fields not mentioned."
         )
 
         messages = [
@@ -88,6 +132,13 @@ class IntentParser:
                     messages=messages,
                 ),
             )
+
+            # Set search_location: request location takes precedence
+            # TODO Phase 4: Implement location geocoding for query location signals
+            if location:
+                result.search_location = location
+            # If no request location, search_location stays None
+            # (ConsultService will handle graceful fallback)
 
             if generation:
                 generation.end(output=result.model_dump())

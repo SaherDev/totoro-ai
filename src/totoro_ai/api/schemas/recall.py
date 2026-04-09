@@ -20,6 +20,8 @@ class RecallResult(BaseModel):
     address: str
     cuisine: str | None = None
     price_range: str | None = None
+    lat: float | None = None
+    lng: float | None = None
     source_url: str | None = None
     saved_at: datetime = Field(description="When user saved this place")
     match_reason: str = Field(

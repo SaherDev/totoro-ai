@@ -123,6 +123,7 @@ extraction:
 external_services:
   google_places:
     base_url: https://maps.googleapis.com/maps/api/place/findplacefromtext/json
+    nearbysearch_url: https://maps.googleapis.com/maps/api/place/nearbysearch/json
     timeout_seconds: 5.0
     default_region: "th"
     request_fields:
@@ -147,12 +148,17 @@ recall:
   max_cosine_distance: 0.65
 
 # ---------------------------------------------------------------------------
-# Consult service configuration — Phase 2: structured output only
+# Consult service configuration — Phase 3: 6-step pipeline
+# ADR-049: PlacesClient moved to core/places
 # ---------------------------------------------------------------------------
 consult:
   max_alternatives: 2
   placeholder_photo_url: "https://placehold.co/800x450.webp"
   response_timeout_seconds: 10
+  radius_defaults:
+    default: 2000
+    nearby: 1000
+    walking: 500
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration

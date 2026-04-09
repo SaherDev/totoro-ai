@@ -13,6 +13,10 @@ from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
+from totoro_ai.core.consult.service import ConsultService
+from totoro_ai.core.intent.intent_parser import IntentParser
+from totoro_ai.core.places import GooglePlacesClient
+from totoro_ai.core.ranking.service import RankingService
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
@@ -103,7 +107,7 @@ async def get_event_dispatcher(
     from totoro_ai.core.extraction.handlers.extraction_pending import (
         ExtractionPendingHandler,
     )
-    from totoro_ai.core.extraction.places_client import GooglePlacesClient
+    from totoro_ai.core.places import GooglePlacesClient
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
 
     pending_persistence = ExtractionPersistenceService(
@@ -201,7 +205,7 @@ def get_extraction_pipeline(
     from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
     from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
     from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
-    from totoro_ai.core.extraction.places_client import GooglePlacesClient
+    from totoro_ai.core.places import GooglePlacesClient
     from totoro_ai.core.extraction.protocols import Enricher
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
 
@@ -250,4 +254,26 @@ async def get_recall_service(
         embedder=get_embedder(),
         recall_repo=SQLAlchemyRecallRepository(db_session),
         config=config.recall,
+    )
+
+
+async def get_consult_service(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+    config: AppConfig = Depends(get_config),  # noqa: B008
+) -> ConsultService:
+    """FastAPI dependency providing a fully wired ConsultService.
+
+    Wires the 6-step pipeline dependencies: intent parser, recall service,
+    places client, taste model service, and ranking service.
+    """
+    return ConsultService(
+        intent_parser=IntentParser(),
+        recall_service=RecallService(
+            embedder=get_embedder(),
+            recall_repo=SQLAlchemyRecallRepository(db_session),
+            config=config.recall,
+        ),
+        places_client=GooglePlacesClient(),
+        taste_service=TasteModelService(session=db_session),
+        ranking_service=RankingService(),
     )

@@ -21,6 +21,8 @@ class RecallRow(TypedDict):
     address: str
     cuisine: str | None
     price_range: str | None
+    lat: float | None
+    lng: float | None
     source_url: str | None
     saved_at: datetime
     match_reason: str
@@ -185,6 +187,8 @@ class SQLAlchemyRecallRepository:
                 p.address,
                 p.cuisine,
                 p.price_range,
+                p.lat,
+                p.lng,
                 p.source_url,
                 p.created_at AS saved_at,
                 CASE
@@ -233,6 +237,8 @@ class SQLAlchemyRecallRepository:
                 p.address,
                 p.cuisine,
                 p.price_range,
+                p.lat,
+                p.lng,
                 p.source_url,
                 p.created_at AS saved_at,
                 'Matched by name or cuisine (semantic unavailable)' AS match_reason

@@ -7,7 +7,7 @@ from typing import Protocol
 
 from totoro_ai.core.config import ConfidenceConfig
 from totoro_ai.core.extraction.confidence import calculate_confidence
-from totoro_ai.core.extraction.places_client import PlacesClient, PlacesMatchQuality
+from totoro_ai.core.places import PlacesClient, PlacesMatchQuality
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionResult,
