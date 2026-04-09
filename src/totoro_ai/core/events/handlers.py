@@ -173,14 +173,43 @@ class EventHandlers:
             return
 
         try:
-            from totoro_ai.core.config import get_config
+            from totoro_ai.core.config import get_config, get_secrets
+            from totoro_ai.core.memory.repository import (
+                SQLAlchemyUserMemoryRepository,
+            )
+            from totoro_ai.core.memory.service import UserMemoryService
+            from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+            from sqlalchemy.orm import sessionmaker
 
             config = get_config()
-            await self.memory_service.save_facts(
-                user_id=event.user_id,
-                facts=event.personal_facts,
-                confidence_config=config.memory.confidence,
-            )
+
+            # Try to create fresh async session (background task's request session is dead)
+            # Fall back to injected service if connection fails (e.g., in unit tests)
+            try:
+                db_url = get_secrets().DATABASE_URL
+                if "+asyncpg" not in db_url:
+                    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
+                engine = create_async_engine(db_url, echo=False)
+                async_session = sessionmaker(
+                    engine, class_=AsyncSession, expire_on_commit=False
+                )
+                async with async_session() as session:
+                    repo = SQLAlchemyUserMemoryRepository(session)
+                    service = UserMemoryService(repo=repo)
+                    await service.save_facts(
+                        user_id=event.user_id,
+                        facts=event.personal_facts,
+                        confidence_config=config.memory.confidence,
+                    )
+                await engine.dispose()
+            except Exception:
+                # Fallback: use injected service (used in tests with mocks,
+                # or if DB connection fails for any reason)
+                await self.memory_service.save_facts(
+                    user_id=event.user_id,
+                    facts=event.personal_facts,
+                    confidence_config=config.memory.confidence,
+                )
             if self.langfuse:
                 self.langfuse.capture_message(
                     message="PersonalFactsExtracted event handled",

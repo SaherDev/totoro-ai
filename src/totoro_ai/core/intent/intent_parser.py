@@ -82,7 +82,8 @@ class IntentParser:
         config = get_config()
         radius_defaults = config.consult.radius_defaults
 
-        system_prompt = textwrap.dedent(f"""\
+        system_prompt = textwrap.dedent(
+            f"""\
             Extract structured intent from a place recommendation query. Return a JSON object with these fields:
 
             - occasion: string or null. Why the user wants this place (e.g. "date night", "work lunch", "solo breakfast").
@@ -119,20 +120,23 @@ class IntentParser:
             Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": "Asok", "discovery_filters": {{"type": "bar"}}}}
 
             Query: "somewhere to eat"
-            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "restaurant"}}}}""")
+            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "discovery_filters": {{"type": "restaurant"}}}}"""
+        )
 
         # Inject user memories as context (ADR-010, ADR-044: XML-wrapped for safety)
         if user_memories:
-            memories_xml = "\n".join(f"    <memory>{mem}</memory>" for mem in user_memories)
+            memories_xml = "\n".join(
+                f"    <memory>{mem}</memory>" for mem in user_memories
+            )
             system_prompt += f"""\n
-<user_context>
-<memories>
-{memories_xml}
-</memories>
-</user_context>
+            <user_context>
+            <memories>
+            {memories_xml}
+            </memories>
+            </user_context>
 
-Consider these user facts when interpreting the query. Use them to enhance intent parsing (e.g., if the user is vegetarian, infer dietary preferences from their query). Never contradict or reference the facts directly in the output — only use them to improve interpretation.
-"""
+            Consider these user facts when interpreting the query. Use them to enhance intent parsing (e.g., if the user is vegetarian, infer dietary preferences from their query). Never contradict or reference the facts directly in the output — only use them to improve interpretation.
+            """
 
         messages = [
             {"role": "system", "content": system_prompt},
