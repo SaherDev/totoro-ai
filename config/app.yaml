@@ -60,6 +60,12 @@ models:
     temperature: 0
   # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
 
+  chat_assistant:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 1024
+    temperature: 0.9
+
 # ---------------------------------------------------------------------------
 # Extraction pipeline — confidence weights and decision thresholds
 # ADR-018, ADR-034: confidence scoring and two-phase confirmation

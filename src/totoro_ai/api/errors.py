@@ -4,11 +4,25 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 
+class LLMUnavailableError(Exception):
+    """Raised when an LLM call fails or times out (maps to HTTP 503)."""
+
+
 def register_error_handlers(app: FastAPI) -> None:
     """Register exception handlers on FastAPI app.
 
     Maps domain exceptions to HTTP status codes and error response bodies.
     """
+
+    @app.exception_handler(LLMUnavailableError)
+    def llm_unavailable_handler(
+        request: Request, exc: LLMUnavailableError
+    ) -> JSONResponse:
+        """Handle LLM failures → 503 Service Unavailable."""
+        return JSONResponse(
+            status_code=503,
+            content={"error_type": "llm_unavailable", "detail": str(exc)},
+        )
 
     @app.exception_handler(ValueError)
     def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
