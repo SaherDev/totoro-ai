@@ -113,7 +113,7 @@ class SQLAlchemyUserMemoryRepository:
             )
         )
         await self.db_session.execute(stmt)
-        await self.db_session.flush()
+        await self.db_session.commit()
 
     async def load(self, user_id: str) -> list[str]:
         """Load all stored memory strings for user_id, ordered by created_at ASC.
