@@ -171,7 +171,7 @@ class IntentParser:
                 generation.end(output=result.model_dump())
 
             return result
-        except Exception:
+        except Exception as exc:
             if generation:
-                generation.end(error=str(Exception))
+                generation.end(error=str(exc))
             raise
