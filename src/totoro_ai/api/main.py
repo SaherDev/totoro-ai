@@ -1,3 +1,4 @@
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 
 from fastapi import APIRouter, FastAPI
@@ -10,7 +11,10 @@ from totoro_ai.core.config import get_config
 from totoro_ai.db.session import _get_session_factory
 
 _app_meta = get_config().app
-_version = pkg_version("totoro-ai")
+try:
+    _version = pkg_version("totoro-ai")
+except PackageNotFoundError:
+    _version = "0.1.0"
 
 app = FastAPI(
     title=_app_meta.name,
