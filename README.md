@@ -1,6 +1,6 @@
 # totoro-ai
 
-AI engine for [Totoro](https://github.com/SaherDev/totoro). Intent classification, place extraction, embeddings, ranking, taste modeling, and agent orchestration. The product repo calls this service over HTTP — see [docs/api-contract.md](docs/api-contract.md) for the full contract.
+AI engine for [Totoro](https://github.com/SaherDev/totoro) — live at [totoro-ten-phi.vercel.app](https://totoro-ten-phi.vercel.app). Intent classification, place extraction, embeddings, ranking, taste modeling, and agent orchestration. The product repo calls this service over HTTP — see [docs/api-contract.md](docs/api-contract.md) for the full contract.
 
 ## Docs
 
