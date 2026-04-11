@@ -45,7 +45,7 @@ Recommended: B - [brief reason]
 3. Generate branch name from task type:
    - Spec-kit task: `<number>-<feature-name>` (e.g., `001-nx-monorepo-setup`)
    - Manual feature: `feature/<short-description>` (e.g., `feature/clerk-auth`)
-   - Bug fix: `fix/<short-description>` (e.g., `fix/prisma-migration-order`)
+   - Bug fix: `fix/<short-description>` (e.g., `fix/alembic-migration-order`)
 4. Checkout: `git checkout -b <branch-name>`
 
 > Scope examples: see `.claude/rules/git.md`
@@ -203,7 +203,7 @@ Common ADRs to check:
 - ADR-001: Nx (monorepo tool locked)
 - ADR-003: YAML config (format locked)
 - ADR-004: Clerk (auth locked)
-- ADR-005: Prisma (ORM locked)
+- ADR-030: Alembic owns AI tables; TypeORM (product repo) owns product tables
 - ADR-012: ConfigModule (non-secret config)
 - ADR-013: Auth guard (global boundary)
 - ADR-014: Module organization (per-domain)

@@ -116,7 +116,7 @@ description: "Task list for Schema, Repository, and Code Quality Fixes feature"
 
 - [ ] T031 [US3] Update `@router.post` decorator in `src/totoro_ai/api/routes/consult.py`: add `status_code=200, responses={200: {"description": "Synchronous recommendation response (stream=false)", "model": SyncConsultResponse}}`. Do NOT set `response_model` (breaks StreamingResponse)
 - [ ] T032 [US3] Update `docs/api-contract.md`: find all occurrences of embedding dimension `1536` in the embeddings section and replace with `1024`
-- [ ] T033 [US3] Add note to PR description: "Reviewer must manually verify that the NestJS product repo Prisma schema uses 1024 dimensions for embeddings and confirm in this PR"
+- [ ] T033 [US3] Confirm in PR description that pgvector columns remain owned exclusively by this repo's Alembic migrations (1024 dimensions)
 
 **Checkpoint**: User Story 3 (API Documentation) is complete and independently testable
 

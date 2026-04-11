@@ -138,4 +138,4 @@ httpx = "^0.28"
 
 ## 9. Constitution inconsistency (non-blocking)
 
-The constitution (Section VI) states "Prisma in totoro owns all migrations." This contradicts ADR-030, CLAUDE.md, and the existing Alembic migration files already in the repo. The existing setup (Alembic for AI tables) is correct. The constitution text is stale on this point. No blocking action — proceed per ADR-030.
+ADR-030, CLAUDE.md, and the existing Alembic migration files are the authoritative source: Alembic owns AI tables in this repo; TypeORM in the product repo manages users and user_settings. Proceed per ADR-030.

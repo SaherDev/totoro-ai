@@ -63,7 +63,7 @@ The following tables are not modified by this feature:
 | `embeddings` | This repo (Alembic) | No change |
 | `taste_model` | This repo (Alembic) | No change |
 | `interaction_log` | This repo (Alembic) | No change |
-| `recommendations` | NestJS (Prisma) | Never touched by this repo |
+| `users`, `user_settings` | NestJS (TypeORM) | Never touched by this repo |
 
 ---
 

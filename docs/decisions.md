@@ -19,9 +19,9 @@ Format:
 
 **Date:** 2026-04-09\
 **Status:** accepted\
-**Context:** Feature 017 needs to persist AI-generated recommendation history for feedback loops and taste model improvement. The product table `recommendations` is owned by NestJS (per Constitution Section VI and the two-repo boundary). Naming the new table `recommendations` would create a write-ownership conflict — two separate migration tools (Alembic and Prisma) would potentially manage the same table name in the same PostgreSQL instance.\
-**Decision:** This repo adds a `consult_logs` table (not `recommendations`) via Alembic. The table stores AI recommendation results: user_id, query, response (JSONB), intent, accepted (nullable), selected_place_id (nullable), created_at. NestJS continues to own its `recommendations` table via Prisma. The two tables serve different purposes and are never joined. ConsultService persists consult log records; write failures are logged and do not fail the caller response (FR-010).\
-**Consequences:** Zero write-ownership conflict. This repo's Alembic migrations remain isolated to AI data. NestJS Prisma migrations remain isolated to product data. Future taste model improvement pipelines read from consult_logs to derive feedback signals without depending on the NestJS recommendations table.
+**Context:** Feature 017 needs to persist AI-generated recommendation history for feedback loops and taste model improvement. Historically, the product repo owned a `recommendations` table; naming the new table `recommendations` would have created a write-ownership conflict across two schema-management tools.\
+**Decision:** This repo adds a `consult_logs` table via Alembic. The table stores AI recommendation results: user_id, query, response (JSONB), intent, accepted (nullable), selected_place_id (nullable), created_at. ConsultService persists consult log records; write failures are logged and do not fail the caller response (FR-010).\
+**Consequences:** Zero write-ownership conflict. This repo's Alembic migrations remain isolated to AI data. Future taste model improvement pipelines read from consult_logs to derive feedback signals.
 
 ---
 
@@ -253,13 +253,13 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 
 ---
 
-## ADR-033: Behavioral Signal Tracking in the Recommendations Table
+## ADR-033: Behavioral Signal Tracking _(superseded by ADR-053)_
 
 **Date:** 2026-03-12\
-**Status:** accepted\
-**Context:** The current recommendations table stores query, data (the full response JSON), and timestamps. This is enough to replay what the system returned but not enough to measure if the system is performing well. The core evaluation metric for Totoro is first recommendation acceptance rate: did the user take the primary recommendation or not? Without storing that signal, there is no way to measure system quality over time, tune the ranking layer, or improve the taste model. Raw typo input has no analytical value and will not be stored. What matters is whether the corrected query produced a recommendation the user accepted.\
-**Decision:** Three fields are added to the recommendations table in the Prisma schema: (1) `accepted` (Boolean, nullable) — three explicit states: `true` = user took the primary recommendation; `false` = user picked an alternative or dismissed; `null` = feedback not yet captured (recommendation not yet shown or user has not acted). (2) `shown` (Boolean, non-nullable, default false) — `true` = recommendation was displayed to the user; `false` = recommendation has not been displayed yet. If `shown` is `true` and `accepted` is `null`, this is a negative signal (shown and ignored, gain −0.5 in the taste model). (3) `selected_place_id` (String, nullable) — the place_id of whichever recommendation the user acted on, whether primary or alternative. These fields are written by NestJS after the user signals a choice in the frontend. FastAPI does not write to this table. The frontend sends a lightweight feedback event to NestJS (a single PATCH or POST call) when the user taps a recommendation. NestJS updates the record. No new table is needed. The exact feedback UI mechanic (tap to confirm, explicit accept button, implicit signal from navigation) is an implementation decision deferred to Phase 4 when the agent UI is built. `shown` and `accepted` together produce four meaningful states: `shown=false, accepted=null` = pending (not yet displayed); `shown=true, accepted=null` = shown and ignored (negative signal, gain −0.5); `shown=true, accepted=true` = accepted (positive signal, gain 2.0); `shown=true, accepted=false` = rejected (negative signal, gain −1.5).\
-**Consequences:** A Prisma migration adds `accepted`, `shown`, and `selected_place_id` to the recommendations table. `shown` defaults to false and is set to true when NestJS returns the recommendation to the frontend. NestJS needs a feedback endpoint to receive and write the user's choice after a consult response is displayed. The evaluation pipeline in Phase 6 reads `accepted`, `shown`, and `selected_place_id` to compute first recommendation acceptance rate across all users. Recommendations with `shown=true` and `accepted=null` are counted as negative impressions (gain −0.5) in taste model updates. Records with `shown=false` are excluded from accuracy calculations entirely. This schema supports the portfolio claim: first recommendation acceptance rate measured across real user sessions, with impression tracking for negative signal quality.
+**Status:** superseded\
+**Context:** Originally proposed adding `accepted`, `shown`, and `selected_place_id` columns to a product-repo `recommendations` table to track first-recommendation acceptance rate.\
+**Decision:** Superseded by ADR-053, which moves AI recommendation history into this repo's `consult_logs` table. The `recommendations` table no longer exists in the product repo.\
+**Consequences:** Behavioral signal tracking now lives in `consult_logs` (Alembic-owned). See ADR-053 for the current schema.
 
 ---
 
@@ -283,13 +283,13 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 
 ---
 
-## ADR-030: Database migration ownership split between Prisma and Alembic
+## ADR-030: Database ownership split between TypeORM (product repo) and Alembic (AI repo)
 
-**Date:** 2026-03-09\
+**Date:** 2026-03-09 (updated 2026-04-12)\
 **Status:** accepted\
-**Context:** Two services write to one shared PostgreSQL instance. Giving Prisma sole ownership of all migrations would require opening the product repo every time FastAPI evolves its AI table schemas. Two separate databases would force HTTP calls or data duplication mid-pipeline, adding latency to the consult agent.\
-**Decision:** Split migration ownership by domain. Prisma in the product repo owns and migrates users, user_settings, and recommendations. Alembic in the AI repo owns and migrates places, embeddings, and taste_model. Each tool touches only its own tables. No exceptions.\
-**Consequences:** Two migration tools in the system. Accepted because each repo stays autonomous within its domain. Schema changes to AI tables never require opening the product repo and vice versa.
+**Context:** Two services write to one shared PostgreSQL instance. Giving the product repo sole ownership of all migrations would require opening it every time FastAPI evolves its AI table schemas. Two separate databases would force HTTP calls or data duplication mid-pipeline, adding latency to the consult agent.\
+**Decision:** Split database ownership by domain. The product repo (NestJS + TypeORM with `synchronize: true`) manages `users` and `user_settings`. Alembic in this repo owns and migrates `places`, `embeddings`, `taste_model`, `consult_logs`, `user_memories`, and `interaction_log`. Each tool touches only its own tables. No exceptions.\
+**Consequences:** Two schema-management approaches in the system. Accepted because each repo stays autonomous within its domain. Schema changes to AI tables never require opening the product repo and vice versa.
 
 ---
 

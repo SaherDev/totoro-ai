@@ -94,4 +94,4 @@
 Two items in `.specify/memory/constitution.md` are stale and should be updated separately (not blocking this feature):
 
 1. **Constitution VIII — "Two endpoints only"**: Should reflect three current endpoints plus the new feedback endpoint.
-2. **Constitution VI — "Prisma in totoro owns all migrations"**: Contradicts ADR-030 (Alembic owns places/embeddings/taste_model). ADR-030 and the existing migration files are the source of truth. Constitution should be updated to reflect the split-ownership pattern.
+2. **Constitution VI — migration ownership**: ADR-030 is the binding decision — Alembic owns AI tables in this repo; TypeORM in the product repo manages users and user_settings.

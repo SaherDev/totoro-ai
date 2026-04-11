@@ -140,8 +140,8 @@ These values must stay in sync between both repos. A mismatch breaks the system.
 **Embedding dimensions:**
 
 - Current: 1024 (Voyage 4-lite)
-- The pgvector column definition in Prisma (product repo) must match the embedding model output in FastAPI (AI repo)
-- If the embedding model changes, both the Prisma migration and FastAPI config must update together
+- pgvector columns are fully owned by this repo's Alembic migrations — NestJS never defines vector columns
+- If the embedding model changes, only this repo's Alembic migration and config need updating
 
 **Database tables FastAPI writes to:**
 
@@ -152,7 +152,7 @@ These values must stay in sync between both repos. A mismatch breaks the system.
 - user_memories (personal facts extracted from chat messages)
 - interaction_log (append-only behavioral signal log)
 
-Alembic in totoro-ai owns migrations for these tables. Prisma never migrates these tables. If the schema changes, run the migration from totoro-ai only.
+Alembic in totoro-ai owns migrations for these tables. NestJS never touches them. If the schema changes, run the migration from totoro-ai only.
 
 ---
 
