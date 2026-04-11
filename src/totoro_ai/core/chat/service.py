@@ -10,6 +10,7 @@ from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
 from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
 from totoro_ai.core.chat.router import classify_intent
 from totoro_ai.core.consult.service import ConsultService
+from totoro_ai.core.consult.types import NoMatchesError
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.events.events import PersonalFactsExtracted
 from totoro_ai.core.recall.service import RecallService
@@ -116,9 +117,16 @@ class ChatService:
             )
 
         if intent == "consult":
-            consult_result = await self._consult.consult(
-                request.user_id, request.message, request.location
-            )
+            try:
+                consult_result = await self._consult.consult(
+                    request.user_id, request.message, request.location
+                )
+            except NoMatchesError:
+                return ChatResponse(
+                    type="assistant",
+                    message="I couldn't find a match for that. Try adding more places to your list, or give me a different area or vibe to work with.",
+                    data=None,
+                )
             return ChatResponse(
                 type="consult",
                 message=f"Here's my top pick: {consult_result.primary.place_name}",

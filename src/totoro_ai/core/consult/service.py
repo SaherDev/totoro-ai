@@ -15,6 +15,7 @@ from totoro_ai.api.schemas.consult import (
 from totoro_ai.core.consult.types import (
     Candidate,
     ExternalCandidateMapper,
+    NoMatchesError,
     RecallResultToCandidateMapper,
 )
 from totoro_ai.core.intent.intent_parser import IntentParser
@@ -289,20 +290,7 @@ class ConsultService:
         top_candidates = ranked[:3]
 
         if not top_candidates:
-            # No candidates available (empty state)
-            empty_response = ConsultResponse(
-                primary=PlaceResult(
-                    place_name="No matches found",
-                    address="",
-                    reasoning="Try adjusting your search criteria",
-                    source="discovered",
-                    photos=PlacePhotos(),
-                ),
-                alternatives=[],
-                reasoning_steps=reasoning_steps,
-            )
-            await self._persist_consult_log(user_id, query, empty_response)
-            return empty_response
+            raise NoMatchesError(query)
 
         # Map candidates to PlaceResult
         primary_result = self._candidate_to_place_result(top_candidates[0])

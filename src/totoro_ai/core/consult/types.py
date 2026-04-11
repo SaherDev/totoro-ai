@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field
 from totoro_ai.api.schemas.recall import RecallResult
 
 
+class NoMatchesError(Exception):
+    """Raised by ConsultService when no candidates survive ranking."""
+
+
 class Candidate(BaseModel):
     """Internal unified representation of a place under evaluation.
 

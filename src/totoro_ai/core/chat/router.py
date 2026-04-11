@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = """\
 You are an intent classifier for a food and dining app. Classify the user message into exactly one of these intents:
 
-- extract-place: The user is sharing a TikTok URL, Instagram URL, or any social-media link that contains a place to save.
-- consult: The user wants a place recommendation — e.g. "cheap dinner nearby", "best ramen in Bangkok", "where should I eat tonight?".
-- recall: The user wants to find or retrieve a place they previously saved — e.g. "that ramen place I saved", "show me saved Thai restaurants", "find the place from my list".
+- extract-place: The user is sharing or recommending a specific place — this includes URLs (TikTok, Instagram, Reddit, Google Maps, etc.) AND plain-text mentions of a named place with positive sentiment or a desire to save it. Examples: "RAMEN KAISUGI Bangkok is incredible", "you have to try Nara Eatery", "just had the best pizza at Sei Bella", "save this: Fuji Ramen Asok". ANY message that contains a URL should be extract-place unless clearly unrelated to a venue. IMPORTANT: if the user refers to something they already saved in the past (past tense "I saved", "I bookmarked"), classify as recall, not extract-place.
+- consult: The user wants a place recommendation but has NOT named a specific place — e.g. "cheap dinner nearby", "where should I eat tonight?", "best ramen in Bangkok".
+- recall: The user wants to find or retrieve a place they previously saved — e.g. "that ramen place I saved", "that place I saved from TikTok", "show me saved Thai restaurants", "find the place from my list". Key signal: past tense references to saving ("I saved", "I bookmarked", "from my saves").
 - assistant: The user is asking a general food or dining question with no clear intent to save or retrieve — e.g. "is tipping expected in Japan?", "what's the difference between pad see ew and pad thai?".
 
 ALSO extract personal facts about the user from the message:
