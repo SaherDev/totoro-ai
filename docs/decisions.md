@@ -35,13 +35,13 @@ Format:
 
 ---
 
-## ADR-050: LangGraph parallelization deferred to Phase 4
+## ADR-050: LangGraph parallelization deferred
 
 **Date:** 2026-04-09\
 **Status:** accepted\
-**Context:** The consult pipeline consists of six sequential steps: intent parsing, retrieve saved, discover external, validate (conditional), rank, and build response. ADR-009 proposes parallelizing Steps 2 and 3 (retrieval and discovery) via LangGraph branches. Implementing this now adds complexity (graph definition, parallel branch orchestration, result merging) without measurable latency benefit — both steps run in milliseconds, far below user perception threshold (~200ms). The Phase 3 scope must remain tight to ship the full six-step pipeline with all conflict resolutions (C1–C10).\
-**Decision:** Implement the six-step pipeline sequentially in Phase 3. Steps 2 and 3 run one after the other, not in parallel. If user-facing latency becomes a concern post-launch or in Phase 4 latency profiling, implement LangGraph branches per ADR-009 without changing the public API, ConsultService logic, or response contract. The sequential implementation is correct and produces identical results; parallelization is a pure optimization.\
-**Consequences:** Phase 3 deliverable ships without LangGraph. The sequential pipeline remains the default behavior. Future Phase 4 optimization gates on measured latency data, not speculative performance concerns. ConsultService.consult() method signature and logic remain stable across sequential and parallel implementations.
+**Context:** The consult pipeline consists of six sequential steps: intent parsing, retrieve saved, discover external, validate (conditional), rank, and build response. ADR-009 proposes parallelizing Steps 2 and 3 (retrieval and discovery) via LangGraph branches. Implementing this now adds complexity (graph definition, parallel branch orchestration, result merging) without measurable latency benefit — both steps run in milliseconds, far below user perception threshold (~200ms).\
+**Decision:** Implement the six-step pipeline sequentially. Steps 2 and 3 run one after the other, not in parallel. If user-facing latency becomes a concern post-launch, implement LangGraph branches per ADR-009 without changing the public API, ConsultService logic, or response contract. The sequential implementation is correct and produces identical results; parallelization is a pure optimization.\
+**Consequences:** The current deliverable ships without LangGraph. The sequential pipeline remains the default behavior. Future optimization gates on measured latency data, not speculative performance concerns. ConsultService.consult() method signature and logic remain stable across sequential and parallel implementations.
 
 ---
 
@@ -228,8 +228,8 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 **Date:** 2026-03-14\
 **Status:** accepted\
 **Context:** When a user saves a place, the taste model needs to update. If the extraction service calls the taste model service directly, two unrelated concerns are coupled in one function. A failure in taste model update would block the extraction response. The user does not need to wait for the taste model to update before receiving confirmation that their place was saved.\
-**Decision:** Place extraction emits a PlaceSaved event after writing to PostgreSQL. The taste model service subscribes and updates via a FastAPI BackgroundTask. The extraction service calls BackgroundTasks.add_task(update_taste_model, user_id, place_id) and returns immediately. The extraction service never imports from the taste model module directly. Implementation pending in Phase 3 when the taste model is built.\
-**Consequences:** Extraction and taste model updates are decoupled. Extraction response time is not affected by taste model complexity. A taste model update failure does not affect the user-facing extraction response. Background task failures must be logged and observable via Langfuse. Implementation pending Phase 3.
+**Decision:** Place extraction emits a PlaceSaved event after writing to PostgreSQL. The taste model service subscribes and updates via a FastAPI BackgroundTask. The extraction service calls BackgroundTasks.add_task(update_taste_model, user_id, place_id) and returns immediately. The extraction service never imports from the taste model module directly.\
+**Consequences:** Extraction and taste model updates are decoupled. Extraction response time is not affected by taste model complexity. A taste model update failure does not affect the user-facing extraction response. Background task failures must be logged and observable via Langfuse.
 
 ---
 

@@ -8,7 +8,7 @@ The taste model builds a per-user preference vector from behavioral signals. Eac
 User Action (save place / accept rec / reject rec / onboarding)
     │
     ▼
-Endpoint (POST /v1/extract-place or POST /v1/feedback)
+Endpoint (POST /v1/chat with extract-place intent)
     │
     ▼
 Create DomainEvent (PlaceSaved, RecommendationAccepted, etc.)
@@ -200,8 +200,8 @@ The increment and confidence recalculation happen in a single SQL statement — 
 | Event | Source | Handler | Service method |
 |-------|--------|---------|---------------|
 | PlaceSaved | ExtractionService.run() | on_place_saved | handle_place_saved |
-| RecommendationAccepted | POST /v1/feedback | on_recommendation_accepted | handle_recommendation_accepted |
-| RecommendationRejected | POST /v1/feedback | on_recommendation_rejected | handle_recommendation_rejected |
+| RecommendationAccepted | (deferred — no endpoint yet) | on_recommendation_accepted | handle_recommendation_accepted |
+| RecommendationRejected | (deferred — no endpoint yet) | on_recommendation_rejected | handle_recommendation_rejected |
 | OnboardingSignal | (deferred) | on_onboarding_signal | handle_onboarding_signal |
 
 All handlers run as FastAPI `BackgroundTasks` — they execute after HTTP 200 is returned. Handler failures are logged but never propagate to the caller.
@@ -218,8 +218,7 @@ All handlers run as FastAPI `BackgroundTasks` — they execute after HTTP 200 is
 | DB Models | `src/totoro_ai/db/models.py` |
 | Config values | `config/app.yaml` (taste_model section) |
 | Config classes | `src/totoro_ai/core/config.py` |
-| Feedback endpoint | `src/totoro_ai/api/routes/feedback.py` |
-| Feedback schemas | `src/totoro_ai/api/schemas/feedback.py` |
+
 | RankingService | `src/totoro_ai/core/ranking/service.py` |
 | Dependency injection | `src/totoro_ai/api/deps.py` |
 | Tests | `tests/core/taste/test_service_integration.py` |

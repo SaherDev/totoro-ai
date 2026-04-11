@@ -102,28 +102,6 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 
 ---
 
-## Removed Endpoints (ADR-052)
-
-The following endpoints return `404` after feature 017:
-
-| Endpoint | Replaced by |
-|---|---|
-| `POST /v1/extract-place` | `POST /v1/chat` with extract-place intent |
-| `GET /v1/extract-place/status/{id}` | Deferred — status polling for provisional extractions not yet in scope for /v1/chat |
-| `POST /v1/consult` | `POST /v1/chat` with consult intent |
-| `POST /v1/recall` | `POST /v1/chat` with recall intent |
-| `POST /v1/chat-assistant` | `POST /v1/chat` with assistant intent |
-
-> **Note on status polling**: `GET /v1/extract-place/status/{id}` (ADR-048) is not in scope for `/v1/chat`. It will need to be re-introduced separately if provisional extraction results are required.
-
----
-
-## POST /v1/feedback/accepted and POST /v1/feedback/rejected
-
-These endpoints remain unchanged — they handle user feedback signals for taste model updates.
-
----
-
 ## GET /v1/health
 
 Health check endpoint. Returns service status and database connectivity.
@@ -135,8 +113,6 @@ Health check endpoint. Returns service status and database connectivity.
 | Endpoint | Purpose | NestJS Sends | totoro-ai Returns |
 | --- | --- | --- | --- |
 | POST /v1/chat | Unified conversational entry point | user_id, message, optional location | type, message, optional data payload |
-| POST /v1/feedback/accepted | Record recommendation accepted | user_id, place_id, query | 200 OK |
-| POST /v1/feedback/rejected | Record recommendation rejected | user_id, place_id, query | 200 OK |
 | GET /v1/health | Service health check | — | status, db connectivity |
 
 ---
@@ -173,6 +149,8 @@ These values must stay in sync between both repos. A mismatch breaks the system.
 - embeddings
 - taste_model
 - consult_logs (ADR-053 — AI recommendation history, distinct from NestJS recommendations table)
+- user_memories (personal facts extracted from chat messages)
+- interaction_log (append-only behavioral signal log)
 
 Alembic in totoro-ai owns migrations for these tables. Prisma never migrates these tables. If the schema changes, run the migration from totoro-ai only.
 
