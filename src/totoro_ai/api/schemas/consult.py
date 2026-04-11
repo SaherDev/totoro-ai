@@ -18,6 +18,13 @@ class ConsultRequest(BaseModel):
     location: Location | None = None
 
 
+class PlacePhotos(BaseModel):
+    """Photo URLs for a recommended place."""
+
+    hero: str | None = None
+    square: str | None = None
+
+
 class PlaceResult(BaseModel):
     """A recommended place in the response."""
 
@@ -25,7 +32,7 @@ class PlaceResult(BaseModel):
     address: str
     reasoning: str
     source: str  # "saved" | "discovered"
-    photos: list[str] = []
+    photos: PlacePhotos = PlacePhotos()
 
 
 class ReasoningStep(BaseModel):

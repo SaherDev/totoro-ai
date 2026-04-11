@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from totoro_ai.api.schemas.consult import (
     ConsultResponse,
     Location,
+    PlacePhotos,
     PlaceResult,
     ReasoningStep,
 )
@@ -295,7 +296,7 @@ class ConsultService:
                     address="",
                     reasoning="Try adjusting your search criteria",
                     source="discovered",
-                    photos=[],
+                    photos=PlacePhotos(),
                 ),
                 alternatives=[],
                 reasoning_steps=reasoning_steps,
@@ -378,5 +379,5 @@ class ConsultService:
             address=candidate.address,
             reasoning=reasoning,
             source=candidate.source,
-            photos=[],
+            photos=PlacePhotos(),
         )
