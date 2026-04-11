@@ -46,14 +46,15 @@ Current binding decisions:
 - **ADR-023**: HTTP error mapping: 400 bad input, 422 unparseable/no results, 500 internal failure
 - **ADR-024**: Redis LLM response cache keyed by hash of (role, prompt, model, temperature)
 - **ADR-025**: Langfuse callback handler attached to every LLM and embedding call — no call goes untraced
+- **ADR-044**: Prompt injection mitigation — every LLM call injecting retrieved content must use: (1) defensive system prompt instruction, (2) XML `<context>` tags around retrieved data, (3) Pydantic output validation via Instructor. Constitution Check item for Node 6 and any future content-injecting node.
 
 ## III. Provider Abstraction (NON-NEGOTIABLE)
 
 Model names are never hardcoded in code. Always reference logical roles:
 
 - `intent_parser` → currently `openai/gpt-4o-mini`
-- `orchestrator` → currently `anthropic/claude-sonnet-4-6-20250514`
-- `embedder` → currently `voyage/voyage-3.5-lite`
+- `orchestrator` → currently `anthropic/claude-sonnet-4-6`
+- `embedder` → currently `voyage/voyage-4-lite`
 
 Swapping a model = one line change in `config/models.yaml`. No code changes.
 
@@ -80,10 +81,11 @@ Redis is exclusively owned by this repo. NestJS never connects to Redis. Use Red
 
 ## VIII. API Contract
 
-Two endpoints only:
+Three endpoints (ADR-048 added status polling on 2026-04-07):
 
 - `POST /v1/extract-place` — sequential async workflow (not LangGraph)
 - `POST /v1/consult` — LangGraph StateGraph agent
+- `GET /v1/extract-place/status/{request_id}` — cache-backed status polling for provisional extractions
 
 Full contract in `docs/api-contract.md`. NestJS is the only caller. Frontend never calls this repo directly.
 

@@ -1,10 +1,11 @@
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
-from totoro_ai.core.config import load_yaml_config
 from totoro_ai.db.base import Base
 import totoro_ai.db.models  # noqa: F401 — registers models with Base
 
@@ -15,9 +16,9 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# DATABASE_URL env var takes precedence (used when running migrations against
-# a remote database, e.g. Railway production). Falls back to local YAML config.
-_url: str = os.environ.get("DATABASE_URL") or load_yaml_config(".local.yaml")["database"]["url"]
+# Load .env for local dev; Railway sets DATABASE_URL directly in the environment.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+_url: str = os.environ["DATABASE_URL"]
 # Alembic uses synchronous driver — strip +asyncpg if present
 if "+asyncpg" in _url:
     _url = _url.replace("+asyncpg", "")

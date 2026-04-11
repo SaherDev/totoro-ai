@@ -136,6 +136,7 @@ get_highest_from_branches() {
 # Function to check existing branches (local and remote) and return next available number
 check_existing_branches() {
     local specs_dir="$1"
+    local short_name="$2"
 
     # Fetch all remotes to get latest branch info (suppress errors if no remotes)
     git fetch --all --prune 2>/dev/null || true
@@ -145,6 +146,23 @@ check_existing_branches() {
 
     # Get highest number from ALL specs (not just matching short name)
     local highest_spec=$(get_highest_from_specs "$specs_dir")
+
+    # If short_name is provided, check for duplicates with same name
+    if [ -n "$short_name" ]; then
+        # Count how many dirs exist with this short name (e.g., 001-wire, 002-wire, 003-wire)
+        local duplicate_count=0
+        if [ -d "$specs_dir" ]; then
+            for dir in "$specs_dir"/*"-${short_name}"*; do
+                [ -d "$dir" ] && ((duplicate_count++))
+            done
+        fi
+
+        # Warn if we're about to create a duplicate
+        if [ "$duplicate_count" -gt 0 ]; then
+            >&2 echo "[WARN] Found $duplicate_count existing feature(s) with suffix '$short_name'"
+            >&2 echo "[WARN] Ensure you're not creating duplicates. Next number will be $((highest_spec + 1))"
+        fi
+    fi
 
     # Take the maximum of both
     local max_num=$highest_branch
@@ -244,8 +262,8 @@ fi
 # Determine branch number
 if [ -z "$BRANCH_NUMBER" ]; then
     if [ "$HAS_GIT" = true ]; then
-        # Check existing branches on remotes
-        BRANCH_NUMBER=$(check_existing_branches "$SPECS_DIR")
+        # Check existing branches on remotes (pass short name for duplicate detection)
+        BRANCH_NUMBER=$(check_existing_branches "$SPECS_DIR" "$BRANCH_SUFFIX")
     else
         # Fall back to local directory check
         HIGHEST=$(get_highest_from_specs "$SPECS_DIR")

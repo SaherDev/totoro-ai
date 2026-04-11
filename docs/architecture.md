@@ -12,35 +12,39 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 └───────────────┬──────────────────┘
                 │ HTTP (JSON)
                 │
-                │  POST /v1/extract-place
-                │  POST /v1/consult
-                │  POST /v1/recall
+                │  POST /v1/chat
+                │  GET  /v1/health
                 ▼
 ┌──────────────────────────────────────────────────────────┐
 │                totoro-ai (this repo)                      │
 │                                                           │
 │  FastAPI HTTP layer                                       │
-│  LangGraph agent orchestration                            │
+│  Intent classification → pipeline dispatch                │
 │  LangChain chains and document loaders                    │
 │  Pydantic request/response schemas                        │
 │  Provider abstraction (LLM + embedding model switching)   │
-└────────┬──────────────┬──────────────┬───────────────────┘
-         │              │              │
-         │ SQL          │ HTTP         │ TCP
-         │ (read-write) │              │
-         ▼              ▼              ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ PostgreSQL   │ │ Google       │ │ Redis        │
-│ + pgvector   │ │ Places API   │ │ (cache)      │
-│              │ │              │ │              │
-│ Writes:      │ │ Validate     │ │ LLM response │
-│ - places     │ │ places       │ │ caching      │
-│ - embeddings │ │ Discover     │ │ Session      │
-│ - taste_model│ │ nearby       │ │ context      │
-│              │ │ candidates   │ │ Agent state  │
-│ Reads:       │ │              │ │              │
-│ - all tables │ │              │ │              │
-└──────────────┘ └──────────────┘ └──────────────┘
+└──┬───────────────┬──────────────┬──────────────┬─────────┘
+   │               │              │              │
+   │ SQL           │ HTTP         │ HTTPS        │ TCP
+   │ (read-write)  │              │              │
+   ▼               ▼              ▼              ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ PostgreSQL   │ │ Google       │ │ Groq / OpenAI│ │ Redis        │
+│ + pgvector   │ │ Places API   │ │ / Anthropic  │ │ (cache)      │
+│              │ │              │ │ / Voyage AI  │ │              │
+│ Writes:      │ │ Validate     │ │              │ │ LLM response │
+│ - places     │ │ places       │ │ LLM inference│ │ caching      │
+│ - embeddings │ │ Discover     │ │ Embeddings   │ │ Extraction   │
+│ - taste_model│ │ nearby       │ │ Transcription│ │ status       │
+│ - consult_   │ │ Geocode      │ │              │ │ Agent state  │
+│   logs       │ │              │ │              │ │              │
+│ - user_      │ │              │ │              │ │              │
+│   memories   │ │              │ │              │ │              │
+│ - interaction│ │              │ │              │ │              │
+│   _log       │ │              │ │              │ │              │
+│ Reads:       │ │              │ │              │ │              │
+│ - all tables │ │              │ │              │ │              │
+└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
 ## What This Repo Owns
@@ -67,88 +71,234 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
-extract-place is a deterministic workflow, not an agent. It follows a fixed sequence of steps with one LLM call for parsing. No tool selection, no reasoning loop, no LangGraph.
+extract-place is a three-phase deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. Enrichers run unconditionally in Step 1. The validator gates results in Step 2. Background dispatch fires in Step 3 only when Step 2 finds nothing.
 
 ```
-Raw input (URL, name, or description)
+Raw input (URL, plain text, or mixed)
     │
     ▼
-POST /v1/extract-place
-    │  Receives: raw_input, user_id
+POST /v1/chat
+    │  ChatService classifies intent → "extract-place" → dispatches to ExtractionService
     │
-    ├── Parse input type (URL, name, description)
+    ├── Step 1: Enrich candidates
+    │   Parallel caption fetch (TikTok oEmbed, yt-dlp), regex extraction, LLM NER
+    │   Deduplicate by name; corroborated candidates receive a confidence bonus
     │
-    ├── If URL: fetch page content, extract place data
-    │   If name/description: search Google Places API
+    ├── Step 2: Validate candidates
+    │   Google Places API validates each candidate in parallel
+    │   Confidence scored per match quality; results saved and returned if any pass
     │
-    ├── Validate and enrich via Google Places API
-    │
-    ├── Generate embedding vector
-    │
-    ├── Write place record + embedding to PostgreSQL
-    │
-    └── Return place_id, extracted metadata, and confidence score to NestJS
+    └── Step 3: Background dispatch (only when Step 2 returns nothing)
+        ExtractionPending event dispatched → ProvisionalResponse returned immediately
+        Background: subtitle, audio (Whisper), vision enrichers → re-validate → save
 ```
 
-FastAPI writes what it generates. NestJS receives a confirmation, not raw data to persist.
+The pipeline runs the full cascade deterministically. No mid-pipeline callbacks to NestJS.
 
 ## Data Flow: Consult (Recommend a Place)
 
-consult is an agent. It uses LangGraph for multi-step orchestration with tool selection and reasoning. Steps 2 and 3 run as parallel branches because they are independent of each other. Each step passes only the data the next step needs, not the full payload from prior steps. This keeps context tight and reduces token cost.
+consult is a sequential 6-step pipeline implemented in `ConsultService` as a plain Python class (ADR-050: LangGraph parallelization deferred). Each step passes only the data the next step needs, not the full payload from prior steps. ConsultService persists a `consult_logs` record directly after building the response (ADR-053) — NestJS does not store recommendation history.
 
 ```
 Natural language query (e.g., "cheap dinner nearby")
     │
     ▼
-POST /v1/consult
-    │  Receives: query, user_id, location
+POST /v1/chat
+    │  Receives: user_id, message, optional location
+    │  ChatService classifies intent → "consult" → dispatches to ConsultService
     │
     ▼
-LangGraph Agent starts
+ConsultService.consult()
     │
     ├── Step 1: Parse intent
-    │   GPT-4o-mini extracts cuisine, occasion, price, radius, constraints
+    │   GPT-4o-mini (intent_parser role) extracts cuisine, occasion, price, radius,
+    │   constraints, enriched_query; user memories injected as context
     │
-    ├── Step 2 (parallel branch A): Retrieve saved places
-    │   Query pgvector for semantic similarity
+    ├── Step 2: Retrieve saved places
+    │   Hybrid search (pgvector + FTS + RRF) via RecallService
+    │   Post-filter by price_range and radius if location available
     │
-    ├── Step 3 (parallel branch B): Discover external candidates
-    │   Call Google Places API with location + category filters
+    ├── Step 3: Discover external candidates
+    │   Call Google Places API with enriched_query + radius filters
+    │   Skipped if no location context
     │
-    ├── (branches merge)
+    ├── Step 4: Deduplicate candidates (by external_id, then place_id)
     │
-    ├── Step 4: Validate candidates
-    │   Check open hours, live signals
+    ├── Step 5: Conditional validation of saved candidates
+    │   Validates against live signals only when opennow filter is set
     │
-    ├── Step 5: Rank all candidates
-    │   Deterministic scoring: taste fit, distance, price, crowd, time context
+    ├── Step 6: Rank all candidates
+    │   Deterministic scoring: taste fit, distance, price, popularity
     │
-    └── Step 6: Generate response
-        Return 1 primary + 2 alternatives with reasoning to NestJS
-        (NestJS stores recommendation history and streams to frontend)
+    └── Step 7: Build response + persist consult log
+        Return 1 primary + up to 2 alternatives with reasoning steps
+        Persist ConsultLog record (ADR-053); write failures are logged, not raised
 ```
 
-The agent runs the full pipeline autonomously. No mid-pipeline callbacks to NestJS.
+The pipeline runs fully within FastAPI. No mid-pipeline callbacks to NestJS.
+
+## Data Flow: Recall (Retrieve Saved Places)
+
+recall is a hybrid search workflow combining vector similarity (pgvector) and full-text search (PostgreSQL FTS) with Reciprocal Rank Fusion (RRF) merging. It retrieves user's saved places matching a natural language query.
+
+```
+Natural language query (e.g., "cosy ramen spot")
+    │
+    ▼
+POST /v1/chat
+    │  ChatService classifies intent → "recall" → dispatches to RecallService
+    │
+    ├── Check cold start
+    │   count_saved_places(user_id)
+    │   If 0: return empty_state=true (no places to search)
+    │
+    ├── Embed query
+    │   Try: query_vector = await embedder.embed(query, input_type="query")
+    │   Catch RuntimeError: set query_vector=None (fallback to text-only)
+    │
+    ├── Hybrid search with RRF merge
+    │   If query_vector is not None:
+    │     - vector_results: pgvector cosine similarity (<=> operator)
+    │       Top limit×candidate_multiplier candidates pre-fetched
+    │     - text_results: PostgreSQL FTS (place_name + cuisine)
+    │       Matches via plainto_tsquery + ts_rank scoring
+    │     - combined: FULL OUTER JOIN with RRF score calculation
+    │       RRF formula: 1/(k + rank) per method, summed across both
+    │       k=60 (constant, prevents rank=0 dominance)
+    │       min_rrf_score=0.01 (threshold filters low-relevance results)
+    │   Else (embedding failed):
+    │     - text_only_search: FTS fallback (no vector component)
+    │
+    ├── Derive match_reason (deterministic, no LLM)
+    │   CASE statement in SQL:
+    │   - matched_vector=true AND matched_text=true
+    │     → "Matched by name, cuisine, and semantic similarity"
+    │   - matched_vector=true only
+    │     → "Matched by semantic similarity"
+    │   - matched_text=true only
+    │     → "Matched by name or cuisine"
+    │
+    └── Return to NestJS
+        results: list of RecallResult (place_id, place_name, address, cuisine, etc., match_reason)
+        total: count of results
+        empty_state: true if user has zero saves, false otherwise
+```
+
+**Key properties:**
+- Single CTE query: no N+1 queries; all ranking in database
+- RRF merging: fairly combines semantic (vector) and keyword (FTS) relevance
+- Candidate multiplier: prevents vector results from starving FTS results
+- Min RRF score threshold: filters low-relevance results; configurable via `min_rrf_score` (default 0.01)
+- Graceful fallback: text-only path exists; embedding failure does not crash
+- Deterministic match_reason: reflects actual search behavior; no guessing
+
+## Data Flow: Assistant (General Food/Dining Q&A)
+
+assistant is a single-LLM-call service with no vector search, no ranking, and no database reads beyond user memories. It handles general food and dining questions that don't map to a specific saved place or recommendation request.
+
+```
+General question (e.g., "is tipping expected in Japan?")
+    │
+    ▼
+POST /v1/chat
+    │  ChatService classifies intent → "assistant" → dispatches to ChatAssistantService
+    │
+    ▼
+ChatAssistantService.run()
+    │
+    ├── Load user memories (UserMemoryService.load_memories)
+    │   Injected into user message as context (ADR-010)
+    │
+    └── Single LLM call (chat_assistant role: GPT-4o-mini)
+        System prompt: food/dining advisor persona
+        User message: optional memory context + question
+        Returns: conversational response string
+```
+
+No tools, no retrieval, no branching. Falls back to assistant for any unrecognized intent.
+
+---
+
+## Intent Classification
+
+NestJS sends all conversational traffic to `POST /v1/chat`. Classification happens
+inside FastAPI's `ChatService` as the first step of request handling, using the
+`intent_router` LLM role (Groq llama-3.1-8b-instant). NestJS never sees the intent —
+it only receives the final `ChatResponse`.
+
+Intent types:
+
+- extract-place — user is sharing or recommending a specific place, including URLs and
+  plain-text named places ("RAMEN KAISUGI Bangkok is incredible", TikTok links, etc.)
+- consult — user wants a recommendation but has not named a specific place
+  ("cheap dinner nearby", "where should I eat tonight?")
+- recall — user wants to retrieve a place they previously saved
+  ("that ramen place I saved", "show me saved Thai restaurants")
+- assistant — general food/dining question with no save or retrieve intent
+  ("is tipping expected in Japan?")
+
+Classification rules (LLM-driven, not regex):
+
+- Confidence ≥ 0.7 → dispatch by intent
+- Confidence < 0.7 → return `type="clarification"` with a single short question
+- Default when uncertain → consult
+
+Personal facts are also extracted from each message (e.g., "I'm vegetarian") and
+persisted asynchronously via `PersonalFactsExtracted` event.
+
+Empty state rule: the system always returns something. At zero saves, a consult
+query returns nearby popular options. A recall with no matches returns an assistant
+response noting nothing was found. Never return a zero-result response.
 
 ## API Contract
 
-| Endpoint               | Request                  | Response                                   |
-| ---------------------- | ------------------------ | ------------------------------------------ |
-| POST /v1/extract-place | raw_input, user_id       | place_id, place metadata, confidence score |
-| POST /v1/consult       | query, user_id, location | 1 primary + 2 alternatives with reasoning  |
+| Endpoint               | Request                               | Response                                              |
+| ---------------------- | ------------------------------------- | ----------------------------------------------------- |
+| POST /v1/chat          | user_id, message, optional location   | type, message, optional data payload (ADR-052)        |
+| GET /v1/health         | —                                     | status, db connectivity                               |
 
 All requests come from NestJS after auth verification. This repo never receives requests directly from the frontend.
 
 ## Model Assignments
 
-| Logical Role  | Model              | Why                                       |
-| ------------- | ------------------ | ----------------------------------------- |
-| intent_parser | GPT-4o-mini        | Cheap, reliable for structured extraction |
-| orchestrator  | Claude Sonnet 4    | Strong reasoning for tool calling         |
-| embedder      | Voyage 3.5-lite | 6.34% better retrieval quality than OpenAI; 1024-dimensional vectors |
-| evaluator     | GPT-4o-mini        | Cost-effective for batch evals            |
+| Logical Role  | Model                   | Why                                                                  |
+| ------------- | ----------------------- | -------------------------------------------------------------------- |
+| intent_router | llama-3.1-8b-instant (Groq) | Fast, cheap LLM-based intent classification for all `/v1/chat` traffic |
+| intent_parser | GPT-4o-mini             | Structured extraction for consult intent (cuisine, price, radius, constraints) |
+| chat_assistant | GPT-4o-mini            | General food/dining Q&A for assistant intent                         |
+| orchestrator  | claude-sonnet-4-6       | Strong reasoning for tool calling (used by agent/orchestration layer) |
+| embedder      | Voyage 4-lite           | 9.25% better retrieval quality than OpenAI; 1024-dimensional vectors |
+| evaluator     | GPT-4o-mini             | Cost-effective for batch evals                                       |
+| vision_frames | GPT-4o-mini             | Frame-level vision extraction for background enricher                |
+| transcriber   | whisper-large-v3-turbo (Groq) | Fast multilingual STT; 216x real-time; background audio enricher only (ADR-047) |
 
-Model assignments are config-driven via config/models.yaml. No model names hardcoded in application code.
+Model assignments are config-driven via `config/app.yaml` under the `models:` key. No model names hardcoded in application code.
+
+## Service Configuration
+
+Service-specific parameters are config-driven via `config/app.yaml`:
+
+**Recall Service** (hybrid search tuning):
+- `max_results`: Maximum results to return (default 10)
+- `rrf_k`: RRF constant for rank weighting (default 60, higher = more weight on top ranks)
+- `candidate_multiplier`: Pre-fetch factor (multiplies limit; default 2)
+- `min_rrf_score`: Minimum RRF score threshold to filter low-relevance results (default 0.01)
+
+Adjust these values to control result relevance and performance.
+
+**Extraction Service** (cascade tuning):
+- `circuit_breaker_threshold`: failures before circuit opens (default 5)
+- `circuit_breaker_cooldown`: seconds before half-open probe (default 900)
+- `confidence.base_scores`: per-level base confidence — emoji_regex: 0.95, llm_ner: 0.80, subtitle_check: 0.75, whisper_audio: 0.65, vision_frames: 0.55
+- `confidence.corroboration_bonus`: bonus when two independent sources find the same name (default 0.10)
+- `confidence.max_score`: ceiling — system never claims perfect certainty (default 0.97)
+- `vision.max_frames`: maximum frames sent to vision model (default 5)
+- `vision.scene_threshold`: ffmpeg scene change threshold (default 0.3)
+- `vision.timeout_seconds`: hard timeout for vision enricher (default 10)
+- `whisper.timeout_seconds`: hard timeout for audio enricher (default 8)
+- `whisper.audio_format`: audio format for in-memory pipe fallback (default opus)
+- `whisper.audio_quality`: audio bitrate for in-memory pipe fallback (default 32k)
+- `subtitle.output_dir`: temporary directory for VTT files (default /tmp/subtitles)
 
 ## Database Access
 
@@ -159,6 +309,9 @@ Writes:
 - places (extracted place records)
 - embeddings (generated vectors)
 - taste_model (learned user patterns)
+- consult_logs (AI recommendation history — ADR-053)
+- user_memories (personal facts extracted from chat messages)
+- interaction_log (append-only behavioral signal log)
 
 Reads:
 
@@ -168,7 +321,7 @@ Does not write:
 
 - users, user_settings, recommendations (product data owned by NestJS)
 
-Schema for AI tables (places, embeddings, taste_model) is managed by Alembic in this repo. If Prisma changes a table this repo reads from (users, recommendations), FastAPI must adapt. Database client: SQLAlchemy async + asyncpg.
+Schema for AI tables (places, embeddings, taste_model, consult_logs, user_memories, interaction_log) is managed by Alembic in this repo. If Prisma changes a table this repo reads from (users, recommendations), FastAPI must adapt. Database client: SQLAlchemy async + asyncpg.
 
 ## Redis
 
@@ -182,10 +335,9 @@ Used for:
 
 ## Design Principles
 
-- extract-place is a workflow. consult is an agent. These use different implementation patterns. Do not use LangGraph for extract-place.
-- The consult agent's tool set should be minimal. Only register tools the agent needs for the current task. Do not preload tools for future capabilities.
-- Each LangGraph node passes only the data the next node needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
-- Steps 2 (retrieve) and 3 (discover) in the consult pipeline run as parallel LangGraph branches. They are independent and their results merge before validation.
+- extract-place is a three-phase workflow (Enrichment → Validation → Background), not an agent. No LangGraph. Enrichers populate ExtractionContext unconditionally. The validator gates results. Background dispatch fires only when inline validation finds nothing.
+- consult is currently a sequential 6-step Python pipeline in `ConsultService` (ADR-050: LangGraph parallelization deferred). If LangGraph is added in the future, Steps 2 (retrieve) and 3 (discover) are the candidates for parallel branches — they are independent and their results merge before validation.
+- Each pipeline step passes only the data the next step needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
 
 ## Design Patterns
 
@@ -194,6 +346,7 @@ They describe what lives where and what crosses which boundary.
 Behavioral and implementation patterns live in docs/decisions.md.
 
 ### Facade — Route Handlers
+
 Route handlers are the HTTP entry point only. Each handler makes
 exactly one service call and returns the result. No SQLAlchemy,
 no Redis, no pgvector, no Google Places API calls appear inside
@@ -201,6 +354,7 @@ src/totoro_ai/api/routes/. All orchestration lives in
 src/totoro_ai/core/.
 
 ### Protocol — Swappable Dependencies
+
 Any external dependency lives behind a Python Protocol. Concrete
 implementations live in src/totoro_ai/providers/ for cross-cutting
 dependencies or inside the relevant src/totoro_ai/core/ module for
@@ -209,32 +363,91 @@ graphs import the Protocol only. Nothing in core/ imports a concrete
 provider class directly.
 
 ### Repository — Database Access
-All SQLAlchemy code lives in three repository classes:
-PlaceRepository, EmbeddingRepository, TasteModelRepository.
+
+All SQLAlchemy code lives in six repository classes:
+PlaceRepository, EmbeddingRepository, TasteModelRepository, RecallRepository,
+ConsultLogRepository, and UserMemoryRepository.
 No ORM queries or raw SQL appear outside these classes. Service
 and agent layers call repository methods only.
 
+Each repository is defined as a Python Protocol (abstract interface)
+with a concrete SQLAlchemy implementation. For example, PlaceRepository
+defines two methods:
+
+- `get_by_provider(provider: str, external_id: str) -> Place | None`
+  Fetch a place by provider and external ID for deduplication.
+- `save(place: Place) -> Place`
+  Insert or update a place with explicit error recovery (try/except/rollback).
+
+RecallRepository defines:
+
+- `hybrid_search(user_id: str, query_vector: list[float] | None, query_text: str, limit: int, rrf_k: int, candidate_multiplier: int, min_rrf_score: float, max_cosine_distance: float) -> list[RecallRow]`
+  Hybrid search combining pgvector (cosine similarity) and FTS (full-text search) with RRF merging.
+  If query_vector is None, falls back to text-only search.
+  Returns results with deterministic match_reason (which methods matched).
+- `count_saved_places(user_id: str) -> int`
+  Count user's saved places for cold-start detection.
+
+ConsultLogRepository defines:
+
+- `save(log: ConsultLog) -> None`
+  Persist a consult recommendation record (ADR-053). Called by ConsultService after
+  building the response; write failures are logged and not raised.
+
+UserMemoryRepository defines:
+
+- `save(user_id: str, memory: str, source: str, confidence: float) -> None`
+  Persist an extracted personal fact. Duplicates silently skipped by UNIQUE constraint.
+- `load(user_id: str) -> list[str]`
+  Load all stored memory strings for a user.
+
+The hybrid_search query is a single PostgreSQL CTE (Common Table Expression) with:
+- vector_results CTE: pgvector cosine distance ranking (if query_vector provided)
+- text_results CTE: FTS ts_rank scoring (keyword matching on place_name + cuisine)
+- combined CTE: FULL OUTER JOIN merging both result sets
+  RRF score: 1/(k + vector_rank) + 1/(k + text_rank), where k=60
+- Final SELECT: top limit results by RRF score, with match_reason derived from which CTEs matched
+
+The Protocol lives in src/totoro_ai/db/repositories/ alongside the
+concrete SQLAlchemyRecallRepository implementation. Service layers
+depend on the Protocol only, not the concrete class. This allows
+testing with mock repositories and swapping implementations without
+touching service code. All database writes include try/except blocks
+with explicit rollback and structured error logging.
+
+### Taste Model
+
+The taste model builds a per-user 8-dimensional preference vector from behavioral signals (save, accept, reject, onboarding). Each signal updates the vector via EMA with config-driven learning rates and gain modulation. The vector feeds into RankingService for personalized scoring. Full architecture: [docs/taste-model-architecture.md](taste-model-architecture.md).
+
 ## Key Boundaries
 
-- One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
+- One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log.
+- **Critical constraint**: Embedding vector dimensions must stay in sync across both repos (ADR-040). This repo uses Voyage 4-lite with 1024-dimensional embeddings. The pgvector column in the product repo's Prisma schema must be defined with dimension 1024. If the embedding model changes, both repos must update together to avoid vector dimension mismatches during similarity queries.
 - Redis is FastAPI-only.
 - Google Places API is called directly by this repo as part of the AI pipeline.
-- All LLM and embedding provider calls happen in this repo only.
+- All LLM, embedding, and transcription provider calls happen in this repo only (OpenAI, Anthropic, Groq, Voyage AI).
 
 ## Technology Stack
 
-| Layer           | Technology            | Notes                                          |
-| --------------- | --------------------- | ---------------------------------------------- |
-| Runtime         | Python 3.11           | AI library compatibility                       |
-| Package Manager | Poetry                |                                                |
-| HTTP Layer      | FastAPI               | Async, Pydantic-native                         |
-| Agent Framework | LangGraph             | Multi-step agent orchestration                 |
-| Chains          | LangChain             | Document loaders, retrievers, chains           |
-| LLM Providers   | OpenAI, Anthropic     | Via provider abstraction layer                 |
-| Embeddings      | Voyage 3.5-lite | 1024-dimensional vectors; 32k token context window          |
-| Monitoring      | Langfuse              | LLM monitoring and evaluation                  |
-| Cache           | Redis                 | LLM response caching, session, agent state     |
-| Database Client | SQLAlchemy or asyncpg | Read-write connection to PostgreSQL + pgvector |
-| External API    | Google Places API     | Place validation and nearby discovery          |
-| Deploy          | Railway               | Hobby $5/mo                                    |
-| Local Dev       | Docker Compose        | PostgreSQL + pgvector, Redis, FastAPI          |
+| Layer           | Technology                     | Notes                                                                 |
+| --------------- | ------------------------------ | --------------------------------------------------------------------- |
+| Runtime         | Python 3.11                    | AI library compatibility                                              |
+| Package Manager | Poetry                         |                                                                       |
+| HTTP Layer      | FastAPI 0.115                  | Async, Pydantic-native                                                |
+| Agent Framework | LangGraph 0.3                  | Multi-step agent orchestration (deferred for consult — ADR-050)       |
+| Chains          | LangChain 0.3                  | Document loaders, retrievers, chains                                  |
+| LLM Providers   | OpenAI, Anthropic, Groq        | Via provider abstraction layer; roles mapped in `config/app.yaml`     |
+| Intent Router   | llama-3.1-8b-instant (Groq)    | Fast intent classification for all `/v1/chat` traffic                 |
+| Extraction / Q&A / Vision / Evals | GPT-4o-mini (OpenAI) | Structured extraction, chat assistant, vision enricher, evals |
+| Orchestration   | claude-sonnet-4-6 (Anthropic)  | Strong reasoning for agent/orchestration layer                        |
+| Embeddings      | voyage-4-lite (Voyage AI)      | 1024-dimensional vectors; 32k token context window                    |
+| Transcription   | whisper-large-v3-turbo (Groq)  | Multilingual STT for background audio enricher (ADR-047)              |
+| Structured Output | Instructor 1.0               | LLM output parsing via OpenAI-compatible function calling             |
+| Monitoring      | Langfuse 2.0                   | LLM tracing, monitoring, and evaluation                               |
+| Cache           | Redis 5.0                      | LLM response caching, extraction status, agent state                  |
+| Database Client | SQLAlchemy 2.0 async + asyncpg | Read-write connection to PostgreSQL + pgvector                        |
+| Migrations      | Alembic 1.14                   | Manages AI tables: places, embeddings, taste_model, consult_logs, user_memories |
+| External API    | Google Places API              | Place validation and nearby discovery                                 |
+| Media Extraction | yt-dlp                        | Video metadata and audio extraction for TikTok/YouTube enrichers      |
+| Deploy          | Railway                        |                                                                       |
+| Local Dev       | Docker Compose                 | PostgreSQL + pgvector, Redis, FastAPI                                 |

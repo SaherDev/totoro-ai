@@ -1,0 +1,105 @@
+"""New cascade types — zero dependencies on existing extraction modules.
+
+Import from totoro_ai.core.extraction.types for all cascade pipeline types.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class ExtractionLevel(Enum):
+    """Enricher levels that produce CandidatePlace objects.
+
+    Only levels that create candidates are listed here. Caption enrichers
+    (oEmbed, yt-dlp) and the validator (Google Places) are excluded.
+    """
+
+    EMOJI_REGEX = "emoji_regex"
+    LLM_NER = "llm_ner"
+    SUBTITLE_CHECK = "subtitle_check"
+    WHISPER_AUDIO = "whisper_audio"
+    VISION_FRAMES = "vision_frames"
+
+
+@dataclass
+class CandidatePlace:
+    """Unvalidated place candidate produced by an enricher."""
+
+    name: str
+    city: str | None
+    cuisine: str | None
+    source: ExtractionLevel
+    corroborated: bool = False
+    price_range: str | None = None
+    place_type: str | None = None
+    signals: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExtractionContext:
+    """Shared mutable state threaded through all enrichers.
+
+    Mutation rules:
+    - caption and transcript are first-write-wins; once set, no enricher may overwrite.
+    - candidates is append-only during enrichment.
+    - pending_levels is set once by dispatch_background() (Run 2).
+    """
+
+    url: str | None
+    user_id: str
+    supplementary_text: str = ""
+    caption: str | None = None
+    transcript: str | None = None
+    candidates: list[CandidatePlace] = field(default_factory=list)
+    pending_levels: list[ExtractionLevel] = field(default_factory=list)
+    platform: str | None = None
+    title: str | None = None
+    hashtags: list[str] = field(default_factory=list)
+    location_tag: str | None = None
+
+
+@dataclass
+class ExtractionResult:
+    """Validated, scored result from GooglePlacesValidator."""
+
+    place_name: str
+    address: str | None
+    city: str | None
+    cuisine: str | None
+    confidence: float
+    resolved_by: ExtractionLevel
+    corroborated: bool
+    external_provider: str | None
+    external_id: str | None
+    lat: float | None = None
+    lng: float | None = None
+
+
+@dataclass
+class ProvisionalResponse:
+    """Returned when Phase 2 validation finds nothing and Phase 3 fires."""
+
+    extraction_status: str
+    confidence: float
+    message: str
+    pending_levels: list[ExtractionLevel] = field(default_factory=list)
+    request_id: str = ""  # UUID4 set by ExtractionPipeline when Phase 3 fires
+
+
+@dataclass
+class ExtractionPending:
+    """Typed domain event for background dispatch (ADR-043).
+
+    Intentionally NOT a DomainEvent subclass: ExtractionContext contains mutable
+    list fields that are incompatible with Pydantic BaseModel validation.
+    The event dispatcher uses cast(DomainEvent, event) as a typed workaround.
+    """
+
+    user_id: str
+    url: str | None
+    pending_levels: list[ExtractionLevel]
+    context: ExtractionContext
+    event_type: str = "extraction_pending"
+    request_id: str = ""  # carried from ProvisionalResponse to handler

@@ -1,0 +1,264 @@
+# Totoro AI — non-secret application config
+# Secrets (API keys, DB/Redis URLs) live in .env (gitignored symlink)
+# ADR-015: YAML config loader for non-secret settings
+# ADR-016: logical-role-to-provider mapping
+# ADR-029: consolidated non-secret config into app.yaml
+
+# ---------------------------------------------------------------------------
+# App metadata
+# ---------------------------------------------------------------------------
+app:
+  name: totoro-ai
+  description: AI engine for Totoro
+  api_prefix: /v1
+
+# ---------------------------------------------------------------------------
+# Model assignments — logical roles to providers and models
+# ADR-016, ADR-020: code never hardcodes model names, always reads from config
+# ---------------------------------------------------------------------------
+providers:
+  groq:
+    base_url: https://api.groq.com
+  ollama:
+    base_url: http://localhost:11434/v1
+
+models:
+  transcriber:
+    provider: groq
+    model: whisper-large-v3-turbo
+    max_tokens: 0
+    temperature: 0
+
+  vision_frames:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 512
+    temperature: 0
+
+  intent_parser:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 512
+    temperature: 0
+  # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
+
+  embedder:
+    provider: voyage
+    model: voyage-4-lite
+    dimensions: 1024
+
+  orchestrator:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    max_tokens: 1024
+    temperature: 0.7
+
+  evaluator:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 256
+    temperature: 0
+  # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
+
+  chat_assistant:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 1024
+    temperature: 0.9
+
+  intent_router:
+    provider: groq
+    model: llama-3.1-8b-instant
+    max_tokens: 256
+    temperature: 0
+
+# ---------------------------------------------------------------------------
+# Extraction pipeline — confidence weights and decision thresholds
+# ADR-018, ADR-034: confidence scoring and two-phase confirmation
+# ---------------------------------------------------------------------------
+extraction:
+  confidence_weights:
+    base_scores:
+      CAPTION: 0.70
+      PLAIN_TEXT: 0.70
+      SPEECH: 0.60
+      OCR: 0.55
+    places_modifiers:
+      EXACT: 0.20
+      FUZZY: 0.15
+      CATEGORY_ONLY: 0.10
+      NONE_CAP: 0.30
+    multi_source_bonus: 0.10
+    max_score: 0.95
+  thresholds:
+    store_silently: 0.70
+    require_confirmation: 0.30
+  confidence:
+    base_scores:
+      emoji_regex: 0.95
+      llm_ner: 0.80
+      subtitle_check: 0.75
+      whisper_audio: 0.65
+      vision_frames: 0.55
+    corroboration_bonus: 0.10
+    max_score: 0.97
+    save_threshold: 0.70
+  circuit_breaker_threshold: 5
+  circuit_breaker_cooldown: 900
+  vision:
+    max_frames: 5
+    scene_threshold: 0.3
+    timeout_seconds: 10
+  whisper:
+    timeout_seconds: 8
+    audio_format: opus
+    audio_quality: 32k
+  subtitle:
+    output_dir: /tmp/subtitles
+    format: vtt
+  # Place fields that can be updated on re-submission (upsert semantics)
+  mutable_fields:
+    - place_name
+    - address
+    - cuisine
+    - price_range
+    - lat
+    - lng
+    - source_url
+    - validated_at
+    - confidence
+    - source
+
+# ---------------------------------------------------------------------------
+# External services — URLs, timeouts, and request fields
+# ---------------------------------------------------------------------------
+external_services:
+  google_places:
+    base_url: https://maps.googleapis.com/maps/api/place/findplacefromtext/json
+    nearbysearch_url: https://maps.googleapis.com/maps/api/place/nearbysearch/json
+    timeout_seconds: 5.0
+    default_region: "th"
+    request_fields:
+      - name
+      - formatted_address
+      - place_id
+      - geometry
+      - types
+  tiktok_oembed:
+    base_url: https://www.tiktok.com/oembed
+    timeout_seconds: 3.0
+
+# ---------------------------------------------------------------------------
+# Recall service configuration — Hybrid search with RRF
+# ADR-045: Reciprocal Rank Fusion of pgvector + FTS
+# ---------------------------------------------------------------------------
+recall:
+  max_results: 10
+  rrf_k: 60
+  candidate_multiplier: 2
+  min_rrf_score: 0.01
+  max_cosine_distance: 0.65
+
+# ---------------------------------------------------------------------------
+# Consult service configuration — Phase 3: 6-step pipeline
+# ADR-049: PlacesClient moved to core/places
+# ---------------------------------------------------------------------------
+consult:
+  max_alternatives: 2
+  placeholder_photo_url: "https://placehold.co/800x450.webp"
+  response_timeout_seconds: 10
+  radius_defaults:
+    default: 2000
+    nearby: 1000
+    walking: 500
+
+# ---------------------------------------------------------------------------
+# Embeddings configuration
+# ADR-040: Voyage 4-lite chosen for 9.25% better retrieval quality
+# ---------------------------------------------------------------------------
+embeddings:
+  dimensions: 1024
+  description_separator: ", "
+
+# ---------------------------------------------------------------------------
+# Taste Model Configuration
+# ADR-043: EMA-based taste modeling with gain-weighted dimension updates
+# ---------------------------------------------------------------------------
+taste_model:
+  ema:
+    price_comfort: 0.03
+    dietary_alignment: 0.03
+    cuisine_frequency: 0.07
+    ambiance_preference: 0.07
+    crowd_tolerance: 0.10
+    cuisine_adventurousness: 0.10
+    time_of_day_preference: 0.15
+    distance_tolerance: 0.15
+  signals:
+    save: 1.0
+    accepted: 2.0
+    rejected: -1.5
+    onboarding_explicit_positive: 1.2
+    onboarding_explicit_negative: -0.8
+    ignored: -0.5
+    repeat_visit: 3.0
+    search_accepted: 1.5
+  observations:
+    # Lookup table: place metadata → v_observation per dimension
+    price_comfort:
+      low: 1.0
+      mid: 0.5
+      high: 0.0
+    dietary_alignment:
+      vegan: 1.0
+      vegetarian: 0.75
+      pescatarian: 0.5
+      omnivore: 0.25
+    cuisine_frequency:
+      rare: 0.0
+      occasional: 0.33
+      frequent: 0.66
+      very_frequent: 1.0
+    ambiance_preference:
+      casual: 0.25
+      moderate: 0.5
+      upscale: 1.0
+    crowd_tolerance:
+      quiet: 0.0
+      moderate: 0.5
+      busy: 1.0
+    cuisine_adventurousness:
+      familiar: 0.0
+      exploration: 0.5
+      experimental: 1.0
+    time_of_day_preference:
+      breakfast: 0.0
+      lunch: 0.33
+      dinner: 0.66
+      late_night: 1.0
+    distance_tolerance:
+      very_close: 1.0
+      nearby: 0.66
+      moderate: 0.33
+      far: 0.0
+
+# ---------------------------------------------------------------------------
+# Ranking Configuration
+# ADR-043: Multi-factor ranking with taste-driven personalization
+# ---------------------------------------------------------------------------
+ranking:
+  weights:
+    taste_similarity: 0.40
+    distance: 0.25
+    price_fit: 0.20
+    popularity: 0.15
+    source_boost: 0.15
+
+# ---------------------------------------------------------------------------
+# User Memory Configuration
+# Personal fact extraction confidence thresholds
+# ---------------------------------------------------------------------------
+memory:
+  confidence:
+    stated: 0.9
+    inferred: 0.6

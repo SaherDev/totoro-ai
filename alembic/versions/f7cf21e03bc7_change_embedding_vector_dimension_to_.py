@@ -18,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Change embeddings.vector from 1536 to 1024 dimensions (ADR-040: Voyage 3.5-lite)."""
+    """Change embeddings.vector from 1536 to 1024 dimensions (ADR-040: Voyage 4-lite)."""
     op.alter_column(
         'embeddings',
         'vector',

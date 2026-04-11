@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash .specify/scripts/bash/setup-plan.sh --json 2>&1)",
+      "Bash(bash .specify/scripts/bash/update-agent-context.sh claude 2>&1)",
+      "Bash(poetry run:*)",
+      "Skill(code-review:code-review)",
+      "Bash(gh repo:*)",
+      "Bash(.specify/scripts/bash/setup-plan.sh --json)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks 2>&1)",
+      "Bash(git add:*)",
+      "Bash(git fetch:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh --json --short-name \"recall-hybrid-search\" \"Implement POST /v1/recall endpoint with hybrid search combining vector similarity and full-text search merged with RRF, returning saved places matching a natural language query with match_reason field, cold start empty state support, and configurable result count\" 2>&1)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --paths-only 2>&1)",
+      "Bash(.specify/scripts/bash/update-agent-context.sh claude:*)",
+      "Bash(git commit:*)",
+      "Bash(for q:*)",
+      "Bash(do echo:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh --json --short-name \"taste-model\" \"implement the taste model for Totoro AI: EMA updates from behavioral signals, interaction log, EventDispatcher wiring, TasteModelRepository, personalization routing, and consult ranking integration\")",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json 2>&1)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)",
+      "Bash(python -m py_compile src/totoro_ai/db/models.py)",
+      "Bash(alembic upgrade:*)",
+      "Bash(grep -h \"down_revision\" alembic/versions/*.py)",
+      "Bash(xargs ls:*)",
+      "Bash(grep -r \"onboarding\\\\|OnboardingSignal\" tests/ --include=*.py)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh:*)",
+      "Bash(git stash:*)",
+      "Bash(python3:*)",
+      "Bash(poetry add:*)",
+      "Bash(brew install:*)",
+      "Bash(ffmpeg -version)",
+      "Bash(git checkout:*)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(git rm:*)",
+      "WebFetch(domain:developers.google.com)"
+    ]
+  }
+}

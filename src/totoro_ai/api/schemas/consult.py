@@ -16,7 +16,13 @@ class ConsultRequest(BaseModel):
     user_id: str
     query: str
     location: Location | None = None
-    stream: bool = False
+
+
+class PlacePhotos(BaseModel):
+    """Photo URLs for a recommended place."""
+
+    hero: str | None = None
+    square: str | None = None
 
 
 class PlaceResult(BaseModel):
@@ -26,6 +32,7 @@ class PlaceResult(BaseModel):
     address: str
     reasoning: str
     source: str  # "saved" | "discovered"
+    photos: PlacePhotos = PlacePhotos()
 
 
 class ReasoningStep(BaseModel):
@@ -35,8 +42,8 @@ class ReasoningStep(BaseModel):
     summary: str
 
 
-class SyncConsultResponse(BaseModel):
-    """Response body for POST /v1/consult in synchronous mode."""
+class ConsultResponse(BaseModel):
+    """Response body for POST /v1/consult."""
 
     primary: PlaceResult
     alternatives: list[PlaceResult]

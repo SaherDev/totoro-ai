@@ -1,18 +1,22 @@
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
-from totoro_ai.core.config import load_yaml_config
+from totoro_ai.core.config import get_secrets
 
-_engine = None
-_session_factory = None
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def _get_engine():  # type: ignore[no-untyped-def]
+def _get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        config = load_yaml_config(".local.yaml")
-        url = config["database"]["url"]
+        url = get_secrets().DATABASE_URL
         # Ensure asyncpg driver is used
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
@@ -29,4 +33,8 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with _get_session_factory()() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
