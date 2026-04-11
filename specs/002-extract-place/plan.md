@@ -36,7 +36,7 @@ Each extractor returns an `ExtractionResult` carrying both the structured `Place
 | ADR-038 | Protocol for every swappable dependency | ✓ Pass — `InputExtractor`, `PlacesClient`, `LLMClientProtocol` all defined as Protocols |
 | ADR-040 | No OpenAI embeddings — embeddings not written in this task | ✓ Pass — no embedding calls in this pipeline |
 
-**Constitution inconsistency (non-blocking):** Section VI of constitution says "Prisma owns all migrations" — this is stale text. ADR-030 and the existing Alembic setup are authoritative. Alembic adds the new migration here.
+**Constitution note:** ADR-030 is the authoritative decision — Alembic owns AI-table migrations in this repo. Alembic adds the new migration here.
 
 **Complexity tracking:** No violations requiring justification.
 

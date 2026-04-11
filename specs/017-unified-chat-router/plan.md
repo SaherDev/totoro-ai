@@ -293,7 +293,7 @@ Add two new ADR entries at the top:
 
 **ADR-053**: This repo owns consult_logs table for AI recommendation history  
 - Context: Feature 017 needs to persist AI-generated recommendation history for feedback loops and taste model improvement. The product table `recommendations` is owned by NestJS (per Constitution Section VI). Naming the new table `recommendations` would create a write-ownership conflict.  
-- Decision: This repo adds `consult_logs` (not `recommendations`) via Alembic. NestJS continues to own its `recommendations` table via Prisma. The two are distinct and never joined.
+- Decision: This repo adds `consult_logs` (not `recommendations`) via Alembic. NestJS has no recommendations table — it only owns users and user_settings via TypeORM.
 
 ---
 

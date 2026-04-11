@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # Create user_memories table (owned by totoro-ai repo via Alembic)
-    # Note: users and user_settings tables are managed by NestJS/Prisma, not Alembic
+    # Note: users and user_settings tables are managed by NestJS/TypeORM, not Alembic
     op.create_table('user_memories',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('user_id', sa.String(), nullable=False),
@@ -37,6 +37,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # Drop user_memories table only (users/user_settings managed by NestJS/Prisma)
+    # Drop user_memories table only (users/user_settings managed by NestJS/TypeORM)
     op.drop_index(op.f('ix_user_memories_user_id'), table_name='user_memories')
     op.drop_table('user_memories')

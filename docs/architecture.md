@@ -319,9 +319,9 @@ Reads:
 
 Does not write:
 
-- users, user_settings, recommendations (product data owned by NestJS)
+- users, user_settings (product data owned by NestJS)
 
-Schema for AI tables (places, embeddings, taste_model, consult_logs, user_memories, interaction_log) is managed by Alembic in this repo. If Prisma changes a table this repo reads from (users, recommendations), FastAPI must adapt. Database client: SQLAlchemy async + asyncpg.
+Schema for AI tables (places, embeddings, taste_model, consult_logs, user_memories, interaction_log) is managed by Alembic in this repo. If NestJS changes the users or user_settings table (via TypeORM), FastAPI must adapt. Database client: SQLAlchemy async + asyncpg.
 
 ## Redis
 
@@ -421,8 +421,8 @@ The taste model builds a per-user 8-dimensional preference vector from behaviora
 
 ## Key Boundaries
 
-- One shared PostgreSQL instance. Migration ownership split by domain: Prisma owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log.
-- **Critical constraint**: Embedding vector dimensions must stay in sync across both repos (ADR-040). This repo uses Voyage 4-lite with 1024-dimensional embeddings. The pgvector column in the product repo's Prisma schema must be defined with dimension 1024. If the embedding model changes, both repos must update together to avoid vector dimension mismatches during similarity queries.
+- One shared PostgreSQL instance. Ownership split by domain: NestJS manages users and user_settings via TypeORM (`synchronize: true`). Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log.
+- **Critical constraint**: Embedding vector dimensions must stay in sync — but pgvector columns are fully owned by this repo's Alembic migrations. NestJS never touches vector columns. This repo uses Voyage 4-lite with 1024-dimensional embeddings.
 - Redis is FastAPI-only.
 - Google Places API is called directly by this repo as part of the AI pipeline.
 - All LLM, embedding, and transcription provider calls happen in this repo only (OpenAI, Anthropic, Groq, Voyage AI).

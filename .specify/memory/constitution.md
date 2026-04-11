@@ -14,8 +14,8 @@ This repo owns:
 
 This repo does NOT own:
 
-- Users, settings, recommendations — that's NestJS
-- Database migrations — Prisma in totoro owns all schema changes
+- Users and user_settings — that's NestJS
+- Product-side database migrations — NestJS (TypeORM with `synchronize: true`) manages users and user_settings
 - Any UI, auth, payment, or notification logic
 
 ## II. Architecture Decisions Are Constraints
@@ -70,10 +70,10 @@ No raw dicts cross function or module boundaries. All inputs/outputs use Pydanti
 
 ## VI. Database Write Ownership
 
-- This repo writes: `places`, `embeddings`, `taste_model`
-- NestJS writes: `users`, `user_settings`, `recommendations`
-- Prisma in totoro owns all migrations — coordinate schema changes before running
-- Embedding dimensions must match pgvector column definition in Prisma
+- This repo writes: `places`, `embeddings`, `taste_model`, `consult_logs`, `user_memories`, `interaction_log`
+- NestJS writes: `users`, `user_settings`
+- Alembic in this repo owns all AI-table migrations; TypeORM in totoro manages product tables
+- Embedding dimensions are defined only in this repo's Alembic migrations — NestJS never touches pgvector columns
 
 ## VII. Redis Ownership
 

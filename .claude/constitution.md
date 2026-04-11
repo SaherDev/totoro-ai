@@ -120,7 +120,7 @@ Then update plan:
 ### Tech Stack (Locked)
 - **ADR-003:** YAML config for non-secrets (not .env)
 - **ADR-004:** Clerk for auth (not custom JWT)
-- **ADR-005:** Prisma for ORM (not TypeORM)
+- **ADR-030:** Alembic owns AI tables; product repo owns users/user_settings via TypeORM
 - **ADR-007:** Tailwind v3 + shadcn/ui (not other libraries)
 - **ADR-020:** pnpm package manager (not yarn/npm)
 

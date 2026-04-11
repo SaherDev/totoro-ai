@@ -37,7 +37,7 @@ Fix 9 issues from the implementation report across four layers: (1) replace prov
 | ADR-041: Provider-agnostic place identity | ✅ Pass | This plan implements it |
 | Constitution VI: This repo writes places, DB migrations via Alembic | ✅ Pass | Confirmed |
 
-**Constitution Note**: Constitution §VI currently says "Prisma in totoro owns all migrations" — this conflicts with ADR-030 and CLAUDE.md which explicitly give Alembic ownership of AI tables. ADR-030 is the binding decision; the constitution text is stale on this point.
+**Constitution Note**: ADR-030 is the binding decision — Alembic owns AI tables in this repo; TypeORM in the product repo manages users and user_settings.
 
 **Complexity Tracking** (ADR-038 requires justification for repository pattern):
 
@@ -374,7 +374,7 @@ import instructor  # type: ignore[import-untyped]
 
 Find all occurrences of `1536` in the embeddings/vector section and replace with `1024`.
 
-> PR reviewer must also manually verify the NestJS Prisma schema uses `1024` dimensions and confirm in the PR description (per clarification session 2026-03-25).
+> pgvector columns are owned entirely by this repo's Alembic migrations — no cross-repo verification needed.
 
 ---
 

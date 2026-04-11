@@ -2,7 +2,7 @@
 
 ## Two-Repo Separation
 
-- **totoro** (product repo): Nx monorepo, Next.js, NestJS, Prisma, PostgreSQL + pgvector. Handles UI, auth (Clerk), CRUD, and product data writes.
+- **totoro** (product repo): Nx monorepo, Next.js, NestJS, TypeORM, PostgreSQL + pgvector. Handles UI, auth (Clerk), CRUD, and product data writes.
 - **totoro-ai** (this repo): Pure Python. All AI/ML logic. Writes AI-generated data (places, embeddings, taste_model) to PostgreSQL.
 - Communication: HTTP only. The product repo calls this repo's FastAPI endpoints (`POST /v1/chat`, `GET /v1/health`). ADR-052 consolidated all conversational traffic into `/v1/chat`.
 - This repo never imports from, depends on, or assumes anything about the product repo's internals.
@@ -26,7 +26,7 @@
 
 - UI, frontend, auth, user management, CRUD operations
 - Product data writes — users, settings, recommendations belong to NestJS
-- Database migrations for product tables — Prisma in the product repo owns users, user_settings, recommendations. Alembic in this repo owns places, embeddings, taste_model.
+- Database migrations for product tables — NestJS (TypeORM) in the product repo manages users and user_settings. Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log.
 - Payment, notifications, or any product feature logic
 
 ## Database Access
@@ -34,8 +34,8 @@
 - Write ownership split by domain: FastAPI writes AI data, NestJS writes product data
 - FastAPI writes: places, embeddings, taste_model, consult_logs, user_memories, interaction_log
 - FastAPI reads: all tables as needed
-- NestJS writes: users, user_settings, recommendations (product data)
-- Migration ownership split by domain: Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log. Prisma in product repo owns users, user_settings, recommendations. Never run Prisma migrations against AI tables.
+- NestJS writes: users, user_settings (product data, via TypeORM)
+- Migration ownership split by domain: Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log. TypeORM in the product repo manages users and user_settings. NestJS never touches AI tables.
 - Database client: SQLAlchemy async + asyncpg
 - Redis is owned exclusively by this repo. NestJS does not connect to Redis.
 

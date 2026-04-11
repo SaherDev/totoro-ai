@@ -13,7 +13,7 @@
 - Q: When the same (provider, external_id) is re-submitted, which fields are updated? → A: All mutable place fields (name, address, category, metadata, etc.) are overwritten with the new values.
 - Q: What happens when provider is empty or null on submission? → A: Reject with a validation error — provider is a required, non-empty field.
 - Q: Should DB save failures be logged and/or traced? → A: Log only — emit a structured log entry with context (operation, provider, external_id) on every DB save failure. No trace event required.
-- Q: How should NestJS embedding dimension verification (SC-005) be done? → A: Manual cross-repo check — PR reviewer inspects the NestJS Prisma schema and confirms alignment in the PR description.
+- Q: How should NestJS embedding dimension verification (SC-005) be done? → A: Not needed — pgvector columns are owned entirely by this repo's Alembic migrations; NestJS never defines vector columns.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -120,7 +120,7 @@ The system must be reliably detected as healthy by the hosting platform after de
 
 ## Assumptions
 
-- The NestJS product repo stores embeddings with a 1024-dimension vector field; this must be manually verified by the PR reviewer against the Prisma schema and confirmed in the PR description. No code change is expected in this repo.
+- pgvector columns are defined only in this repo's Alembic migrations (1024 dimensions for Voyage 4-lite). NestJS never defines vector columns. No cross-repo verification needed.
 - "Explicit rollback" in the session layer is a contract clarification — the database already handles this implicitly, but making it explicit improves readability and safety.
 - The health probe fix is a configuration-only change with no application code impact.
 - The instructor library type annotation issue is a minor tooling fix and does not affect runtime behavior.
