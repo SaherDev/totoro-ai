@@ -1,0 +1,5 @@
+[providers.python]
+version = "3.12"
+
+[providers.python.poetry]
+enabled = true
