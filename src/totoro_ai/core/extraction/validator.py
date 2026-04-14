@@ -1,4 +1,13 @@
-"""Places validator — parallel multi-candidate validation with confidence scoring."""
+"""Places validator — parallel multi-candidate validation with confidence scoring.
+
+The validator takes `CandidatePlace` wrappers (each carrying a `PlaceCreate`
+built by the enricher) and returns `ValidatedCandidate` wrappers with the
+same `PlaceCreate`, now stamped with `provider` + `external_id` from the
+match. No field-level mapping happens here — the enricher already put
+every inferrable field onto the `PlaceCreate`, and the validator only adds
+what Google knows (the namespaced provider identity and the canonical
+name).
+"""
 
 from __future__ import annotations
 
@@ -9,38 +18,43 @@ from totoro_ai.core.config import ConfidenceConfig
 from totoro_ai.core.extraction.confidence import calculate_confidence
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
-    ExtractionResult,
+    ValidatedCandidate,
 )
-from totoro_ai.core.places import PlacesClient, PlacesMatchQuality
+from totoro_ai.core.places import (
+    PlaceCreate,
+    PlaceProvider,
+    PlacesClient,
+    PlacesMatchQuality,
+    PlacesMatchResult,
+)
 
 # Google Places types that indicate a geographic feature, not a venue.
 # Candidates that resolve to any of these types are rejected post-validation.
 _GEOGRAPHIC_PLACE_TYPES: frozenset[str] = frozenset(
     {
-        "route",  # street or road
-        "street_address",  # specific address on a street
-        "political",  # generic political entity
-        "locality",  # city or town
-        "sublocality",  # district or neighbourhood within a city
+        "route",
+        "street_address",
+        "political",
+        "locality",
+        "sublocality",
         "sublocality_level_1",
         "sublocality_level_2",
         "sublocality_level_3",
         "sublocality_level_4",
         "sublocality_level_5",
-        "country",  # country
-        "administrative_area_level_1",  # state / province
-        "administrative_area_level_2",  # county / region
+        "country",
+        "administrative_area_level_1",
+        "administrative_area_level_2",
         "administrative_area_level_3",
         "administrative_area_level_4",
         "administrative_area_level_5",
-        "neighborhood",  # neighbourhood
+        "neighborhood",
         "postal_code",
         "intersection",
-        "premise",  # building/address, not a business venue
+        "premise",
         "natural_feature",
     }
 )
-
 
 # Match-quality → modifier mapping (ADR-029, plan.md Phase 5)
 _QUALITY_MODIFIERS: dict[PlacesMatchQuality, float] = {
@@ -50,22 +64,24 @@ _QUALITY_MODIFIERS: dict[PlacesMatchQuality, float] = {
     PlacesMatchQuality.NONE: 0.3,
 }
 
+# Google's external_provider strings we know how to namespace.
+_PROVIDER_MAP: dict[str, PlaceProvider] = {
+    "google": PlaceProvider.google,
+    "foursquare": PlaceProvider.foursquare,
+    "manual": PlaceProvider.manual,
+}
+
 
 class PlacesValidatorProtocol(Protocol):
     """Protocol for swappable place-registry validators (ADR-038)."""
 
     async def validate(
         self, candidates: list[CandidatePlace]
-    ) -> list[ExtractionResult] | None: ...
+    ) -> list[ValidatedCandidate] | None: ...
 
 
 class GooglePlacesValidator:
-    """Validates CandidatePlaces against Google Places in parallel.
-
-    Returns a list of ExtractionResult with confidence scores, or None when
-    no candidates survive validation.  One Places-API failure does not abort
-    the batch — that candidate is silently dropped.
-    """
+    """Validates CandidatePlaces against Google Places in parallel."""
 
     def __init__(
         self,
@@ -77,7 +93,7 @@ class GooglePlacesValidator:
 
     async def validate(
         self, candidates: list[CandidatePlace]
-    ) -> list[ExtractionResult] | None:
+    ) -> list[ValidatedCandidate] | None:
         if not candidates:
             return None
 
@@ -85,13 +101,18 @@ class GooglePlacesValidator:
             *[self._validate_one(c) for c in candidates],
             return_exceptions=True,
         )
-        results = [r for r in raw if isinstance(r, ExtractionResult)]
+        results = [r for r in raw if isinstance(r, ValidatedCandidate)]
         return results if results else None
 
-    async def _validate_one(self, candidate: CandidatePlace) -> ExtractionResult | None:
+    async def _validate_one(
+        self, candidate: CandidatePlace
+    ) -> ValidatedCandidate | None:
         try:
-            places_match = await self._places_client.validate_place(
-                name=candidate.name, location=candidate.city
+            places_match: PlacesMatchResult = (
+                await self._places_client.validate_place(
+                    name=candidate.place.place_name,
+                    location=self._lookup_city(candidate),
+                )
             )
         except Exception:
             return None
@@ -108,21 +129,29 @@ class GooglePlacesValidator:
         if confidence == 0.0 or places_match.external_id is None:
             return None
 
-        # Reject candidates whose Google Places types indicate a geographic
-        # feature (street, district, city, country) rather than a venue.
         if _GEOGRAPHIC_PLACE_TYPES.intersection(places_match.place_types):
             return None
 
-        return ExtractionResult(
-            place_name=places_match.validated_name or candidate.name,
-            address=None,  # formatted_address not in request_fields; deferred to Run 3
-            city=candidate.city,
-            cuisine=candidate.cuisine,
+        provider = _PROVIDER_MAP.get(
+            (places_match.external_provider or "").lower(), PlaceProvider.google
+        )
+        validated_place: PlaceCreate = candidate.place.model_copy(
+            update={
+                "place_name": places_match.validated_name or candidate.place.place_name,
+                "provider": provider,
+                "external_id": places_match.external_id,
+            }
+        )
+
+        return ValidatedCandidate(
+            place=validated_place,
             confidence=confidence,
             resolved_by=candidate.source,
             corroborated=candidate.corroborated,
-            external_provider=places_match.external_provider,
-            external_id=places_match.external_id,
-            lat=places_match.lat,
-            lng=places_match.lng,
         )
+
+    @staticmethod
+    def _lookup_city(candidate: CandidatePlace) -> str | None:
+        """Read the city off the candidate's location_context for the provider call."""
+        ctx = candidate.place.attributes.location_context
+        return ctx.city if ctx is not None else None

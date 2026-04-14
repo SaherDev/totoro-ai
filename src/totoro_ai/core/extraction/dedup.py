@@ -1,27 +1,37 @@
-"""Candidate deduplication — collapses same-name candidates, marks corroborated."""
+"""Candidate deduplication — collapses duplicates at two points in the cascade.
+
+1. `dedup_candidates` — pre-validation dedup on `CandidatePlace` by normalised
+   `place.place_name`. Runs before the Google Places call so duplicate
+   candidates from different enrichers get a single validation call.
+
+2. `dedup_validated_by_provider_id` — post-validation dedup on
+   `ValidatedCandidate`. Two candidates that share a `provider_id`
+   (namespaced `{provider}:{external_id}`) get collapsed into one; the
+   winner inherits any attribute fields a loser filled in but the winner
+   left blank (cuisine, price_hint, ambiance, location_context, dietary,
+   good_for). The inheritance is a general attribute merge — not just
+   "city" — because the relevant data all lives on `PlaceAttributes` now.
+"""
 
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from totoro_ai.core.config import ConfidenceConfig
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionContext,
     ExtractionLevel,
-    ExtractionResult,
+    ValidatedCandidate,
 )
+from totoro_ai.core.places import PlaceAttributes
 
 _LEVEL_ORDER = list(ExtractionLevel)
 
 
 def _normalize(name: str) -> str:
-    """Normalize a place name for dedup comparison.
-
-    Lowercases, strips punctuation, and collapses whitespace so that
-    "RAMEN KAISUGI", "Ramen Kaisugi!", and "ramen kaisugi" all map to the
-    same key.
-    """
+    """Normalize a place name for dedup comparison."""
     without_punct = re.sub(r"[^\w\s]", "", name, flags=re.UNICODE)
     return " ".join(without_punct.lower().split())
 
@@ -29,78 +39,111 @@ def _normalize(name: str) -> str:
 def dedup_candidates(context: ExtractionContext) -> None:
     """Deduplicate context.candidates in-place.
 
-    Groups by normalised name.  When multiple candidates share a name the one
-    with the lowest ExtractionLevel index (highest priority) wins; it is
-    marked corroborated=True.  Insertion order of first-occurrence is preserved.
+    Groups by normalised `place.place_name`. When multiple candidates share a
+    name the one with the lowest ExtractionLevel index (highest priority)
+    wins; it is marked `corroborated=True` and inherits any attribute
+    fields a loser had but the winner left blank.
     """
     if len(context.candidates) <= 1:
         return
 
-    # Preserve insertion order; key = normalised name
     groups: dict[str, list[CandidatePlace]] = {}
     for candidate in context.candidates:
-        key = _normalize(candidate.name)
+        key = _normalize(candidate.place.place_name)
         groups.setdefault(key, []).append(candidate)
 
     winners: list[CandidatePlace] = []
     for group in groups.values():
         if len(group) == 1:
             winners.append(group[0])
-        else:
-            winner = min(group, key=lambda c: _LEVEL_ORDER.index(c.source))
-            winner.corroborated = True
-            winners.append(winner)
+            continue
+
+        winner = min(group, key=lambda c: _LEVEL_ORDER.index(c.source))
+        losers = [c for c in group if c is not winner]
+        merged = _merge_attributes(
+            winner.place.attributes, *(c.place.attributes for c in losers)
+        )
+        winner.place = winner.place.model_copy(update={"attributes": merged})
+        winner = replace(winner, corroborated=True)
+        winners.append(winner)
 
     context.candidates = winners
 
 
-def dedup_results_by_external_id(
-    results: list[ExtractionResult],
+def _provider_id(vc: ValidatedCandidate) -> str | None:
+    provider = vc.place.provider
+    external_id = vc.place.external_id
+    if provider is None or external_id is None:
+        return None
+    return f"{provider.value}:{external_id}"
+
+
+def dedup_validated_by_provider_id(
+    results: list[ValidatedCandidate],
     confidence_config: ConfidenceConfig,
-) -> list[ExtractionResult]:
-    """Post-validation dedup: collapse results that resolved to the same external_id.
+) -> list[ValidatedCandidate]:
+    """Collapse validated candidates sharing a `provider_id`.
 
-    The pre-validation name dedup cannot catch cases where two enrichers
-    produce slightly different name strings (e.g. "RAMEN KAISUGI Bangkok" vs
-    "RAMEN KAISUGI") that Google Places resolves to the same place_id.
-
-    When two results share the same external_id:
-    - Keep the one with the highest-priority resolved_by source
-      (same ordering as _LEVEL_ORDER).
-    - Apply corroboration_bonus to the winner's confidence, capped at max_score.
-    - Drop the other result entirely.
-
-    Results with external_id=None pass through unchanged.
+    Winner is the entry with the highest-priority `resolved_by`. It gets the
+    corroboration bonus (capped at `max_score`) and inherits any attribute
+    fields a loser filled in but the winner left blank.
+    `provider_id=None` results pass through unchanged.
     """
     if len(results) <= 1:
         return results
 
-    no_id: list[ExtractionResult] = []
-    by_external_id: dict[str, list[ExtractionResult]] = {}
+    no_id: list[ValidatedCandidate] = []
+    by_provider_id: dict[str, list[ValidatedCandidate]] = {}
 
     for result in results:
-        if result.external_id is None:
+        pid = _provider_id(result)
+        if pid is None:
             no_id.append(result)
         else:
-            by_external_id.setdefault(result.external_id, []).append(result)
+            by_provider_id.setdefault(pid, []).append(result)
 
-    winners: list[ExtractionResult] = []
-    for group in by_external_id.values():
+    winners: list[ValidatedCandidate] = []
+    for group in by_provider_id.values():
         if len(group) == 1:
             winners.append(group[0])
-        else:
-            winner = min(group, key=lambda r: _LEVEL_ORDER.index(r.resolved_by))
-            winner.confidence = min(
-                winner.confidence + confidence_config.corroboration_bonus,
-                confidence_config.max_score,
-            )
-            winner.corroborated = True
-            # Inherit city from a lower-priority result if the winner has none.
-            if winner.city is None:
-                for r in group:
-                    if r.city is not None:
-                        winner.city = r.city
-                        break
-            winners.append(winner)
+            continue
+
+        winner = min(group, key=lambda r: _LEVEL_ORDER.index(r.resolved_by))
+        losers = [r for r in group if r is not winner]
+        merged = _merge_attributes(
+            winner.place.attributes, *(r.place.attributes for r in losers)
+        )
+        winner.place = winner.place.model_copy(update={"attributes": merged})
+        winner.confidence = min(
+            winner.confidence + confidence_config.corroboration_bonus,
+            confidence_config.max_score,
+        )
+        winner.corroborated = True
+        winners.append(winner)
 
     return no_id + winners
+
+
+def _merge_attributes(
+    winner: PlaceAttributes, *losers: PlaceAttributes
+) -> PlaceAttributes:
+    """Return a `PlaceAttributes` where any field the winner left empty is
+    backfilled from the first loser that has a non-empty value.
+
+    "Empty" means `None` for scalars / nested models, and an empty list for
+    list fields. The merge is shallow — nested models (like
+    `location_context`) are copied over whole, not field-merged.
+    """
+    merged: dict[str, object] = winner.model_dump()
+    for loser in losers:
+        loser_dict = loser.model_dump()
+        for key, val in loser_dict.items():
+            if _is_empty(merged.get(key)) and not _is_empty(val):
+                merged[key] = val
+    return PlaceAttributes.model_validate(merged)
+
+
+def _is_empty(value: object) -> bool:
+    if value is None:
+        return True
+    return isinstance(value, list | tuple | dict) and len(value) == 0

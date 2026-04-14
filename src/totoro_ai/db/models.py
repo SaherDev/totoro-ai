@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum as PyEnum
+from typing import Any
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
@@ -9,11 +10,13 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -28,32 +31,51 @@ EMBEDDING_DIMENSIONS = 1024
 
 
 class Place(Base):
+    """The `places` table. Reshape per ADR-054 / feature 019.
+
+    Tier 1 storage — holds only OUR data. No Google content lives here beyond
+    the namespaced `provider_id` string. Tier 2/3 data (lat/lng, address,
+    hours, rating, phone, photo, popularity) lives in Redis and is attached
+    at read time by PlacesService.enrich_batch.
+
+    The only code that reads or writes this ORM is `core/places/repository.py`
+    (PlacesRepository). Every other service in the app consumes `PlaceObject`
+    (Pydantic) instances.
+    """
+
     __tablename__ = "places"
     __table_args__ = (
-        UniqueConstraint(
-            "external_provider",
-            "external_id",
-            name="uq_places_provider_external",
+        # Partial unique index: at most one place per provider_id (non-null);
+        # many places with provider_id=NULL are allowed.
+        Index(
+            "uq_places_provider_id",
+            "provider_id",
+            unique=True,
+            postgresql_where=text("provider_id IS NOT NULL"),
+        ),
+        # Composite index for "all places for this user of this type" queries.
+        Index("ix_places_user_type", "user_id", "place_type"),
+        # GIN FTS index on name + subcategory for hybrid recall.
+        Index(
+            "places_fts_idx",
+            text(
+                "to_tsvector('english', "
+                "coalesce(place_name, '') || ' ' || coalesce(subcategory, ''))"
+            ),
+            postgresql_using="gin",
         ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     place_name: Mapped[str] = mapped_column(String, nullable=False)
-    address: Mapped[str] = mapped_column(String, nullable=False)
-    cuisine: Mapped[str | None] = mapped_column(String, nullable=True)
-    price_range: Mapped[str | None] = mapped_column(String, nullable=True)
-    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
-    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    place_type: Mapped[str] = mapped_column(String, nullable=False)
+    subcategory: Mapped[str | None] = mapped_column(String, nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    attributes: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    validated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    external_provider: Mapped[str] = mapped_column(String, nullable=False)
-    external_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     source: Mapped[str | None] = mapped_column(String, nullable=True)
-    ambiance: Mapped[str | None] = mapped_column(String, nullable=True)
+    provider_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

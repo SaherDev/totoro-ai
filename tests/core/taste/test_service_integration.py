@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from totoro_ai.core.places import PlaceAttributes, PlaceObject, PlaceType
 from totoro_ai.core.taste.service import (
     DEFAULT_VECTOR,
     TASTE_DIMENSIONS,
@@ -20,12 +21,18 @@ def _make_place(
     price_range: str | None = "low",
     ambiance: str | None = None,
     created_at_hour: int = 12,
-) -> MagicMock:
-    place = MagicMock()
-    place.price_range = price_range
-    place.ambiance = ambiance
-    place.created_at = datetime(2026, 1, 1, created_at_hour, 0, tzinfo=UTC)
-    return place
+) -> PlaceObject:
+    """Build a PlaceObject carrying Tier 1 fields for taste-service tests.
+
+    `price_range` is stored on `attributes.price_hint` (the new shape).
+    """
+    return PlaceObject(
+        place_id="place-1",
+        place_name="Test Place",
+        place_type=PlaceType.food_and_drink,
+        attributes=PlaceAttributes(price_hint=price_range, ambiance=ambiance),
+        created_at=datetime(2026, 1, 1, created_at_hour, 0, tzinfo=UTC),
+    )
 
 
 def _make_taste_model(
@@ -45,7 +52,8 @@ def _make_taste_model(
 def taste_service(mock_session: AsyncMock) -> TasteModelService:
     svc = TasteModelService(session=mock_session)
     svc.repository = AsyncMock()
-    svc.place_repo = AsyncMock()
+    svc.places_service = AsyncMock()
+    svc.places_service.get = AsyncMock(return_value=None)
     svc.repository.get_by_user_id = AsyncMock(return_value=None)
     svc.repository.upsert = AsyncMock(return_value=_make_taste_model())
     svc.repository.log_interaction = AsyncMock()
@@ -138,7 +146,7 @@ async def test_handle_place_saved_logs_one_interaction_per_place_id(
 async def test_handle_recommendation_accepted_logs_accepted_signal(
     taste_service: TasteModelService,
 ) -> None:
-    taste_service.place_repo.get_by_id = AsyncMock(
+    taste_service.places_service.get = AsyncMock(
         return_value=_make_place(price_range="high")
     )
 
@@ -160,7 +168,7 @@ async def test_handle_recommendation_accepted_moves_vector_toward_place_traits(
     EMA positive: alpha=0.03, gain=2.0, v_obs=0.0 (high), v_current=0.5
     alpha_gain = 0.06 → v_new = 0.06*0.0 + 0.94*0.5 = 0.47
     """
-    taste_service.place_repo.get_by_id = AsyncMock(
+    taste_service.places_service.get = AsyncMock(
         return_value=_make_place(price_range="high")
     )
 
@@ -177,7 +185,7 @@ async def test_handle_recommendation_accepted_moves_vector_toward_place_traits(
 async def test_handle_recommendation_accepted_fetches_place_from_db(
     taste_service: TasteModelService,
 ) -> None:
-    taste_service.place_repo.get_by_id = AsyncMock(
+    taste_service.places_service.get = AsyncMock(
         return_value=_make_place(price_range="high")
     )
 
@@ -186,7 +194,7 @@ async def test_handle_recommendation_accepted_fetches_place_from_db(
         place_id="place-1",
     )
 
-    taste_service.place_repo.get_by_id.assert_called_once_with("place-1")
+    taste_service.places_service.get.assert_called_once_with("place-1")
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +205,7 @@ async def test_handle_recommendation_accepted_fetches_place_from_db(
 async def test_handle_recommendation_rejected_logs_rejected_signal(
     taste_service: TasteModelService,
 ) -> None:
-    taste_service.place_repo.get_by_id = AsyncMock(
+    taste_service.places_service.get = AsyncMock(
         return_value=_make_place(price_range="low")
     )
 
@@ -219,7 +227,7 @@ async def test_handle_recommendation_rejected_moves_vector_away_from_place_trait
     EMA negative: alpha=0.03, gain=-1.5, v_obs=1.0 (low), v_current=0.5
     alpha_gain = 0.045 → v_new = 0.5 - 0.045*(1.0-0.5) = 0.4775
     """
-    taste_service.place_repo.get_by_id = AsyncMock(
+    taste_service.places_service.get = AsyncMock(
         return_value=_make_place(price_range="low")
     )
 
@@ -246,7 +254,7 @@ async def test_handle_onboarding_confirmed_logs_signal_and_moves_vector_up(
     EMA positive: alpha=0.03, gain=1.2, v_obs=1.0 (low), v_current=0.5
     alpha_gain = 0.036 → v_new = 0.036*1.0 + 0.964*0.5 = 0.518
     """
-    taste_service.place_repo.get_by_id = AsyncMock(
+    taste_service.places_service.get = AsyncMock(
         return_value=_make_place(price_range="low")
     )
 
@@ -274,7 +282,7 @@ async def test_handle_onboarding_dismissed_logs_signal_and_moves_vector_down(
     alpha_gain = 0.024 → v_new = 0.5 - 0.024*(1.0-0.5) = 0.488
     Direction is opposite to confirmed (0.518 vs 0.488).
     """
-    taste_service.place_repo.get_by_id = AsyncMock(
+    taste_service.places_service.get = AsyncMock(
         return_value=_make_place(price_range="low")
     )
 
@@ -302,19 +310,19 @@ async def test_handle_onboarding_confirmed_dismissed_produce_opposite_directions
 
     svc_conf = TasteModelService(session=mock_session)
     svc_conf.repository = AsyncMock()
-    svc_conf.place_repo = AsyncMock()
+    svc_conf.places_service = AsyncMock()
     svc_conf.repository.get_by_user_id = AsyncMock(return_value=None)
     svc_conf.repository.upsert = AsyncMock(return_value=_make_taste_model())
     svc_conf.repository.log_interaction = AsyncMock()
-    svc_conf.place_repo.get_by_id = AsyncMock(return_value=place)
+    svc_conf.places_service.get = AsyncMock(return_value=place)
 
     svc_dism = TasteModelService(session=mock_session)
     svc_dism.repository = AsyncMock()
-    svc_dism.place_repo = AsyncMock()
+    svc_dism.places_service = AsyncMock()
     svc_dism.repository.get_by_user_id = AsyncMock(return_value=None)
     svc_dism.repository.upsert = AsyncMock(return_value=_make_taste_model())
     svc_dism.repository.log_interaction = AsyncMock()
-    svc_dism.place_repo.get_by_id = AsyncMock(return_value=place)
+    svc_dism.places_service.get = AsyncMock(return_value=place)
 
     await svc_conf.handle_onboarding_signal("user-1", "place-1", confirmed=True)
     await svc_dism.handle_onboarding_signal("user-1", "place-1", confirmed=False)
@@ -427,7 +435,7 @@ async def test_concurrent_new_user_inserts_both_complete_without_error(
 
     for svc in (svc1, svc2):
         svc.repository = AsyncMock()
-        svc.place_repo = AsyncMock()
+        svc.places_service = AsyncMock()
         svc.repository.get_by_user_id = AsyncMock(return_value=None)
         svc.repository.log_interaction = AsyncMock()
 

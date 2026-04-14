@@ -3,12 +3,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.core.config import get_config
-from totoro_ai.db.models import Place, SignalType
-from totoro_ai.db.repositories import (
-    PlaceRepository,
-    SQLAlchemyPlaceRepository,
-    SQLAlchemyTasteModelRepository,
-)
+from totoro_ai.core.places import PlaceObject, PlacesService
+from totoro_ai.core.places.repository import PlacesRepository
+from totoro_ai.db.models import SignalType
+from totoro_ai.db.repositories import SQLAlchemyTasteModelRepository
 
 TASTE_DIMENSIONS = [
     "price_comfort",
@@ -28,7 +26,9 @@ class TasteModelService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repository = SQLAlchemyTasteModelRepository(session)
-        self.place_repo: PlaceRepository = SQLAlchemyPlaceRepository(session)
+        self.places_service = PlacesService(
+            repo=PlacesRepository(session), cache=None, client=None
+        )
         self.config = get_config()
 
     async def handle_place_saved(
@@ -71,7 +71,7 @@ class TasteModelService:
                 "recommendation_id": None,
             },
         )
-        place = await self.place_repo.get_by_id(place_id)
+        place = await self.places_service.get(place_id)
         await self._apply_taste_update(
             user_id, self._place_to_metadata(place), gain, is_positive=True
         )
@@ -94,7 +94,7 @@ class TasteModelService:
                 "recommendation_id": None,
             },
         )
-        place = await self.place_repo.get_by_id(place_id)
+        place = await self.places_service.get(place_id)
         await self._apply_taste_update(
             user_id, self._place_to_metadata(place), gain, is_positive=False
         )
@@ -123,7 +123,7 @@ class TasteModelService:
                 "confirmed": confirmed,
             },
         )
-        place = await self.place_repo.get_by_id(place_id)
+        place = await self.places_service.get(place_id)
         await self._apply_taste_update(
             user_id, self._place_to_metadata(place), gain, is_positive=confirmed
         )
@@ -175,23 +175,25 @@ class TasteModelService:
         await self.repository.upsert(user_id=user_id, parameters=new_vector)
         await self.session.commit()
 
-    def _place_to_metadata(self, place: Place | None) -> dict[str, Any]:
+    def _place_to_metadata(self, place: PlaceObject | None) -> dict[str, Any]:
         if place is None:
             return {}
-        hour = place.created_at.hour
-        if 5 <= hour <= 10:
-            time_of_day = "breakfast"
-        elif 11 <= hour <= 14:
-            time_of_day = "lunch"
-        elif 15 <= hour <= 20:
-            time_of_day = "dinner"
-        else:
-            time_of_day = "late_night"
-        metadata: dict[str, Any] = {"time_of_day": time_of_day}
-        if place.price_range is not None:
-            metadata["price_range"] = place.price_range
-        if place.ambiance is not None:
-            metadata["ambiance"] = place.ambiance
+        metadata: dict[str, Any] = {}
+        if place.created_at is not None:
+            hour = place.created_at.hour
+            if 5 <= hour <= 10:
+                time_of_day = "breakfast"
+            elif 11 <= hour <= 14:
+                time_of_day = "lunch"
+            elif 15 <= hour <= 20:
+                time_of_day = "dinner"
+            else:
+                time_of_day = "late_night"
+            metadata["time_of_day"] = time_of_day
+        if place.attributes.price_hint is not None:
+            metadata["price_range"] = place.attributes.price_hint
+        if place.attributes.ambiance is not None:
+            metadata["ambiance"] = place.attributes.ambiance
         return metadata
 
     def _get_observation_value(

@@ -1,26 +1,39 @@
-"""Tests for ExtractionPipeline (Phase 7 — extraction cascade Run 2)."""
+"""Tests for ExtractionPipeline (feature 019)."""
 
 from unittest.mock import AsyncMock, MagicMock
 
 from totoro_ai.core.extraction.types import (
     ExtractionLevel,
     ExtractionPending,
-    ExtractionResult,
     ProvisionalResponse,
+    ValidatedCandidate,
+)
+from totoro_ai.core.places import (
+    PlaceAttributes,
+    PlaceCreate,
+    PlaceProvider,
+    PlaceType,
 )
 
 
-def _make_result(name: str = "Chez Claude") -> ExtractionResult:
-    return ExtractionResult(
-        place_name=name,
-        address=None,
-        city="Paris",
-        cuisine=None,
-        confidence=0.85,
-        resolved_by=ExtractionLevel.EMOJI_REGEX,
+def _make_validated(
+    name: str = "Chez Claude",
+    external_id: str = "place_abc",
+    resolved_by: ExtractionLevel = ExtractionLevel.EMOJI_REGEX,
+    confidence: float = 0.85,
+) -> ValidatedCandidate:
+    return ValidatedCandidate(
+        place=PlaceCreate(
+            user_id="u1",
+            place_name=name,
+            place_type=PlaceType.food_and_drink,
+            attributes=PlaceAttributes(),
+            provider=PlaceProvider.google,
+            external_id=external_id,
+        ),
+        confidence=confidence,
+        resolved_by=resolved_by,
         corroborated=False,
-        external_provider="google",
-        external_id="place_abc",
     )
 
 
@@ -67,7 +80,7 @@ def _make_pipeline(
 
 
 async def test_inline_candidates_found_returns_results() -> None:
-    results = [_make_result()]
+    results = [_make_validated()]
     pipeline, enrichment, validator, dispatcher = _make_pipeline(
         validator_returns=results
     )
@@ -124,32 +137,22 @@ async def test_extraction_pending_event_has_correct_user_id_and_url() -> None:
     assert event.url == "https://tiktok.com/video/99"
 
 
-async def test_same_external_id_deduped_after_validation() -> None:
-    """Two results from different enrichers resolving to the same external_id
-    are collapsed into one with corroboration bonus applied."""
-    emoji_result = ExtractionResult(
-        place_name="RAMEN KAISUGI Bangkok",
-        address=None,
-        city="Bangkok",
-        cuisine=None,
-        confidence=0.76,
+async def test_same_provider_id_deduped_after_validation() -> None:
+    """Two validated candidates resolving to the same provider_id are
+    collapsed into one with the corroboration bonus applied."""
+    emoji = _make_validated(
+        name="RAMEN KAISUGI Bangkok",
+        external_id="ChIJrUYs1Xuf4jARDnd40CFUUAE",
         resolved_by=ExtractionLevel.EMOJI_REGEX,
-        corroborated=False,
-        external_provider="google",
-        external_id="ChIJrUYs1Xuf4jARDnd40CFUUAE",
+        confidence=0.76,
     )
-    ner_result = ExtractionResult(
-        place_name="RAMEN KAISUGI",
-        address=None,
-        city="Bangkok",
-        cuisine=None,
-        confidence=0.64,
+    ner = _make_validated(
+        name="RAMEN KAISUGI",
+        external_id="ChIJrUYs1Xuf4jARDnd40CFUUAE",
         resolved_by=ExtractionLevel.LLM_NER,
-        corroborated=False,
-        external_provider="google",
-        external_id="ChIJrUYs1Xuf4jARDnd40CFUUAE",
+        confidence=0.64,
     )
-    pipeline, _, _, _ = _make_pipeline(validator_returns=[emoji_result, ner_result])
+    pipeline, _, _, _ = _make_pipeline(validator_returns=[emoji, ner])
 
     output = await pipeline.run(
         url=None, user_id="u1", supplementary_text="RAMEN KAISUGI Bangkok"
@@ -162,7 +165,7 @@ async def test_same_external_id_deduped_after_validation() -> None:
 
 
 async def test_plain_text_input_url_none_passes_through() -> None:
-    results = [_make_result()]
+    results = [_make_validated()]
     pipeline, enrichment, validator, dispatcher = _make_pipeline(
         validator_returns=results
     )
@@ -172,8 +175,23 @@ async def test_plain_text_input_url_none_passes_through() -> None:
     )
 
     assert output == results
-    # enrichment.run should still be called with url=None context
     enrichment.run.assert_awaited_once()
     ctx = enrichment.run.call_args[0][0]
     assert ctx.url is None
     assert ctx.supplementary_text == "Ramen House Paris"
+
+
+async def test_validator_receives_only_candidates() -> None:
+    """validator.validate(candidates) — no user_id positional arg.
+
+    The user_id is already stamped onto each CandidatePlace's inner
+    PlaceCreate at enricher time, so the validator doesn't need it.
+    """
+    pipeline, _, validator, _ = _make_pipeline(validator_returns=None)
+
+    await pipeline.run(url="https://tiktok.com/1", user_id="u-xyz")
+
+    validator.validate.assert_awaited_once()
+    args = validator.validate.call_args.args
+    kwargs = validator.validate.call_args.kwargs
+    assert len(args) + len(kwargs) == 1

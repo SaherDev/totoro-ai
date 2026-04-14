@@ -105,9 +105,10 @@ class ChatService:
             extract_result = await self._extraction.run(
                 request.message, request.user_id
             )
+            first = extract_result.results[0] if extract_result.results else None
             place_name = (
-                extract_result.places[0].place_name
-                if extract_result.places
+                first.place.place_name
+                if first and first.place is not None
                 else "the place"
             )
             return ChatResponse(

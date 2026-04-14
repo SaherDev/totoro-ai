@@ -1,28 +1,32 @@
-"""Pydantic schemas for the extract-place endpoint (ADR-017, ADR-018)."""
+"""Pydantic schemas for the extract-place endpoint (ADR-017, ADR-018, ADR-054).
+
+The response is a list of `ExtractPlaceItem`s. Each item carries either a
+fully-populated `PlaceObject` (for `saved`/`duplicate`) or `None` (for
+`pending`/`failed`), plus the extraction confidence if the cascade made it
+to validation. No more top-level `provisional`/`pending_levels`/
+`extraction_status` — each item is self-describing.
+"""
 
 from pydantic import BaseModel, Field
 
+from totoro_ai.core.places import PlaceObject
 
-class SavedPlace(BaseModel):
-    """A single place that passed through the extraction pipeline.
 
-    extraction_status values:
-    - "saved": written to DB; place_id is the new UUID
-    - "duplicate": already in DB; place_id is the existing record's ID
-    - "below_threshold": confidence below save_threshold; place_id is None
-    - "failed_validation": Google Places returned no match; place_id is None
+class ExtractPlaceItem(BaseModel):
+    """One row in the extract response.
+
+    status values:
+    - "saved"     — newly written to the permanent store; `place` is set
+    - "duplicate" — already existed; `place` is the existing row
+    - "pending"   — background enrichers are still running; caller polls
+                    via `request_id`
+    - "failed"    — extraction did not yield a place (below confidence
+                    threshold, no candidates, validator found nothing, …)
     """
 
-    place_id: str | None
-    place_name: str
-    address: str | None
-    city: str | None
-    cuisine: str | None
-    confidence: float
-    resolved_by: str
-    external_provider: str | None
-    external_id: str | None
-    extraction_status: str
+    place: PlaceObject | None = None
+    confidence: float | None = None
+    status: str
 
 
 class ExtractPlaceRequest(BaseModel):
@@ -33,20 +37,8 @@ class ExtractPlaceRequest(BaseModel):
 
 
 class ExtractPlaceResponse(BaseModel):
-    """Response body for extract-place endpoint (Run 3 multi-place shape).
+    """Response body for extract-place endpoint."""
 
-    Top-level extraction_status values:
-    - "saved": one or more places written to DB
-    - "below_threshold": all candidates below confidence threshold; none saved
-    - "duplicate": all candidates already in DB; no new writes
-    - "processing": no inline result; background enrichers running; provisional=True
-
-    Each entry in places carries its own extraction_status — see SavedPlace.
-    """
-
-    provisional: bool
-    places: list[SavedPlace]
-    pending_levels: list[str]
-    extraction_status: str
-    source_url: str | None
-    request_id: str | None = None  # UUID4 for provisional responses; None otherwise
+    results: list[ExtractPlaceItem]
+    source_url: str | None = None
+    request_id: str | None = None

@@ -167,8 +167,31 @@ class ExternalServicesConfig(BaseModel):
 
 
 class EmbeddingsConfig(BaseModel):
+    """Embedding configuration (ADR-054).
+
+    `description_fields` drives the order and inclusion of `PlaceObject`
+    Tier 1 fields in the embedding input. The persistence layer walks this
+    list and emits each available value separated by
+    `description_separator`. Retrieval evals can re-tune field order and
+    inclusion by editing the config and re-embedding — no code change.
+    """
+
     dimensions: int = 1024
-    description_separator: str = ", "
+    description_separator: str = " | "
+    description_fields: list[str] = [
+        "place_name",
+        "subcategory",
+        "place_type",
+        "cuisine",
+        "ambiance",
+        "price_hint",
+        "tags",
+        "good_for",
+        "dietary",
+        "neighborhood",
+        "city",
+        "country",
+    ]
 
 
 class SystemPromptsConfig(BaseModel):
@@ -296,6 +319,21 @@ class AppProvidersConfig(BaseModel):
     )
 
 
+class PlacesConfig(BaseModel):
+    """PlacesService cache TTL and per-request fetch cap (ADR-054, feature 019).
+
+    - cache_ttl_days: single lifetime for both the Tier 2 geo cache and the
+      Tier 3 enrichment cache. Both set_batch methods in PlacesCache use
+      `cache_ttl_days * 86400` seconds. Default 30 days.
+    - max_enrichment_batch: per-request cap on external provider fetches
+      in PlacesService.enrich_batch(geo_only=False). Counts unique provider_id,
+      not input positions.
+    """
+
+    cache_ttl_days: int = 30
+    max_enrichment_batch: int = 10
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -309,6 +347,7 @@ class AppConfig(BaseModel):
     taste_model: TasteModelConfig
     ranking: RankingConfig
     memory: MemoryConfig = MemoryConfig()
+    places: PlacesConfig = PlacesConfig()
 
 
 _config: AppConfig | None = None

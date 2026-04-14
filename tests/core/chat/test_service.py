@@ -10,10 +10,18 @@ from totoro_ai.api.schemas.consult import (
     PlaceResult,
     ReasoningStep,
 )
-from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse, SavedPlace
+from totoro_ai.api.schemas.extract_place import (
+    ExtractPlaceItem,
+    ExtractPlaceResponse,
+)
 from totoro_ai.api.schemas.recall import RecallResponse, RecallResult
 from totoro_ai.core.chat.router import IntentClassification
 from totoro_ai.core.chat.service import ChatService
+from totoro_ai.core.places import (
+    PlaceAttributes,
+    PlaceObject,
+    PlaceType,
+)
 
 
 def _make_service(
@@ -46,23 +54,20 @@ def _consult_response() -> ConsultResponse:
 
 def _extract_response() -> ExtractPlaceResponse:
     return ExtractPlaceResponse(
-        provisional=False,
-        places=[
-            SavedPlace(
-                place_id="place-1",
-                place_name="Ichiran Ramen",
-                address="Shibuya",
-                city="Tokyo",
-                cuisine="ramen",
+        results=[
+            ExtractPlaceItem(
+                place=PlaceObject(
+                    place_id="place-1",
+                    place_name="Ichiran Ramen",
+                    place_type=PlaceType.food_and_drink,
+                    subcategory="restaurant",
+                    attributes=PlaceAttributes(cuisine="ramen"),
+                    provider_id="google:ChIJxxx",
+                ),
                 confidence=0.9,
-                resolved_by="google",
-                external_provider="google",
-                external_id="ChIJxxx",
-                extraction_status="saved",
+                status="saved",
             )
         ],
-        pending_levels=[],
-        extraction_status="saved",
         source_url=None,
     )
 

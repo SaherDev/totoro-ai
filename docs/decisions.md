@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-054: PlacesService strict-create with explicit duplicate-detection lookup
+
+**Date:** 2026-04-14\
+**Status:** accepted (supersedes ADR-041)\
+**Context:** The original `places` schema used a composite `(external_provider, external_id)` unique key with upsert semantics on `SQLAlchemyPlaceRepository.save()`. Upsert hides intent at the data layer and was made when the only caller was the extraction pipeline. Feature 019 (`PlacesService`) introduces three callers (save, recall, consult) and the save tool needs to detect collisions explicitly so manual saves are not silently overwritten by background extractions. Feature 019 also introduces a tier-split schema (Tier 1 PostgreSQL holds only our data; Tier 2/3 Redis hold provider data), which requires replacing the composite key columns with a single namespaced `provider_id` column.\
+**Decision:** Replace the composite `(external_provider, external_id)` columns with a single namespaced `provider_id` column on the `places` table. The format is `"{provider}:{external_id}"`, constructed only inside `PlacesRepository._build_provider_id()` (never elsewhere). A partial unique index enforces that any non-null `provider_id` is unique across the table. `PlacesRepository.create()` raises `DuplicatePlaceError` (with the existing `place_id` attached via `DuplicateProviderId(provider_id, existing_place_id)`) on collision instead of upserting. `PlacesRepository.create_batch()` runs in a single transaction and raises `DuplicatePlaceError` listing every conflicting `provider_id` if any row collides — partial inserts are not permitted. Callers wanting idempotency call `get_by_external_id(provider, external_id)` first and decide explicitly whether to skip, surface, or merge.\
+**Consequences:** ADR-041's upsert semantics and composite-key field naming are superseded. The legacy `SQLAlchemyPlaceRepository` in `src/totoro_ai/db/repositories/place_repository.py` is deleted by feature 019. `ExtractionService.persistence` is migrated to use `PlacesService.create_batch()` and catches `DuplicatePlaceError` to produce the existing `PlaceSaveOutcome(status="duplicate")` behavior. NestJS does not read `external_provider` or `external_id`, so no product-side coordination is needed. The Alembic migration renames the columns in-place: it backfills `provider_id` from the existing composite pair, adds the partial unique index, drops the old composite constraint, and finally drops the legacy `external_provider` + `external_id` columns. A seed migration script (`scripts/seed_migration.py`) runs before the Alembic revision to relocate other legacy data (cuisine → attributes.cuisine, price_range → attributes.price_hint, lat/lng/address → Redis Tier 2 cache) so nothing is lost when those columns are dropped. The save tool can now detect duplicates before they are written and decide what to do with them — manual saves, extraction saves, and link-share saves all compose cleanly without overwrite risk.
+
+---
+
 ## ADR-053: This repo owns consult_logs table for AI recommendation history
 
 **Date:** 2026-04-09\
@@ -176,7 +186,7 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 ## ADR-041: Provider-agnostic place identity via (external_provider, external_id) pair
 
 **Date:** 2026-03-25\
-**Status:** accepted\
+**Status:** superseded by ADR-054 (2026-04-14)\
 **Context:** The original schema used a `google_place_id` column as the unique identifier for places. This locks place identity to a single provider — adding Yelp, Foursquare, or any future data source would either break uniqueness guarantees or require per-provider schema changes. The extraction pipeline is designed to support multiple place data sources (ADR-022, ADR-038), so the identity key must match.\
 **Decision:** Place identity is stored as a composite `(external_provider, external_id)` pair with a UniqueConstraint enforced at the database level. `external_provider` is a required, non-empty string identifying the data source (e.g. `"google"`, `"yelp"`). `external_id` is the provider's own identifier for the place. Re-submitting an existing `(external_provider, external_id)` pair triggers an upsert — all mutable place fields (name, address, category, metadata) are overwritten with the new values. Submissions with a null or empty `external_provider` are rejected at the API boundary with a 400 validation error before any database operation. The Alembic migration backfills all existing rows by setting `external_provider='google'` and copying the current `google_place_id` value into `external_id`, then drops the old column. No data loss is permitted.\
 **Consequences:** Any place data source can be added without schema changes — only a new `external_provider` string value is needed. The NestJS product repo reads and joins on this pair. The migration is a non-destructive backfill, safe to run against environments with existing data. Future provider integrations must supply a stable, non-empty provider identifier and are validated at the extraction boundary before reaching the repository layer.

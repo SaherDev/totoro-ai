@@ -11,23 +11,22 @@ from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_s
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
-from totoro_ai.core.memory.repository import SQLAlchemyUserMemoryRepository
-from totoro_ai.core.memory.service import UserMemoryService
 from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.intent.intent_parser import IntentParser
-from totoro_ai.core.places import GooglePlacesClient
+from totoro_ai.core.memory.repository import SQLAlchemyUserMemoryRepository
+from totoro_ai.core.memory.service import UserMemoryService
+from totoro_ai.core.places import GooglePlacesClient, PlacesService
+from totoro_ai.core.places.repository import PlacesRepository
 from totoro_ai.core.ranking.service import RankingService
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
     EmbeddingRepository,
-    PlaceRepository,
     SQLAlchemyEmbeddingRepository,
-    SQLAlchemyPlaceRepository,
     SQLAlchemyRecallRepository,
 )
 from totoro_ai.db.repositories.consult_log_repository import (
@@ -55,11 +54,21 @@ def get_status_repo(
     return ExtractionStatusRepository(cache=cache)
 
 
-def get_place_repo(
+def get_places_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> PlaceRepository:
-    """FastAPI dependency providing PlaceRepository."""
-    return SQLAlchemyPlaceRepository(db_session)
+) -> PlacesService:
+    """FastAPI dependency providing `PlacesService` (ADR-054, feature 019).
+
+    Phase 3 ships the create/get paths — `cache` and `client` are wired as
+    `None` here. Phase 4/5 will swap them for a fully-wired `PlacesCache`
+    and `GooglePlacesClient` so `enrich_batch` can serve recall and consult
+    from the same service instance.
+    """
+    return PlacesService(
+        repo=PlacesRepository(db_session),
+        cache=None,
+        client=None,
+    )
 
 
 def get_embedding_repo(
@@ -150,7 +159,9 @@ async def get_event_dispatcher(
     from totoro_ai.core.places import GooglePlacesClient
 
     pending_persistence = ExtractionPersistenceService(
-        place_repo=SQLAlchemyPlaceRepository(db_session),
+        places_service=PlacesService(
+            repo=PlacesRepository(db_session), cache=None, client=None
+        ),
         embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
         embedder=get_embedder(),
         event_dispatcher=dispatcher,
@@ -186,14 +197,14 @@ async def get_event_dispatcher(
 
 
 def get_extraction_persistence(
-    place_repo: PlaceRepository = Depends(get_place_repo),  # noqa: B008
+    places_service: PlacesService = Depends(get_places_service),  # noqa: B008
     embedding_repo: EmbeddingRepository = Depends(get_embedding_repo),  # noqa: B008
     embedder: EmbedderProtocol = Depends(get_embedder_dep),  # noqa: B008
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
 ) -> ExtractionPersistenceService:
     """FastAPI dependency providing ExtractionPersistenceService."""
     return ExtractionPersistenceService(
-        place_repo=place_repo,
+        places_service=places_service,
         embedding_repo=embedding_repo,
         embedder=embedder,
         event_dispatcher=event_dispatcher,

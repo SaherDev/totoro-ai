@@ -1,15 +1,27 @@
-"""ExtractionPersistenceService — shared write-path for extraction results."""
+"""ExtractionPersistenceService — shared write-path for extraction results.
+
+Feature 019 rewired this service to go through `PlacesService.create_batch`
+instead of the deprecated `SQLAlchemyPlaceRepository`. `PlaceSaveOutcome.place`
+is now a `PlaceObject` — the unified shared shape — not the removed
+`ExtractionResult`. `DuplicatePlaceError` from `PlacesService` is caught and
+mapped per conflict into `PlaceSaveOutcome(status="duplicate")`.
+"""
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from totoro_ai.core.config import get_config
 from totoro_ai.core.events.events import PlaceSaved
-from totoro_ai.core.extraction.types import ExtractionResult
-from totoro_ai.db.models import Place
-from totoro_ai.db.repositories import EmbeddingRepository, PlaceRepository
+from totoro_ai.core.extraction.types import ValidatedCandidate
+from totoro_ai.core.places import (
+    DuplicatePlaceError,
+    PlaceCreate,
+    PlaceObject,
+    PlacesService,
+)
+from totoro_ai.db.repositories import EmbeddingRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
 
 if TYPE_CHECKING:
@@ -20,137 +32,265 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PlaceSaveOutcome:
-    """Per-result outcome from save_and_emit.
+    """Per-candidate outcome from save_and_emit.
 
-    status values:
-    - "saved": written to DB; place_id is the new UUID
-    - "duplicate": already in DB; place_id is the existing record's ID
-    - "below_threshold": confidence < save_threshold; place_id is None
+    `place`  → the persisted `PlaceObject` on "saved" or the existing
+               `PlaceObject` (Tier 1 only) on "duplicate"; `None` for
+               "below_threshold".
+    `status` → "saved" | "duplicate" | "below_threshold".
+    `metadata` → the `ValidatedCandidate` this outcome was built from; held
+                 so the handler/status-payload builder can read confidence,
+                 resolved_by, and city without re-running the validator.
     """
 
-    result: ExtractionResult
+    metadata: ValidatedCandidate
+    place: PlaceObject | None
     place_id: str | None
     status: str
 
 
 class ExtractionPersistenceService:
-    """Shared write-path for extraction results (inline and background paths).
+    """Shared write-path for extraction results.
 
     Ordering invariant: DB writes → PlaceSaved dispatch → bulk embeddings.
     """
 
     def __init__(
         self,
-        place_repo: PlaceRepository,
+        places_service: PlacesService,
         embedding_repo: EmbeddingRepository,
         embedder: EmbedderProtocol,
         event_dispatcher: "EventDispatcherProtocol",
     ) -> None:
-        self._place_repo = place_repo
+        self._places_service = places_service
         self._embedding_repo = embedding_repo
         self._embedder = embedder
         self._event_dispatcher = event_dispatcher
 
     async def save_and_emit(
-        self, results: list[ExtractionResult], user_id: str
+        self, results: list[ValidatedCandidate], user_id: str
     ) -> list[PlaceSaveOutcome]:
-        """Save extraction results to DB and emit PlaceSaved event.
-
-        Enforces save_threshold from config — places below threshold are
-        included in the returned outcomes with status "below_threshold" but
-        are never written to the database.
-
-        Returns:
-            One PlaceSaveOutcome per input result, with status "saved",
-            "duplicate", or "below_threshold".
-        """
         save_threshold = get_config().extraction.confidence.save_threshold
-        outcomes: list[PlaceSaveOutcome] = []
-        saved_ids: list[str] = []
-        saved_results: list[ExtractionResult] = []
 
-        for result in results:
-            # Threshold check — skip DB write but still surface in response
-            if round(result.confidence, 2) < save_threshold:
-                outcomes.append(
-                    PlaceSaveOutcome(
-                        result=result, place_id=None, status="below_threshold"
-                    )
+        # 1. Partition the input into "above-threshold" vs "below-threshold".
+        #    The below-threshold rows still surface in the response but are
+        #    never written to the database.
+        below: list[ValidatedCandidate] = []
+        eligible: list[ValidatedCandidate] = []
+        for vc in results:
+            if round(vc.confidence, 2) < save_threshold:
+                below.append(vc)
+            else:
+                eligible.append(vc)
+
+        eligible_outcomes = await self._create_and_classify(eligible, user_id)
+
+        # 2. Re-assemble outcomes in original input order.
+        outcome_map: dict[int, PlaceSaveOutcome] = {}
+        for idx, vc in enumerate(results):
+            if vc in below:
+                outcome_map[idx] = PlaceSaveOutcome(
+                    metadata=vc,
+                    place=None,
+                    place_id=None,
+                    status="below_threshold",
                 )
-                continue
+        for vc, outcome in zip(eligible, eligible_outcomes, strict=True):
+            idx = results.index(vc)
+            outcome_map[idx] = outcome
+        outcomes = [outcome_map[i] for i in range(len(results))]
 
-            # Dedup check — only when external_id is known
-            if result.external_id is not None:
-                existing = await self._place_repo.get_by_provider(
-                    result.external_provider or "unknown", result.external_id
-                )
-                if existing:
-                    outcomes.append(
-                        PlaceSaveOutcome(
-                            result=result, place_id=existing.id, status="duplicate"
-                        )
-                    )
-                    continue
-
-            place_id = str(uuid4())
-            place = Place(
-                id=place_id,
-                user_id=user_id,
-                place_name=result.place_name,
-                address=result.address or "",
-                cuisine=result.cuisine,
-                price_range=None,
-                lat=result.lat,
-                lng=result.lng,
-                source_url=None,
-                external_provider=result.external_provider or "unknown",
-                external_id=result.external_id,
-                confidence=result.confidence,
-                source=result.resolved_by.value,
-            )
-            await self._place_repo.save(place)
-            saved_ids.append(place_id)
-            saved_results.append(result)
-            outcomes.append(
-                PlaceSaveOutcome(result=result, place_id=place_id, status="saved")
-            )
-
-        if not saved_ids:
+        saved_outcomes = [o for o in outcomes if o.status == "saved" and o.place]
+        if not saved_outcomes:
             return outcomes
 
-        # Dispatch PlaceSaved AFTER all DB writes (ordering invariant)
+        # 3. Dispatch PlaceSaved AFTER all DB writes (ordering invariant).
         event = PlaceSaved(
             user_id=user_id,
-            place_ids=saved_ids,
+            place_ids=[o.place.place_id for o in saved_outcomes if o.place],
             place_metadata={},
         )
         await self._event_dispatcher.dispatch(event)
 
-        # Embed all saved places in one batch (non-fatal on failure)
+        # 4. Embed all saved places in one batch (non-fatal on failure).
         try:
-            descriptions = [self._build_description(r) for r in saved_results]
-            vectors = await self._embedder.embed(descriptions, input_type="document")
+            descriptions = [
+                self._build_description(o) for o in saved_outcomes
+            ]
+            vectors = await self._embedder.embed(
+                descriptions, input_type="document"
+            )
             model_name = get_config().models["embedder"].model
             records = [
-                (pid, vec, model_name)
-                for pid, vec in zip(saved_ids, vectors, strict=True)
+                (o.place.place_id, vec, model_name)  # type: ignore[union-attr]
+                for o, vec in zip(saved_outcomes, vectors, strict=True)
             ]
             await self._embedding_repo.bulk_upsert_embeddings(records)
-        except Exception as e:
+        except Exception as exc:
             logger.warning(
                 "Failed to generate/store embeddings (non-fatal): %s. "
                 "Places saved, taste signal captured.",
-                e,
+                exc,
                 exc_info=True,
             )
 
         return outcomes
 
-    def _build_description(self, result: ExtractionResult) -> str:
-        """Build embedding input text from extraction result fields."""
-        parts = [result.place_name]
-        if result.cuisine:
-            parts.append(result.cuisine)
-        if result.address:
-            parts.append(result.address)
-        return get_config().embeddings.description_separator.join(parts)
+    async def _create_and_classify(
+        self,
+        eligible: list[ValidatedCandidate],
+        user_id: str,
+    ) -> list[PlaceSaveOutcome]:
+        """Call `places_service.create_batch` and map each row back to an outcome.
+
+        On `DuplicatePlaceError`, the whole batch is rolled back (per FR-006a).
+        We look up the existing place for each conflict and mark it as a
+        duplicate; rows that are NOT in the conflict list are retried
+        individually via `create()` so successful rows are not lost.
+        """
+        if not eligible:
+            return []
+
+        items = [self._with_user_id(vc.place, user_id) for vc in eligible]
+
+        try:
+            saved = await self._places_service.create_batch(items)
+        except DuplicatePlaceError as exc:
+            conflict_ids: dict[str, str] = {
+                c.provider_id: c.existing_place_id for c in exc.conflicts
+            }
+            return await self._retry_one_by_one(eligible, user_id, conflict_ids)
+
+        return [
+            PlaceSaveOutcome(
+                metadata=vc,
+                place=place,
+                place_id=place.place_id,
+                status="saved",
+            )
+            for vc, place in zip(eligible, saved, strict=True)
+        ]
+
+    async def _retry_one_by_one(
+        self,
+        eligible: list[ValidatedCandidate],
+        user_id: str,
+        conflict_ids: dict[str, str],
+    ) -> list[PlaceSaveOutcome]:
+        outcomes: list[PlaceSaveOutcome] = []
+        for vc in eligible:
+            provider_id = self._format_provider_id(vc.place)
+            if provider_id and provider_id in conflict_ids:
+                existing_id = conflict_ids[provider_id]
+                existing = await self._places_service.get(existing_id)
+                outcomes.append(
+                    PlaceSaveOutcome(
+                        metadata=vc,
+                        place=existing,
+                        place_id=existing_id,
+                        status="duplicate",
+                    )
+                )
+                continue
+
+            item = self._with_user_id(vc.place, user_id)
+            try:
+                place = await self._places_service.create(item)
+            except DuplicatePlaceError as inner:
+                conflict = inner.conflicts[0]
+                existing = await self._places_service.get(conflict.existing_place_id)
+                outcomes.append(
+                    PlaceSaveOutcome(
+                        metadata=vc,
+                        place=existing,
+                        place_id=conflict.existing_place_id,
+                        status="duplicate",
+                    )
+                )
+            else:
+                outcomes.append(
+                    PlaceSaveOutcome(
+                        metadata=vc,
+                        place=place,
+                        place_id=place.place_id,
+                        status="saved",
+                    )
+                )
+        return outcomes
+
+    @staticmethod
+    def _with_user_id(place: PlaceCreate, user_id: str) -> PlaceCreate:
+        """Re-stamp a PlaceCreate with the authoritative user_id.
+
+        The validator builds `PlaceCreate` with the user_id threaded through
+        from the pipeline; this helper is a safety net in case the caller
+        supplies a different user_id at save time.
+        """
+        if place.user_id == user_id:
+            return place
+        return place.model_copy(update={"user_id": user_id})
+
+    @staticmethod
+    def _format_provider_id(place: PlaceCreate) -> str | None:
+        if place.provider is None or place.external_id is None:
+            return None
+        return f"{place.provider.value}:{place.external_id}"
+
+    def _build_description(self, outcome: PlaceSaveOutcome) -> str:
+        """Build the embedding input from a saved `PlaceObject`.
+
+        Config-driven: `embeddings.description_fields` in `config/app.yaml`
+        lists the Tier 1 fields to include (and their order), and
+        `embeddings.description_separator` is the join string. Retrieval
+        evals can re-tune by editing the config and re-embedding — no code
+        change. Tier 2 / Tier 3 data (address, hours, rating, …) is never
+        part of the description; those live in Redis and drift per call.
+        """
+        place = outcome.place
+        assert place is not None  # callers filter this
+
+        extractors: dict[str, Callable[[PlaceObject], str | None]] = {
+            "place_name": lambda p: p.place_name,
+            "subcategory": lambda p: p.subcategory,
+            "place_type": lambda p: p.place_type.value.replace("_", " "),
+            "cuisine": lambda p: p.attributes.cuisine,
+            "ambiance": lambda p: p.attributes.ambiance,
+            "price_hint": lambda p: p.attributes.price_hint,
+            "tags": lambda p: " ".join(p.tags) if p.tags else None,
+            "good_for": (
+                lambda p: " ".join(p.attributes.good_for)
+                if p.attributes.good_for
+                else None
+            ),
+            "dietary": (
+                lambda p: " ".join(p.attributes.dietary)
+                if p.attributes.dietary
+                else None
+            ),
+            "neighborhood": (
+                lambda p: p.attributes.location_context.neighborhood
+                if p.attributes.location_context
+                else None
+            ),
+            "city": (
+                lambda p: p.attributes.location_context.city
+                if p.attributes.location_context
+                else None
+            ),
+            "country": (
+                lambda p: p.attributes.location_context.country
+                if p.attributes.location_context
+                else None
+            ),
+        }
+
+        cfg = get_config().embeddings
+        parts: list[str] = []
+        for field in cfg.description_fields:
+            extractor = extractors.get(field)
+            if extractor is None:
+                continue
+            value = extractor(place)
+            if value:
+                parts.append(value)
+        return cfg.description_separator.join(parts)

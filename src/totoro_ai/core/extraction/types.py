@@ -1,6 +1,13 @@
-"""New cascade types — zero dependencies on existing extraction modules.
+"""Shared types for the extraction cascade (ADR-054 / feature 019).
 
-Import from totoro_ai.core.extraction.types for all cascade pipeline types.
+The "one shape everywhere" rule applies here: `CandidatePlace` and
+`ValidatedCandidate` both wrap a `PlaceCreate` instead of carrying a
+parallel set of loose fields. Extraction-only metadata (source level,
+corroboration, signals, confidence, resolved_by) lives as sidecar fields
+on the wrappers — everything else belongs on the `PlaceCreate` itself.
+
+`PlaceCreate` and `PlaceObject` are re-exported so callers that imported
+them from this module continue to resolve during the migration.
 """
 
 from __future__ import annotations
@@ -8,13 +15,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from totoro_ai.core.places import PlaceCreate, PlaceObject
+
+__all__ = [
+    "ExtractionLevel",
+    "CandidatePlace",
+    "ExtractionContext",
+    "ValidatedCandidate",
+    "ProvisionalResponse",
+    "ExtractionPending",
+    # Re-exported from core.places for legacy import paths.
+    "PlaceCreate",
+    "PlaceObject",
+]
+
 
 class ExtractionLevel(Enum):
-    """Enricher levels that produce CandidatePlace objects.
-
-    Only levels that create candidates are listed here. Caption enrichers
-    (oEmbed, yt-dlp) and the validator (Google Places) are excluded.
-    """
+    """Enricher levels that produce CandidatePlace objects."""
 
     EMOJI_REGEX = "emoji_regex"
     LLM_NER = "llm_ner"
@@ -25,27 +42,24 @@ class ExtractionLevel(Enum):
 
 @dataclass
 class CandidatePlace:
-    """Unvalidated place candidate produced by an enricher."""
+    """Pre-validation wrapper around a `PlaceCreate`.
 
-    name: str
-    city: str | None
-    cuisine: str | None
+    Enrichers build a `PlaceCreate` with whatever they can derive from the
+    source content (name, type, attributes, location_context, …) and wrap
+    it here with the extraction-cascade metadata the validator and dedup
+    passes need. `provider` and `external_id` on the inner `PlaceCreate`
+    are left `None` until the validator runs.
+    """
+
+    place: PlaceCreate
     source: ExtractionLevel
     corroborated: bool = False
-    price_range: str | None = None
-    place_type: str | None = None
     signals: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ExtractionContext:
-    """Shared mutable state threaded through all enrichers.
-
-    Mutation rules:
-    - caption and transcript are first-write-wins; once set, no enricher may overwrite.
-    - candidates is append-only during enrichment.
-    - pending_levels is set once by dispatch_background() (Run 2).
-    """
+    """Shared mutable state threaded through all enrichers."""
 
     url: str | None
     user_id: str
@@ -61,20 +75,19 @@ class ExtractionContext:
 
 
 @dataclass
-class ExtractionResult:
-    """Validated, scored result from GooglePlacesValidator."""
+class ValidatedCandidate:
+    """Post-validation wrapper — same `PlaceCreate`, now with `provider` +
+    `external_id` filled in by the validator.
 
-    place_name: str
-    address: str | None
-    city: str | None
-    cuisine: str | None
+    `confidence`, `resolved_by`, and `corroborated` are the only
+    extraction-internal fields kept. Anything else (including `city`)
+    already lives on `place.attributes` and should be read from there.
+    """
+
+    place: PlaceCreate
     confidence: float
     resolved_by: ExtractionLevel
-    corroborated: bool
-    external_provider: str | None
-    external_id: str | None
-    lat: float | None = None
-    lng: float | None = None
+    corroborated: bool = False
 
 
 @dataclass
@@ -85,7 +98,7 @@ class ProvisionalResponse:
     confidence: float
     message: str
     pending_levels: list[ExtractionLevel] = field(default_factory=list)
-    request_id: str = ""  # UUID4 set by ExtractionPipeline when Phase 3 fires
+    request_id: str = ""
 
 
 @dataclass
@@ -94,7 +107,6 @@ class ExtractionPending:
 
     Intentionally NOT a DomainEvent subclass: ExtractionContext contains mutable
     list fields that are incompatible with Pydantic BaseModel validation.
-    The event dispatcher uses cast(DomainEvent, event) as a typed workaround.
     """
 
     user_id: str
@@ -102,4 +114,4 @@ class ExtractionPending:
     pending_levels: list[ExtractionLevel]
     context: ExtractionContext
     event_type: str = "extraction_pending"
-    request_id: str = ""  # carried from ProvisionalResponse to handler
+    request_id: str = ""

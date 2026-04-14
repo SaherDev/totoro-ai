@@ -8,6 +8,20 @@ from totoro_ai.core.extraction.types import (
     ExtractionContext,
     ExtractionLevel,
 )
+from totoro_ai.core.places import PlaceCreate, PlaceType
+
+
+def _candidate(
+    name: str, source: ExtractionLevel, user_id: str = "u1"
+) -> CandidatePlace:
+    return CandidatePlace(
+        place=PlaceCreate(
+            user_id=user_id,
+            place_name=name,
+            place_type=PlaceType.food_and_drink,
+        ),
+        source=source,
+    )
 
 
 def _ctx() -> ExtractionContext:
@@ -52,22 +66,12 @@ async def test_dedup_called_after_all_enrichers() -> None:
 
     async def add_candidate_1(context: ExtractionContext) -> None:
         context.candidates.append(
-            CandidatePlace(
-                name="Ramen House",
-                city=None,
-                cuisine=None,
-                source=ExtractionLevel.EMOJI_REGEX,
-            )
+            _candidate("Ramen House", ExtractionLevel.EMOJI_REGEX)
         )
 
     async def add_candidate_2(context: ExtractionContext) -> None:
         context.candidates.append(
-            CandidatePlace(
-                name="Ramen House",
-                city=None,
-                cuisine=None,
-                source=ExtractionLevel.LLM_NER,
-            )
+            _candidate("Ramen House", ExtractionLevel.LLM_NER)
         )
 
     e1 = _mock_enricher(side_effect=add_candidate_1)

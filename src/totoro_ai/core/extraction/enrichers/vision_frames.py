@@ -14,6 +14,7 @@ from totoro_ai.core.extraction.types import (
     ExtractionContext,
     ExtractionLevel,
 )
+from totoro_ai.core.places import PlaceCreate, PlaceType
 from totoro_ai.providers.llm import VisionExtractorProtocol
 
 logger = logging.getLogger(__name__)
@@ -97,15 +98,19 @@ class VisionFramesEnricher:
 
         names = await self._vision_extractor.extract_place_names(frames)
         for name in names:
-            if name:
-                context.candidates.append(
-                    CandidatePlace(
-                        name=name,
-                        city=None,
-                        cuisine=None,
-                        source=ExtractionLevel.VISION_FRAMES,
-                    )
+            if not name:
+                continue
+            place = PlaceCreate(
+                user_id=context.user_id,
+                place_name=name,
+                place_type=PlaceType.services,
+            )
+            context.candidates.append(
+                CandidatePlace(
+                    place=place,
+                    source=ExtractionLevel.VISION_FRAMES,
                 )
+            )
 
     def _capture_frames(self, url: str) -> bytes:
         """Pipe yt-dlp video stream into ffmpeg and collect PNG bytes."""
