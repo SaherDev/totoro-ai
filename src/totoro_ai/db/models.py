@@ -55,15 +55,12 @@ class Place(Base):
         ),
         # Composite index for "all places for this user of this type" queries.
         Index("ix_places_user_type", "user_id", "place_type"),
-        # GIN FTS index on name + subcategory for hybrid recall.
-        Index(
-            "places_fts_idx",
-            text(
-                "to_tsvector('english', "
-                "coalesce(place_name, '') || ' ' || coalesce(subcategory, ''))"
-            ),
-            postgresql_using="gin",
-        ),
+        # The `places_fts_idx` GIN index and the `search_vector` generated
+        # column are created directly by migration
+        # a1b2c3d4e5f6_places_search_vector_generated_column. Do not declare
+        # them here — SQLAlchemy cannot express a GENERATED ALWAYS AS STORED
+        # column natively, and we don't want autogenerate to drop/recreate
+        # the index on every run.
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -81,6 +78,12 @@ class Place(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    # Read-only tsvector column (GENERATED ALWAYS AS ... STORED). Computed
+    # by PostgreSQL from place_name, subcategory, and selected JSONB
+    # attributes. PlacesRepository excludes this from every INSERT/UPDATE.
+    search_vector: Mapped[str | None] = mapped_column(
+        "search_vector", nullable=True
     )
 
     embeddings: Mapped[list["Embedding"]] = relationship(

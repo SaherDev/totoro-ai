@@ -1,7 +1,22 @@
+"""Ranking service — multi-factor scoring over PlaceObject (feature 019).
+
+The ranker consumes `PlaceObject`s flowing out of recall/enrichment and
+returns `ScoredPlace` wrappers in descending score order. Scoring signals
+are read from `PlaceObject.attributes.*` (cuisine, price_hint, ambiance,
+dietary, good_for), Tier-2 `lat`/`lng` (populated only after
+`enrich_batch`), and `popularity` (Tier 3). Missing tier data degrades
+gracefully: absent coordinates → neutral distance score; absent popularity
+→ neutral popularity; absent attribute value → taste dimension falls back
+to 0.5.
+"""
+
+from __future__ import annotations
+
 import math
 
 from totoro_ai.core.config import get_config
-from totoro_ai.core.consult.types import Candidate
+from totoro_ai.core.consult.types import ScoredPlace
+from totoro_ai.core.places.models import PlaceObject
 from totoro_ai.core.utils.geo import haversine_m
 
 TASTE_DIMENSIONS = [
@@ -22,61 +37,51 @@ class RankingService:
 
     def rank(
         self,
-        candidates: list[Candidate],
+        places: list[PlaceObject],
         taste_vector: dict[str, float],
         search_location: dict[str, float] | None = None,
-    ) -> list[Candidate]:
-        """Rank candidates by multi-factor scoring.
+        sources_by_place_id: dict[str, str] | None = None,
+    ) -> list[ScoredPlace]:
+        """Rank `PlaceObject`s by multi-factor scoring.
 
         Args:
-            candidates: List of Candidate objects to rank
-            taste_vector: User taste model vector (8 dimensions)
-            search_location: Reference location for distance scoring {'lat': float, 'lng': float}
-                If None, distance weight is set to 0 and ranking uses taste, price, popularity.
+            places: candidates flowing out of recall/discovery.
+            taste_vector: the user's 8-dim taste model vector.
+            search_location: reference point for distance scoring, or None.
+            sources_by_place_id: optional mapping from `place_id` to the
+                logical source ("saved" or "discovered"). Used to apply
+                the saved-source boost. When omitted, every place is
+                treated as "saved" (the saved-source boost applies).
 
         Returns:
-            Candidates sorted by final_score descending, with _score fields added.
+            A list of `ScoredPlace` sorted by `score` descending. One
+            entry per input place; input order is not preserved.
         """
         weights = self.config.ranking.weights
+        sources_by_place_id = sources_by_place_id or {}
 
-        scored = []
-        for candidate in candidates:
-            taste_sim = self._compute_taste_similarity(candidate, taste_vector)
+        scored: list[ScoredPlace] = []
+        for place in places:
+            source = sources_by_place_id.get(place.place_id, "saved")
 
-            # Compute distance score if search_location is available
-            if (
-                search_location
-                and candidate.lat is not None
-                and candidate.lng is not None
-            ):
-                distance_m = haversine_m(
-                    search_location["lat"],
-                    search_location["lng"],
-                    candidate.lat,
-                    candidate.lng,
-                )
-                # Normalize distance to 0.0–1.0 score (far → 0, close → 1)
-                # Use 10km as the inflection point
-                distance_score = max(0.0, 1.0 - (distance_m / 10_000.0))
-            else:
-                # No location available, default to neutral 0.5
-                distance_score = 0.5
+            taste_sim, distance_m = self._taste_and_distance(
+                place, taste_vector, search_location
+            )
+            distance_score = self._distance_score(distance_m, search_location)
 
-            price_score = self._compute_price_score(candidate.price_range)
-            popularity_score = candidate.popularity_score
+            price_score = self._compute_price_score(place.attributes.price_hint)
+            popularity_score = (
+                place.popularity if place.popularity is not None else 0.5
+            )
 
-            # Adjust weights if search_location is None
             if search_location is None:
-                # Set distance weight to 0, re-normalize other weights
                 distance_weight = 0.0
                 taste_weight = weights.taste_similarity + weights.distance
-                price_weight = weights.price_fit
-                popularity_weight = weights.popularity
             else:
                 distance_weight = weights.distance
                 taste_weight = weights.taste_similarity
-                price_weight = weights.price_fit
-                popularity_weight = weights.popularity
+            price_weight = weights.price_fit
+            popularity_weight = weights.popularity
 
             final_score = (
                 taste_sim * taste_weight
@@ -84,90 +89,106 @@ class RankingService:
                 + price_score * price_weight
                 + popularity_score * popularity_weight
             )
+            if source == "saved":
+                final_score = min(1.0, final_score + weights.source_boost)
 
-            # Apply source boost for saved places
-            if candidate.source == "saved":
-                final_score += weights.source_boost
-                final_score = min(1.0, final_score)
-
-            # Create a copy of the candidate with scores
-            scored_candidate = candidate.model_copy(
-                update={
-                    "distance": distance_m
-                    if (
-                        search_location
-                        and candidate.lat is not None
-                        and candidate.lng is not None
-                    )
-                    else 0.0
-                }
+            scored.append(
+                ScoredPlace(
+                    place=place,
+                    score=final_score,
+                    distance_m=distance_m,
+                    source=source,
+                )
             )
-            scored.append((scored_candidate, final_score))
 
-        # Sort by final score descending
-        return [c for c, _ in sorted(scored, key=lambda x: x[1], reverse=True)]
+        scored.sort(key=lambda sp: sp.score, reverse=True)
+        return scored
 
-    def _compute_taste_similarity(
-        self, candidate: Candidate, taste_vector: dict[str, float]
-    ) -> float:
-        """Compute taste vector similarity using weighted Euclidean distance."""
-        observation = self._get_place_observation(candidate)
+    # ------------------------------------------------------------------
+    # Scoring internals
+    # ------------------------------------------------------------------
+    def _taste_and_distance(
+        self,
+        place: PlaceObject,
+        taste_vector: dict[str, float],
+        search_location: dict[str, float] | None,
+    ) -> tuple[float, float]:
+        distance_m = 0.0
+        if (
+            search_location is not None
+            and place.lat is not None
+            and place.lng is not None
+        ):
+            distance_m = haversine_m(
+                search_location["lat"], search_location["lng"], place.lat, place.lng
+            )
+
+        observation = self._get_place_observation(place, distance_m)
         ema = self.config.taste_model.ema
-
         weighted_sq_sum = sum(
             getattr(ema, dim)
             * (taste_vector.get(dim, 0.5) - observation.get(dim, 0.5)) ** 2
             for dim in TASTE_DIMENSIONS
         )
-
         distance = math.sqrt(weighted_sq_sum)
-        return 1.0 / (1.0 + distance)
+        return 1.0 / (1.0 + distance), distance_m
 
-    def _compute_price_score(self, price_range: str | None) -> float:
-        """Compute price fit score based on price range.
+    @staticmethod
+    def _distance_score(
+        distance_m: float, search_location: dict[str, float] | None
+    ) -> float:
+        if search_location is None:
+            return 0.5
+        if distance_m == 0.0:
+            return 0.5
+        return max(0.0, 1.0 - (distance_m / 10_000.0))
 
-        For MVP, return neutral 0.5 for all ranges (deferred to Phase 4 for
-        user preference matching).
-        """
+    @staticmethod
+    def _compute_price_score(price_hint: str | None) -> float:
+        """Neutral price fit until user-preference matching lands."""
+        del price_hint
         return 0.5
 
-    def _get_place_observation(self, candidate: Candidate) -> dict[str, float]:
-        """Extract observation vector from candidate place."""
+    def _get_place_observation(
+        self, place: PlaceObject, distance_m: float
+    ) -> dict[str, float]:
         observations = self.config.taste_model.observations
-
+        first_dietary = place.attributes.dietary[0] if place.attributes.dietary else None
+        first_good_for = (
+            place.attributes.good_for[0] if place.attributes.good_for else None
+        )
         return {
             "price_comfort": self._lookup_obs(
-                observations.price_comfort, candidate.price_range
+                observations.price_comfort, place.attributes.price_hint
             ),
             "dietary_alignment": self._lookup_obs(
-                observations.dietary_alignment, candidate.dietary_pref
+                observations.dietary_alignment, first_dietary
             ),
             "cuisine_frequency": self._lookup_obs(
-                observations.cuisine_frequency, candidate.cuisine_frequency
+                observations.cuisine_frequency, place.attributes.cuisine
             ),
             "ambiance_preference": self._lookup_obs(
-                observations.ambiance_preference, candidate.ambiance
+                observations.ambiance_preference, place.attributes.ambiance
             ),
             "crowd_tolerance": self._lookup_obs(
-                observations.crowd_tolerance, candidate.crowd_level
+                observations.crowd_tolerance, first_good_for
             ),
             "cuisine_adventurousness": self._lookup_obs(
-                observations.cuisine_adventurousness,
-                candidate.cuisine_adventurousness,
+                observations.cuisine_adventurousness, place.attributes.cuisine
             ),
             "time_of_day_preference": self._lookup_obs(
-                observations.time_of_day_preference, candidate.time_of_day
+                observations.time_of_day_preference, first_good_for
             ),
             "distance_tolerance": self._lookup_obs(
                 observations.distance_tolerance,
-                self._distance_to_tolerance(candidate.distance),
+                self._distance_to_tolerance(distance_m),
             ),
         }
 
-    def _distance_to_tolerance(self, distance_m: float) -> str | None:
-        """Map distance in metres to tolerance value for lookup."""
+    @staticmethod
+    def _distance_to_tolerance(distance_m: float) -> str | None:
         if distance_m == 0.0:
-            return None  # Unknown distance, use default
+            return None
         if distance_m < 500:
             return "very_close"
         if distance_m < 1000:
@@ -176,7 +197,8 @@ class RankingService:
             return "moderate"
         return "far"
 
-    def _lookup_obs(self, lookup_table: dict[str, float], key: str | None) -> float:
+    @staticmethod
+    def _lookup_obs(lookup_table: dict[str, float], key: str | None) -> float:
         if key is None or key not in lookup_table:
             return 0.5
         return lookup_table.get(key, 0.5)

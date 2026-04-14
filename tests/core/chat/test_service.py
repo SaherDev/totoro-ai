@@ -1,6 +1,5 @@
 """Unit tests for ChatService.run() dispatch paths."""
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from totoro_ai.api.schemas.chat import ChatRequest
@@ -29,13 +28,20 @@ def _make_service(
     consult: AsyncMock | None = None,
     recall: AsyncMock | None = None,
     assistant: AsyncMock | None = None,
+    event_dispatcher: AsyncMock | None = None,
+    memory_service: AsyncMock | None = None,
 ) -> ChatService:
     """Helper to build a ChatService with all deps mocked."""
+    if event_dispatcher is None:
+        event_dispatcher = AsyncMock()
+        event_dispatcher.dispatch = AsyncMock()
     return ChatService(
         extraction_service=extraction or AsyncMock(),
         consult_service=consult or AsyncMock(),
         recall_service=recall or AsyncMock(),
         assistant_service=assistant or AsyncMock(),
+        event_dispatcher=event_dispatcher,
+        memory_service=memory_service or AsyncMock(),
     )
 
 
@@ -76,14 +82,18 @@ def _recall_response() -> RecallResponse:
     return RecallResponse(
         results=[
             RecallResult(
-                place_id="place-1",
-                place_name="Ichiran Ramen",
-                address="Shibuya",
-                saved_at=datetime(2024, 1, 1, tzinfo=UTC),
-                match_reason="vector",
+                place=PlaceObject(
+                    place_id="place-1",
+                    place_name="Ichiran Ramen",
+                    place_type=PlaceType.food_and_drink,
+                    subcategory="restaurant",
+                    attributes=PlaceAttributes(cuisine="ramen"),
+                ),
+                match_reason="semantic + keyword",
+                relevance_score=0.9,
             )
         ],
-        total=1,
+        total_count=1,
         empty_state=False,
     )
 

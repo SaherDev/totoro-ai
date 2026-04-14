@@ -1,3 +1,6 @@
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 
@@ -10,16 +13,67 @@ from totoro_ai.api.routes.feedback import router as feedback_router
 from totoro_ai.core.config import get_config
 from totoro_ai.db.session import _get_session_factory
 
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# ADR-055: alignment between config.embeddings.description_fields and the
+# search_vector generated column in migration a1b2c3d4e5f6. Any drift here
+# means vector-similarity and FTS are searching different fields — retrieval
+# quality degrades silently. The startup validator below logs CRITICAL when
+# the two lists disagree.
+# ---------------------------------------------------------------------------
+
+_SEARCH_VECTOR_FIELDS = frozenset(
+    {
+        "place_name",
+        "subcategory",
+        "cuisine",
+        "ambiance",
+        "price_hint",
+        "neighborhood",
+        "city",
+        "country",
+    }
+)
+
+
+def _validate_embedding_fts_alignment() -> None:
+    cfg_fields = frozenset(get_config().embeddings.description_fields)
+    excluded = {"tags", "good_for", "dietary", "place_type"}
+    mappable = cfg_fields - excluded
+    missing = mappable - _SEARCH_VECTOR_FIELDS
+    extra = _SEARCH_VECTOR_FIELDS - mappable
+    if missing or extra:
+        logger.critical(
+            "embedding_fts_mismatch",
+            extra={
+                "in_config_not_in_search_vector": sorted(missing),
+                "in_search_vector_not_in_config": sorted(extra),
+            },
+        )
+
+
 _app_meta = get_config().app
 try:
     _version = pkg_version("totoro-ai")
 except PackageNotFoundError:
     _version = "0.1.0"
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Config is already loaded by the time the app module is imported
+    # (see `get_config()` at module scope above). Run the ADR-055 alignment
+    # check once at boot so drift is caught before any recall query runs.
+    _validate_embedding_fts_alignment()
+    yield
+
+
 app = FastAPI(
     title=_app_meta.name,
     version=_version,
     description=_app_meta.description,
+    lifespan=lifespan,
 )
 
 router = APIRouter(prefix=_app_meta.api_prefix)

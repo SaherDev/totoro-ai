@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-055: search_vector generated column is coupled to embeddings.description_fields
+
+**Date:** 2026-04-15\
+**Status:** accepted\
+**Context:** The `places.search_vector` generated column and the embedding text built by `_build_description` both determine what gets searched at recall time. If they use different fields, vector similarity and FTS search different things — retrieval quality degrades silently.\
+**Decision:** The `search_vector` generated column fields must always match `config/app.yaml` `embeddings.description_fields` minus four intentionally excluded fields (`tags`, `good_for`, `dietary`, `place_type` — JSONB arrays and enum values not suitable for FTS). A startup validator logs `CRITICAL` if drift is detected. Changing `description_fields` requires a new migration to update the generated column AND a full re-embedding of all saved places. Both steps are mandatory and must ship together.\
+**Consequences:** Config changes to `description_fields` are never safe alone. Re-embedding is always required alongside a schema migration. The startup validator catches drift introduced by incomplete deployments.
+
+---
+
 ## ADR-054: PlacesService strict-create with explicit duplicate-detection lookup
 
 **Date:** 2026-04-14\

@@ -1,352 +1,298 @@
-"""Tests for the recall repository."""
+"""Tests for the recall repository (two-mode search, feature 019)."""
 
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from totoro_ai.db.repositories.recall_repository import (
-    SQLAlchemyRecallRepository,
-)
+from totoro_ai.core.recall.types import RecallFilters
+from totoro_ai.db.repositories.recall_repository import SQLAlchemyRecallRepository
 
 
-@pytest.fixture
-def mock_session():
-    """Create a mock database session."""
+def _row(
+    place_id: str = "pid-1",
+    place_name: str = "Cafe A",
+    place_type: str = "food_and_drink",
+    subcategory: str | None = "cafe",
+    attributes: dict[str, Any] | None = None,
+    tags: list[str] | None = None,
+    source: str | None = None,
+    provider_id: str | None = "google:abc",
+    matched_vector: bool = False,
+    matched_text: bool = False,
+    rrf_score: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": place_id,
+        "place_name": place_name,
+        "place_type": place_type,
+        "subcategory": subcategory,
+        "tags": tags or [],
+        "attributes": attributes or {},
+        "source_url": None,
+        "source": source,
+        "provider_id": provider_id,
+        "created_at": datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        "matched_vector": matched_vector,
+        "matched_text": matched_text,
+        "rrf_score": rrf_score,
+    }
+
+
+def _mock_session_with_rows(rows: list[dict[str, Any]], count: int = 0) -> AsyncMock:
     session = AsyncMock()
-    # Setup the mock to handle execute() calls
-    # session.execute() returns a result object with mappings()
-    session.execute = AsyncMock()
+
+    result_mock = MagicMock()
+    mappings_mock = MagicMock()
+    mappings_mock.fetchall.return_value = rows
+    result_mock.mappings.return_value = mappings_mock
+
+    session.execute = AsyncMock(return_value=result_mock)
+    session.scalar = AsyncMock(return_value=count)
     return session
 
 
-@pytest.fixture
-def repo(mock_session):
-    """Recall repository with mocked session."""
-    return SQLAlchemyRecallRepository(mock_session)
+# ---------------------------------------------------------------------------
+# Filter mode (query is None)
+# ---------------------------------------------------------------------------
 
 
-def setup_mock_execute_result(mock_session, result_dicts):
-    """Helper to setup mock session.execute() to return expected results.
+@pytest.mark.asyncio
+async def test_filter_mode_runs_pure_select_and_returns_filter_match_reason() -> None:
+    session = _mock_session_with_rows(
+        [
+            _row(place_id="p1", place_name="Coffee Lab"),
+            _row(place_id="p2", place_name="Tiny Cafe"),
+        ],
+        count=2,
+    )
+    repo = SQLAlchemyRecallRepository(session)
 
-    The repository code uses result.mappings().fetchall() to get dictionaries.
-    """
-    # Create a mock mappings object
-    mock_mappings = MagicMock()
-    mock_mappings.fetchall.return_value = result_dicts
+    results, total_count = await repo.search(
+        user_id="u1",
+        query=None,
+        filters=RecallFilters(place_type="food_and_drink"),
+        sort_by="created_at",
+        limit=10,
+    )
 
-    # Create a mock result object
-    mock_result = MagicMock()
-    mock_result.mappings.return_value = mock_mappings
-
-    # Mock scalar() for count queries
-    mock_session.scalar = AsyncMock(return_value=0)
-    mock_session.execute = AsyncMock(return_value=mock_result)
-    return mock_session
-
-
-class TestRecallRepositoryVectorTextMatch:
-    """T014: Test for vector+text match in US2 (Cross-Method Search Resilience)."""
-
-    async def test_hybrid_search_returns_results_matching_both_methods(
-        self, repo, mock_session
-    ):
-        """Verify result when query matches both vector and full-text search."""
-        result_dicts = [
-            {
-                "place_id": "place-1",
-                "place_name": "Cosy Ramen Spot",
-                "address": "123 Main St",
-                "cuisine": "Japanese",
-                "price_range": "$$",
-                "source_url": "https://example.com",
-                "saved_at": datetime.now(),
-                "match_reason": "vector_and_text",
-            }
-        ]
-        setup_mock_execute_result(mock_session, result_dicts)
-
-        # Execute hybrid search with vector + text
-        results = await repo.hybrid_search(
-            user_id="test-user-1",
-            query_vector=[0.1, 0.2, 0.31],
-            query_text="ramen",
-            limit=10,
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
-
-        # Verify
-        assert len(results) > 0
-        assert results[0]["place_id"] == "place-1"
-        assert results[0]["place_name"] == "Cosy Ramen Spot"
-        assert results[0]["match_reason"] == "vector_and_text"
-
-    async def test_vector_text_match_includes_all_required_fields(
-        self, repo, mock_session
-    ):
-        """Verify result includes all required fields."""
-        result_dicts = [
-            {
-                "place_id": "place-1",
-                "place_name": "Japanese Restaurant",
-                "address": "456 Oak Ave",
-                "cuisine": "Japanese",
-                "price_range": "$$$",
-                "source_url": "https://example.com/place",
-                "saved_at": datetime.now(),
-                "match_reason": "vector_and_text",
-            }
-        ]
-        setup_mock_execute_result(mock_session, result_dicts)
-
-        results = await repo.hybrid_search(
-            user_id="user-1",
-            query_vector=[0.5, 0.5, 0.51],
-            query_text="japanese",
-            limit=10,
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
-
-        assert len(results) > 0
-        result = results[0]
-        required_fields = [
-            "place_id",
-            "place_name",
-            "address",
-            "cuisine",
-            "price_range",
-            "source_url",
-            "saved_at",
-            "match_reason",
-        ]
-        for field in required_fields:
-            assert field in result
+    assert total_count == 2
+    assert [r.place.place_id for r in results] == ["p1", "p2"]
+    assert all(r.match_reason == "filter" for r in results)
+    assert all(r.relevance_score is None for r in results)
 
 
-class TestRecallRepositoryTextOnlyMatch:
-    """T015: Test for text-only match in US2 (Cross-Method Search Resilience)."""
+@pytest.mark.asyncio
+async def test_filter_mode_empty_filters_only_has_user_id_clause() -> None:
+    session = _mock_session_with_rows([], count=0)
+    repo = SQLAlchemyRecallRepository(session)
 
-    async def test_text_only_search_returns_results(self, repo, mock_session):
-        """Verify result via text search when query matches keyword only."""
-        result_dicts = [
-            {
-                "place_id": "place-1",
-                "place_name": "Hidden Gem Ramen",
-                "address": "789 Hidden Lane",
-                "cuisine": "Japanese",
-                "price_range": "$$",
-                "source_url": "https://example.com",
-                "saved_at": datetime.now(),
-                "match_reason": "text",
-            }
-        ]
-        setup_mock_execute_result(mock_session, result_dicts)
+    await repo.search(user_id="u1", query=None, filters=RecallFilters(), limit=10)
 
-        # Execute text-only search (no vector match)
-        results = await repo.hybrid_search(
-            user_id="test-user-2",
-            query_vector=None,  # No vector
-            query_text="ramen",  # Text matches place_name
-            limit=10,
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
-
-        # Verify result is found via text search
-        assert len(results) > 0
-        assert results[0]["place_id"] == "place-1"
-        assert results[0]["match_reason"] == "text"
-
-    async def test_text_only_search_matches_cuisine_field(self, repo, mock_session):
-        """Verify text search also matches cuisine field."""
-        result_dicts = [
-            {
-                "place_id": "place-1",
-                "place_name": "Generic Restaurant",
-                "address": "999 Cuisine St",
-                "cuisine": "Thai",
-                "price_range": "$",
-                "source_url": "https://example.com",
-                "saved_at": datetime.now(),
-                "match_reason": "text",
-            }
-        ]
-        setup_mock_execute_result(mock_session, result_dicts)
-
-        results = await repo.hybrid_search(
-            user_id="user-text-search",
-            query_vector=None,
-            query_text="thai",  # Matches cuisine, not place_name
-            limit=10,
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
-
-        assert len(results) > 0
-        assert results[0]["cuisine"] == "Thai"
-        assert results[0]["match_reason"] == "text"
+    # The SELECT call is the first execute call; the COUNT is a scalar call.
+    select_call = session.execute.call_args_list[0]
+    params = select_call.args[1]
+    assert params["user_id"] == "u1"
+    assert "place_type" not in params
+    assert "cuisine" not in params
+    # Scalar count was called once with the same user_id.
+    scalar_call = session.scalar.call_args_list[0]
+    assert scalar_call.args[1]["user_id"] == "u1"
 
 
-class TestRecallRepositoryVectorOnlyMatch:
-    """T016: Test for vector-only match in US2 (Cross-Method Search Resilience)."""
+@pytest.mark.asyncio
+async def test_filter_mode_builds_where_clauses_for_every_field() -> None:
+    session = _mock_session_with_rows([], count=0)
+    repo = SQLAlchemyRecallRepository(session)
 
-    async def test_vector_only_search_returns_results(self, repo, mock_session):
-        """Verify result via vector search when query has no keyword overlap."""
-        result_dicts = [
-            {
-                "place_id": "place-1",
-                "place_name": "Place123",
-                "address": "111 Vector Lane",
-                "cuisine": "Italian",
-                "price_range": "$$$",
-                "source_url": "https://example.com",
-                "saved_at": datetime.now(),
-                "match_reason": "vector",
-            }
-        ]
-        setup_mock_execute_result(mock_session, result_dicts)
+    filters = RecallFilters(
+        place_type="food_and_drink",
+        subcategory="cafe",
+        source="tiktok",
+        tags_include=["date-night"],
+        cuisine="japanese",
+        price_hint="moderate",
+        ambiance="cozy",
+        neighborhood="Siam",
+        city="Bangkok",
+        country="Thailand",
+    )
+    await repo.search(user_id="u1", query=None, filters=filters, limit=10)
 
-        # Execute with vector that's similar but no text match
-        results = await repo.hybrid_search(
-            user_id="test-user-3",
-            query_vector=[0.8, 0.1, 0.21],  # Similar to embedding
-            query_text="xyz",  # No text match in any field
-            limit=10,
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
+    params = session.execute.call_args_list[0].args[1]
+    assert params["place_type"] == "food_and_drink"
+    assert params["subcategory"] == "cafe"
+    assert params["source"] == "tiktok"
+    assert params["cuisine"] == "japanese"
+    assert params["price_hint"] == "moderate"
+    assert params["ambiance"] == "cozy"
+    assert params["neighborhood"] == "Siam"
+    assert params["city"] == "Bangkok"
+    assert params["country"] == "Thailand"
+    # tags_include is JSON-serialized for @> jsonb containment.
+    assert params["tags_include"] == '["date-night"]'
 
-        # Result should be found via vector similarity
-        assert len(results) > 0
-        assert results[0]["place_id"] == "place-1"
-        assert results[0]["match_reason"] == "vector"
-
-
-class TestRecallRepositoryResultLimit:
-    """T019: Test for configurable result limit in US4 (Configurable Result Limit)."""
-
-    async def test_hybrid_search_respects_limit_parameter(self, repo, mock_session):
-        """Verify limit parameter is respected; returns exactly specified number."""
-        # Mock 10 results
-        mock_results = [
-            {
-                "place_id": f"place-{i}",
-                "place_name": f"Ramen Place {i}",
-                "address": f"{i} Ramen St",
-                "cuisine": "Japanese",
-                "price_range": "$$",
-                "source_url": "https://example.com",
-                "saved_at": datetime.now(),
-                "match_reason": "vector_and_text",
-            }
-            for i in range(10)
-        ]
-        setup_mock_execute_result(mock_session, mock_results)
-
-        # Execute with limit=10
-        results = await repo.hybrid_search(
-            user_id="test-user-limit",
-            query_vector=[0.5, 0.5, 0.5],
-            query_text="ramen",
-            limit=10,
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
-
-        # Verify exactly 10 results returned
-        assert len(results) == 10
-
-    async def test_hybrid_search_with_limit_5(self, repo, mock_session):
-        """Verify limit=5 returns exactly 5 results."""
-        mock_results = [
-            {
-                "place_id": f"place-{i}",
-                "place_name": f"Restaurant {i}",
-                "address": f"{i} Italian St",
-                "cuisine": "Italian",
-                "price_range": "$",
-                "source_url": "https://example.com",
-                "saved_at": datetime.now(),
-                "match_reason": "vector_and_text",
-            }
-            for i in range(5)
-        ]
-        setup_mock_execute_result(mock_session, mock_results)
-
-        results = await repo.hybrid_search(
-            user_id="test-limit-5",
-            query_vector=[0.2, 0.2, 0.2],
-            query_text="italian",
-            limit=5,
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
-
-        assert len(results) == 5
-
-    async def test_hybrid_search_fewer_results_than_limit(self, repo, mock_session):
-        """Verify returns fewer results if fewer exist than limit."""
-        mock_results = [
-            {
-                "place_id": f"place-{i}",
-                "place_name": f"Pizza {i}",
-                "address": f"{i} Pizza St",
-                "cuisine": "Italian",
-                "price_range": "$$",
-                "source_url": "https://example.com",
-                "saved_at": datetime.now(),
-                "match_reason": "vector_and_text",
-            }
-            for i in range(3)
-        ]
-        setup_mock_execute_result(mock_session, mock_results)
-
-        results = await repo.hybrid_search(
-            user_id="test-few-results",
-            query_vector=[0.3, 0.3, 0.3],
-            query_text="pizza",
-            limit=10,  # Request 10
-            rrf_k=60,
-            candidate_multiplier=2,
-        )
-
-        # Should return only 3
-        assert len(results) == 3
+    sql_text = str(session.execute.call_args_list[0].args[0])
+    assert "p.place_type = :place_type" in sql_text
+    assert "p.attributes->>'cuisine' = :cuisine" in sql_text
+    assert "p.attributes->'location_context'->>'city' = :city" in sql_text
+    assert "p.tags @> :tags_include::jsonb" in sql_text
 
 
-class TestRecallRepositoryCountSavedPlaces:
-    """Test count_saved_places for cold start detection."""
+@pytest.mark.asyncio
+async def test_total_count_round_trip() -> None:
+    session = _mock_session_with_rows(
+        [_row(place_id="p1")],
+        count=147,
+    )
+    repo = SQLAlchemyRecallRepository(session)
 
-    async def test_count_saved_places_returns_zero_for_new_user(
-        self, repo, mock_session
-    ):
-        """Verify count is 0 for user with no saved places."""
-        mock_session.scalar = AsyncMock(return_value=0)
+    results, total_count = await repo.search(
+        user_id="u1", query=None, filters=RecallFilters(), limit=10
+    )
 
-        count = await repo.count_saved_places("never-saved-user")
-        assert count == 0
+    assert len(results) == 1
+    assert total_count == 147
 
-    async def test_count_saved_places_returns_correct_count(self, repo, mock_session):
-        """Verify count matches number of seeded places."""
-        mock_session.scalar = AsyncMock(return_value=5)
 
-        count = await repo.count_saved_places("count-test-user")
-        assert count == 5
+# ---------------------------------------------------------------------------
+# Hybrid mode (query is not None)
+# ---------------------------------------------------------------------------
 
-    async def test_count_saved_places_filters_by_user_id(self, repo, mock_session):
-        """Verify count only includes places for that user."""
 
-        # Create a side effect to return different counts per user
-        async def count_side_effect(*args, **kwargs):
-            # This is a simplified version; in reality we'd match on the query
-            return 3
+@pytest.mark.asyncio
+async def test_hybrid_mode_with_vector_uses_search_vector_column() -> None:
+    session = _mock_session_with_rows(
+        [_row(matched_vector=True, matched_text=True, rrf_score=0.8)],
+        count=1,
+    )
+    repo = SQLAlchemyRecallRepository(session)
 
-        mock_session.scalar = AsyncMock(side_effect=count_side_effect)
+    results, _total = await repo.search(
+        user_id="u1",
+        query="ramen spot",
+        query_vector=[0.1] * 1024,
+        filters=RecallFilters(),
+        sort_by="relevance",
+        limit=10,
+    )
 
-        await repo.count_saved_places("user-1")
-        await repo.count_saved_places("user-2")
+    assert results[0].match_reason == "semantic + keyword"
+    assert results[0].relevance_score == 0.8
+    # The generated `search_vector` column is referenced directly — never
+    # as inline `to_tsvector(...)`.
+    sql_text = str(session.execute.call_args_list[0].args[0])
+    assert "p.search_vector" in sql_text
+    assert "to_tsvector" not in sql_text
 
-        # Both should have been called
-        assert mock_session.scalar.call_count == 2
+
+@pytest.mark.asyncio
+async def test_hybrid_mode_vector_only_maps_match_reason() -> None:
+    session = _mock_session_with_rows(
+        [_row(matched_vector=True, matched_text=False, rrf_score=0.4)],
+        count=1,
+    )
+    repo = SQLAlchemyRecallRepository(session)
+
+    results, _ = await repo.search(
+        user_id="u1",
+        query="q",
+        query_vector=[0.1],
+        filters=RecallFilters(),
+        limit=10,
+    )
+
+    assert results[0].match_reason == "semantic"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_mode_keyword_only_maps_match_reason() -> None:
+    session = _mock_session_with_rows(
+        [_row(matched_vector=False, matched_text=True, rrf_score=0.2)],
+        count=1,
+    )
+    repo = SQLAlchemyRecallRepository(session)
+
+    results, _ = await repo.search(
+        user_id="u1",
+        query="q",
+        query_vector=[0.1],
+        filters=RecallFilters(),
+        limit=10,
+    )
+
+    assert results[0].match_reason == "keyword"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_mode_falls_back_to_fts_only_without_vector() -> None:
+    session = _mock_session_with_rows(
+        [_row(matched_text=True, rrf_score=0.1)],
+        count=1,
+    )
+    repo = SQLAlchemyRecallRepository(session)
+
+    await repo.search(
+        user_id="u1",
+        query="ramen",
+        query_vector=None,
+        filters=RecallFilters(),
+        limit=10,
+    )
+
+    sql_text = str(session.execute.call_args_list[0].args[0])
+    # FTS-only path uses ts_rank against the generated column.
+    assert "p.search_vector" in sql_text
+    assert "ts_rank" in sql_text
+    # The hybrid CTE is not assembled.
+    assert "vector_results" not in sql_text
+
+
+@pytest.mark.asyncio
+async def test_hybrid_mode_applies_filter_where_clauses() -> None:
+    session = _mock_session_with_rows([], count=0)
+    repo = SQLAlchemyRecallRepository(session)
+
+    filters = RecallFilters(place_type="food_and_drink", cuisine="japanese")
+    await repo.search(
+        user_id="u1",
+        query="ramen",
+        query_vector=[0.1],
+        filters=filters,
+        limit=10,
+    )
+
+    params = session.execute.call_args_list[0].args[1]
+    assert params["place_type"] == "food_and_drink"
+    assert params["cuisine"] == "japanese"
+    assert params["query_text"] == "ramen"
+    assert "query_vector" in params
+
+
+# ---------------------------------------------------------------------------
+# count_saved_places
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_count_saved_places_returns_scalar_value() -> None:
+    session = _mock_session_with_rows([], count=42)
+    repo = SQLAlchemyRecallRepository(session)
+
+    count = await repo.count_saved_places("u1")
+
+    assert count == 42
+
+
+@pytest.mark.asyncio
+async def test_count_saved_places_returns_zero_for_new_user() -> None:
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=None)
+    repo = SQLAlchemyRecallRepository(session)
+
+    count = await repo.count_saved_places("new-user")
+
+    assert count == 0

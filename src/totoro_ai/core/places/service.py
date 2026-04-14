@@ -1,25 +1,34 @@
 """PlacesService — the public data-layer entry point for every caller.
 
-Phase 3 ships create/create_batch/get/get_batch/get_by_external_id. The
-`enrich_batch` method is a stub that raises `NotImplementedError` until
-Phase 4 (US2 recall) and Phase 5 (US3 consult) fill in the cache/fetch paths.
+Implements create/create_batch/get/get_batch/get_by_external_id plus the
+two enrich_batch modes: `geo_only=True` (recall — Tier 2 only, zero provider
+calls) and `geo_only=False` (consult — both tiers, fetch on miss, bounded
+by `config.places.max_enrichment_batch`).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import logging
+from typing import TYPE_CHECKING, Any
 
+from redis.exceptions import RedisError
+
+from totoro_ai.core.config import get_config
 from totoro_ai.core.places.models import (
+    GeoData,
     PlaceCreate,
+    PlaceEnrichment,
     PlaceObject,
     PlaceProvider,
 )
 from totoro_ai.core.places.repository import PlacesRepository
 
 if TYPE_CHECKING:
-    # Forward reference — PlacesCache lands in Phase 4 (T038).
-    from totoro_ai.core.places.cache import PlacesCache  # pragma: no cover
+    from totoro_ai.core.places.cache import PlacesCache
     from totoro_ai.core.places.places_client import PlacesClient
+
+logger = logging.getLogger(__name__)
 
 
 class PlacesService:
@@ -64,11 +73,267 @@ class PlacesService:
         return await self._repo.get_by_external_id(provider, external_id)
 
     # ------------------------------------------------------------------
-    # Enrichment — stub until Phase 4/5.
+    # Enrichment
     # ------------------------------------------------------------------
     async def enrich_batch(
         self,
         places: list[PlaceObject],
         geo_only: bool = False,
     ) -> list[PlaceObject]:
-        raise NotImplementedError("enrich_batch lands in US2 (Phase 4) / US3 (Phase 5)")
+        """Attach Tier 2 (and optionally Tier 3) data to each input place.
+
+        In `geo_only=True` (recall) mode, reads only the geo cache. Misses
+        stay as Tier 2 None / geo_fresh=False. Zero provider calls.
+
+        In `geo_only=False` (consult) mode, reads both caches, fetches the
+        union of misses via a single `get_place_details` call per unique
+        provider_id (bounded by `config.places.max_enrichment_batch`), and
+        writes both cache tiers from the merged response.
+
+        Output preserves input order. Places with `provider_id=None` pass
+        through unchanged.
+        """
+        if not places:
+            return []
+
+        unique_ids: list[str] = []
+        seen: set[str] = set()
+        for place in places:
+            pid = place.provider_id
+            if pid is None or pid in seen:
+                continue
+            seen.add(pid)
+            unique_ids.append(pid)
+
+        if not unique_ids:
+            return [p.model_copy() for p in places]
+
+        if self._cache is None:
+            raise RuntimeError(
+                "PlacesService.enrich_batch requires a PlacesCache; none injected."
+            )
+
+        geo_hits = await self._read_geo_cache(unique_ids)
+
+        if geo_only:
+            return self._merge_geo_only(places, geo_hits)
+
+        enr_hits = await self._read_enrichment_cache(unique_ids)
+        new_geo, new_enr = await self._fetch_and_split_misses(
+            unique_ids, geo_hits, enr_hits
+        )
+
+        # Best-effort writeback. Cache.set_*_batch swallow errors internally.
+        if new_geo:
+            await self._cache.set_geo_batch(new_geo)
+        if new_enr:
+            await self._cache.set_enrichment_batch(new_enr)
+
+        combined_geo: dict[str, GeoData | None] = dict(geo_hits)
+        combined_geo.update(new_geo)
+        combined_enr: dict[str, PlaceEnrichment | None] = dict(enr_hits)
+        combined_enr.update(new_enr)
+
+        return self._merge_full(places, combined_geo, combined_enr)
+
+    # ------------------------------------------------------------------
+    # Enrichment internals
+    # ------------------------------------------------------------------
+    async def _read_geo_cache(
+        self, unique_ids: list[str]
+    ) -> dict[str, GeoData | None]:
+        assert self._cache is not None
+        try:
+            return await self._cache.get_geo_batch(unique_ids)
+        except (RedisError, ConnectionError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "places.cache.read_failed",
+                extra={
+                    "tier": "geo",
+                    "provider_id_count": len(unique_ids),
+                    "error": str(exc),
+                },
+            )
+            return {pid: None for pid in unique_ids}
+
+    async def _read_enrichment_cache(
+        self, unique_ids: list[str]
+    ) -> dict[str, PlaceEnrichment | None]:
+        assert self._cache is not None
+        try:
+            return await self._cache.get_enrichment_batch(unique_ids)
+        except (RedisError, ConnectionError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "places.cache.read_failed",
+                extra={
+                    "tier": "enrichment",
+                    "provider_id_count": len(unique_ids),
+                    "error": str(exc),
+                },
+            )
+            return {pid: None for pid in unique_ids}
+
+    async def _fetch_and_split_misses(
+        self,
+        unique_ids: list[str],
+        geo_hits: dict[str, GeoData | None],
+        enr_hits: dict[str, PlaceEnrichment | None],
+    ) -> tuple[dict[str, GeoData], dict[str, PlaceEnrichment]]:
+        if self._client is None:
+            raise RuntimeError(
+                "PlacesService.enrich_batch requires a PlacesClient in consult mode."
+            )
+
+        miss_set: set[str] = set()
+        for pid in unique_ids:
+            if geo_hits.get(pid) is None or enr_hits.get(pid) is None:
+                miss_set.add(pid)
+
+        if not miss_set:
+            return {}, {}
+
+        # Deterministic ordering for the cap: sorted string.
+        misses = sorted(miss_set)
+        cap = get_config().places.max_enrichment_batch
+        if len(misses) > cap:
+            dropped = len(misses) - cap
+            logger.warning(
+                "places.enrichment.fetch_cap_exceeded",
+                extra={
+                    "requested": len(misses),
+                    "cap": cap,
+                    "dropped": dropped,
+                },
+            )
+            misses = misses[:cap]
+
+        responses = await asyncio.gather(
+            *[self._client.get_place_details(_strip_namespace(pid)) for pid in misses],
+            return_exceptions=True,
+        )
+
+        new_geo: dict[str, GeoData] = {}
+        new_enr: dict[str, PlaceEnrichment] = {}
+        for pid, response in zip(misses, responses):
+            if isinstance(response, BaseException):
+                logger.warning(
+                    "places.enrichment.fetch_failed",
+                    extra={"provider_id": pid, "error": str(response)},
+                )
+                continue
+            if response is None:
+                logger.warning(
+                    "places.enrichment.fetch_failed",
+                    extra={"provider_id": pid, "error": "provider returned None"},
+                )
+                continue
+            geo, enr = _map_provider_response(response)
+            if geo is not None:
+                new_geo[pid] = geo
+            if enr is not None:
+                new_enr[pid] = enr
+        return new_geo, new_enr
+
+    @staticmethod
+    def _merge_geo_only(
+        places: list[PlaceObject],
+        geo_hits: dict[str, GeoData | None],
+    ) -> list[PlaceObject]:
+        out: list[PlaceObject] = []
+        for place in places:
+            pid = place.provider_id
+            if pid is None:
+                out.append(place.model_copy())
+                continue
+            geo = geo_hits.get(pid)
+            if geo is None:
+                out.append(place.model_copy())
+                continue
+            out.append(
+                place.model_copy(
+                    update={
+                        "lat": geo.lat,
+                        "lng": geo.lng,
+                        "address": geo.address,
+                        "geo_fresh": True,
+                    }
+                )
+            )
+        return out
+
+    @staticmethod
+    def _merge_full(
+        places: list[PlaceObject],
+        geo_by_pid: dict[str, GeoData | None],
+        enr_by_pid: dict[str, PlaceEnrichment | None],
+    ) -> list[PlaceObject]:
+        out: list[PlaceObject] = []
+        for place in places:
+            pid = place.provider_id
+            if pid is None:
+                out.append(place.model_copy())
+                continue
+            update: dict[str, Any] = {}
+            geo = geo_by_pid.get(pid)
+            if geo is not None:
+                update["lat"] = geo.lat
+                update["lng"] = geo.lng
+                update["address"] = geo.address
+                update["geo_fresh"] = True
+            enr = enr_by_pid.get(pid)
+            if enr is not None:
+                update["hours"] = enr.hours
+                update["rating"] = enr.rating
+                update["phone"] = enr.phone
+                update["photo_url"] = enr.photo_url
+                update["popularity"] = enr.popularity
+                update["enriched"] = True
+            out.append(place.model_copy(update=update) if update else place.model_copy())
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Namespace parsing — the ONLY parse site in the codebase.
+# PlacesRepository._build_provider_id is the ONLY construction site.
+# ---------------------------------------------------------------------------
+
+
+def _strip_namespace(provider_id: str) -> str:
+    """Strip the `{provider}:` prefix and return the raw external_id."""
+    return provider_id.split(":", 1)[1]
+
+
+def _map_provider_response(
+    response: dict[str, Any],
+) -> tuple[GeoData | None, PlaceEnrichment | None]:
+    """Split one `get_place_details` dict into (GeoData, PlaceEnrichment).
+
+    Never issues a second API call. Both halves may be present, only one,
+    or neither — the caller writes whichever half is non-None.
+    """
+    from datetime import datetime, timezone as dt_timezone
+
+    now = datetime.now(dt_timezone.utc)
+
+    lat = response.get("lat")
+    lng = response.get("lng")
+    address = response.get("address")
+
+    geo: GeoData | None = None
+    if lat is not None and lng is not None and address:
+        geo = GeoData(
+            lat=float(lat),
+            lng=float(lng),
+            address=str(address),
+            cached_at=now,
+        )
+
+    enr = PlaceEnrichment(
+        hours=response.get("hours"),
+        rating=response.get("rating"),
+        phone=response.get("phone"),
+        photo_url=response.get("photo_url"),
+        popularity=response.get("popularity"),
+        fetched_at=now,
+    )
+    return geo, enr
