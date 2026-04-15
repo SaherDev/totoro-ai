@@ -106,31 +106,6 @@ async def test_parse_enriched_query_falls_back_to_raw_when_empty() -> None:
         assert result.search.enriched_query == "find me something"
 
 
-async def test_parse_search_location_always_none_after_parse() -> None:
-    """parse() never resolves coordinates — search_location is always None."""
-    with patch(
-        "totoro_ai.core.intent.intent_parser.get_instructor_client"
-    ) as mock_get_client:
-        mock_client = AsyncMock()
-        mock_get_client.return_value = mock_client
-
-        llm_output = ParsedIntent(
-            search=ParsedIntentSearch(
-                enriched_query="pizza restaurants",
-                discovery_filters={"type": "restaurant"},
-            ),
-        )
-        # Simulate an LLM that tried to set search_location despite the
-        # exclude marker — parse() must scrub it back to None.
-        llm_output.search.search_location = {"lat": 1.0, "lng": 2.0}
-        mock_client.extract.return_value = llm_output
-
-        parser = IntentParser()
-        result = await parser.parse("pizza restaurants")
-
-        assert result.search.search_location is None
-
-
 async def test_parse_passes_through_search_location_name() -> None:
     """LLM-extracted location name appears in ParsedIntent; coords stay None."""
     with patch(

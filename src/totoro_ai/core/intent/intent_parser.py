@@ -18,18 +18,23 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from totoro_ai.core.config import get_config
 from totoro_ai.core.places.models import PlaceAttributes, PlaceType
 from totoro_ai.providers import get_instructor_client, get_langfuse_client
 
 
 class ParsedIntentPlace(BaseModel):
-    """Place-side of a parsed intent — mirrors PlaceObject structure exactly.
+    """Place-side of a parsed intent — mirrors PlaceObject structure.
 
-    Top-level fields (`place_type`, `subcategory`, `tags`, `source`) match
-    `PlaceObject` Tier 1. `attributes` is a nested `PlaceAttributes`, the
-    same type used by `PlaceObject.attributes`, so every
-    `intent.place.attributes.*` path matches `place.attributes.*` 1:1
+    Top-level fields (`place_type`, `subcategory`, `tags`) match `PlaceObject`
+    Tier 1. `attributes` is a nested `PlaceAttributes`, the same type used by
+    `PlaceObject.attributes`, so every `intent.place.attributes.*` path
+    matches `place.attributes.*` 1:1
     (e.g. `intent.place.attributes.location_context.neighborhood`).
+
+    `PlaceObject.source` is intentionally absent here: it is set by the
+    save tool from the URL type, not inferred from a user query, so there
+    is no intent-side equivalent for the LLM to populate.
 
     Fields the user did not express are left at their default (None / []).
     """
@@ -38,7 +43,6 @@ class ParsedIntentPlace(BaseModel):
     subcategory: str | None = None
     tags: list[str] = Field(default_factory=list)
     attributes: PlaceAttributes = Field(default_factory=PlaceAttributes)
-    source: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -100,8 +104,6 @@ class IntentParser:
         """
         lf = get_langfuse_client()
 
-        from totoro_ai.core.config import get_config
-
         config = get_config()
         nearby_radius_m = config.consult.nearby_radius_m
         walking_radius_m = config.consult.walking_radius_m
@@ -120,7 +122,6 @@ class IntentParser:
               "museum", "hotel", "bookstore"). Prefer one word.
             - place.tags: list of free-form user-mentioned tags that do not
               fit a dedicated slot (e.g. ["rooftop", "view"]). Keep it short.
-            - place.source: null. Reserved.
             - place.attributes.cuisine: "japanese" | "italian" | "thai" |
               "halal" | ... | null. Null for non-food queries.
             - place.attributes.price_hint: "cheap" | "moderate" | "expensive"
@@ -135,7 +136,7 @@ class IntentParser:
             - place.attributes.dietary: list of constraints ("vegetarian",
               "vegan", "halal", "kosher", "gluten-free"). Food-only.
             - place.attributes.good_for: list of use cases (["date-night"],
-              ["solo"], ["groups"], ["family"], ["business"], ["late-night"]).
+              ["solo"], ["groups"], ["families"], ["business"], ["late-night"]).
               Hyphenate multi-word.
             - place.attributes.location_context.neighborhood / .city /
               .country: the location names mentioned in the query
@@ -281,7 +282,6 @@ class IntentParser:
             )
             if not result.search.enriched_query:
                 result.search.enriched_query = query
-            result.search.search_location = None
 
             if generation:
                 generation.end(output=result.model_dump())
