@@ -12,7 +12,6 @@ in memory, and the cache catches up on the next successful write.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -47,15 +46,13 @@ class PlacesCache:
     # ------------------------------------------------------------------
     # Tier 2 — geo
     # ------------------------------------------------------------------
-    async def get_geo_batch(
-        self, provider_ids: list[str]
-    ) -> dict[str, GeoData | None]:
+    async def get_geo_batch(self, provider_ids: list[str]) -> dict[str, GeoData | None]:
         if not provider_ids:
             return {}
         keys = [f"{self.GEO_PREFIX}{pid}" for pid in provider_ids]
         raw: list[Any] = await self._redis.mget(keys)
         result: dict[str, GeoData | None] = {}
-        for pid, value in zip(provider_ids, raw):
+        for pid, value in zip(provider_ids, raw, strict=False):
             if value is None:
                 result[pid] = None
                 continue
@@ -82,7 +79,7 @@ class PlacesCache:
                     ex=ttl,
                 )
             await pipe.execute()
-        except (RedisError, ConnectionError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, RedisError, ConnectionError) as exc:
             logger.warning(
                 "places.cache.write_failed",
                 extra={
@@ -103,7 +100,7 @@ class PlacesCache:
         keys = [f"{self.ENRICHMENT_PREFIX}{pid}" for pid in provider_ids]
         raw: list[Any] = await self._redis.mget(keys)
         result: dict[str, PlaceEnrichment | None] = {}
-        for pid, value in zip(provider_ids, raw):
+        for pid, value in zip(provider_ids, raw, strict=False):
             if value is None:
                 result[pid] = None
                 continue
@@ -160,7 +157,7 @@ class PlacesCache:
                     ex=ttl,
                 )
             await pipe.execute()
-        except (RedisError, ConnectionError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, RedisError, ConnectionError) as exc:
             logger.warning(
                 "places.cache.write_failed",
                 extra={

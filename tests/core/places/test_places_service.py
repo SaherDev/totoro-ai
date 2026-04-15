@@ -6,6 +6,8 @@ and live in their own test classes here later.
 
 from __future__ import annotations
 
+from datetime import UTC
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,23 +24,26 @@ from totoro_ai.core.places.service import PlacesService
 def _make_place_create(
     place_name: str = "Cafe A",
     external_id: str = "ChIJ_aaa",
+    place_type: PlaceType = PlaceType.food_and_drink,
 ) -> PlaceCreate:
     return PlaceCreate(
         user_id="u1",
         place_name=place_name,
-        place_type=PlaceType.food_and_drink,
+        place_type=place_type,
         provider=PlaceProvider.google,
         external_id=external_id,
     )
 
 
 def _make_place_object(
-    place_id: str = "pid-1", place_name: str = "Cafe A"
+    place_id: str = "pid-1",
+    place_name: str = "Cafe A",
+    place_type: PlaceType = PlaceType.food_and_drink,
 ) -> PlaceObject:
     return PlaceObject(
         place_id=place_id,
         place_name=place_name,
-        place_type=PlaceType.food_and_drink,
+        place_type=place_type,
     )
 
 
@@ -47,15 +52,19 @@ def _make_place_object(
 # ---------------------------------------------------------------------------
 
 
-async def test_create_returns_tier1_place_object_with_freshness_flags_false() -> None:
+@pytest.mark.parametrize("place_type", list(PlaceType))
+async def test_create_returns_tier1_place_object_with_freshness_flags_false(
+    place_type: PlaceType,
+) -> None:
     repo = MagicMock()
-    repo.create = AsyncMock(return_value=_make_place_object())
+    repo.create = AsyncMock(return_value=_make_place_object(place_type=place_type))
     service = PlacesService(repo=repo)
 
-    result = await service.create(_make_place_create())
+    result = await service.create(_make_place_create(place_type=place_type))
 
     repo.create.assert_awaited_once()
     assert result.place_id == "pid-1"
+    assert result.place_type == place_type
     assert result.geo_fresh is False
     assert result.enriched is False
     assert result.lat is None
@@ -183,7 +192,7 @@ def _make_enrichable_place(
 
 
 def _make_geo_data(lat: float = 13.7, lng: float = 100.5, address: str = "Siam") -> Any:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from totoro_ai.core.places.models import GeoData
 
@@ -191,7 +200,7 @@ def _make_geo_data(lat: float = 13.7, lng: float = 100.5, address: str = "Siam")
         lat=lat,
         lng=lng,
         address=address,
-        cached_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        cached_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=UTC),
     )
 
 
@@ -310,7 +319,7 @@ async def test_enrich_batch_geo_only_redis_error_treated_as_all_miss() -> None:
 
 
 def _make_enrichment(rating: float = 4.3) -> Any:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from totoro_ai.core.places.models import PlaceEnrichment
 
@@ -318,7 +327,7 @@ def _make_enrichment(rating: float = 4.3) -> Any:
         hours={"monday": "09:00-18:00", "timezone": "Asia/Bangkok"},
         rating=rating,
         phone="+66 2 000 0000",
-        fetched_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=UTC),
     )
 
 
@@ -344,9 +353,7 @@ async def test_enrich_batch_full_all_hit_makes_zero_fetch_calls() -> None:
     place = _make_enrichable_place()
     repo = MagicMock()
     cache = MagicMock()
-    cache.get_geo_batch = AsyncMock(
-        return_value={"google:ChIJ_aaa": _make_geo_data()}
-    )
+    cache.get_geo_batch = AsyncMock(return_value={"google:ChIJ_aaa": _make_geo_data()})
     cache.get_enrichment_batch = AsyncMock(
         return_value={"google:ChIJ_aaa": _make_enrichment()}
     )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,7 +35,7 @@ def _row(
         "source_url": None,
         "source": source,
         "provider_id": provider_id,
-        "created_at": datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 4, 15, 12, 0, 0, tzinfo=UTC),
         "matched_vector": matched_vector,
         "matched_text": matched_text,
         "rrf_score": rrf_score,

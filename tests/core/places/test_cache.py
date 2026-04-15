@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,7 +12,6 @@ from redis.exceptions import RedisError
 from totoro_ai.core.config import get_config
 from totoro_ai.core.places.cache import PlacesCache
 from totoro_ai.core.places.models import GeoData, PlaceEnrichment
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -24,7 +23,7 @@ def _make_geo(lat: float = 13.7, lng: float = 100.5, address: str = "Siam") -> G
         lat=lat,
         lng=lng,
         address=address,
-        cached_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        cached_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=UTC),
     )
 
 
@@ -37,7 +36,7 @@ def _make_enrichment(rating: float = 4.3) -> PlaceEnrichment:
         },
         rating=rating,
         phone="+66 2 000 0000",
-        fetched_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=UTC),
     )
 
 
@@ -77,7 +76,9 @@ async def test_get_geo_batch_all_hit_returns_geodata_per_key() -> None:
 
     result = await cache.get_geo_batch(["google:a", "google:b"])
 
-    redis_mock.mget.assert_awaited_once_with(["places:geo:google:a", "places:geo:google:b"])
+    redis_mock.mget.assert_awaited_once_with(
+        ["places:geo:google:a", "places:geo:google:b"]
+    )
     assert result["google:a"] is not None
     assert result["google:a"].lat == 1.0
     assert result["google:b"] is not None
@@ -122,7 +123,9 @@ async def test_set_geo_batch_writes_one_set_per_item_with_ttl() -> None:
     assert pipe.set.call_count == 2
     ttl = _expected_ttl()
     for call, (pid, expected) in zip(
-        pipe.set.call_args_list, [("google:a", geo_a), ("google:b", geo_b)]
+        pipe.set.call_args_list,
+        [("google:a", geo_a), ("google:b", geo_b)],
+        strict=False,
     ):
         key, value = call.args
         kwargs = call.kwargs
@@ -268,7 +271,9 @@ async def test_hours_timezone_survives_json_roundtrip() -> None:
     assert loaded.hours.get("monday") == "09:00-18:00"
 
 
-async def test_set_enrichment_batch_raises_when_hours_has_days_without_timezone() -> None:
+async def test_set_enrichment_batch_raises_when_hours_has_days_without_timezone() -> (
+    None
+):
     redis_mock, _ = _make_mock_redis()
     cache = PlacesCache(redis_mock)
 
@@ -276,7 +281,7 @@ async def test_set_enrichment_batch_raises_when_hours_has_days_without_timezone(
     # guards against the programmer error of forgetting the timezone.
     broken = PlaceEnrichment(
         hours={"monday": "09:00-18:00"},  # type: ignore[typeddict-item]
-        fetched_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=timezone.utc),
+        fetched_at=datetime(2026, 4, 15, 12, 0, 0, tzinfo=UTC),
     )
     with pytest.raises(ValueError, match="timezone"):
         await cache.set_enrichment_batch({"google:bad": broken})

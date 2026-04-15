@@ -70,9 +70,7 @@ class RankingService:
             distance_score = self._distance_score(distance_m, search_location)
 
             price_score = self._compute_price_score(place.attributes.price_hint)
-            popularity_score = (
-                place.popularity if place.popularity is not None else 0.5
-            )
+            popularity_score = place.popularity if place.popularity is not None else 0.5
 
             if search_location is None:
                 distance_weight = 0.0
@@ -153,7 +151,9 @@ class RankingService:
         self, place: PlaceObject, distance_m: float
     ) -> dict[str, float]:
         observations = self.config.taste_model.observations
-        first_dietary = place.attributes.dietary[0] if place.attributes.dietary else None
+        first_dietary = (
+            place.attributes.dietary[0] if place.attributes.dietary else None
+        )
         first_good_for = (
             place.attributes.good_for[0] if place.attributes.good_for else None
         )

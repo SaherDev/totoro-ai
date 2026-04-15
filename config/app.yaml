@@ -167,10 +167,9 @@ consult:
   max_alternatives: 2
   placeholder_photo_url: "https://placehold.co/800x450.webp"
   response_timeout_seconds: 10
-  radius_defaults:
-    default: 2000
-    nearby: 1000
-    walking: 500
+  default_radius_m: 1500
+  nearby_radius_m: 500
+  walking_radius_m: 1000
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration

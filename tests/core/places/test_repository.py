@@ -53,6 +53,7 @@ def _row_mapping(
         "source_url": source_url,
         "source": source,
         "provider_id": provider_id,
+        "created_at": None,
     }
 
 
@@ -67,19 +68,38 @@ def _returning_result(rows: list[dict[str, Any]]) -> MagicMock:
     return result
 
 
+# Default valid subcategory per PlaceType so parametrized tests over all
+# five types pick a value that passes the per-type subcategory vocabulary check.
+_DEFAULT_SUBCATEGORY_BY_TYPE: dict[PlaceType, str] = {
+    PlaceType.food_and_drink: "cafe",
+    PlaceType.things_to_do: "museum",
+    PlaceType.shopping: "bookstore",
+    PlaceType.services: "coworking",
+    PlaceType.accommodation: "hotel",
+}
+
+
 def _make_place_create(
     place_name: str = "Cafe A",
     provider: PlaceProvider | None = PlaceProvider.google,
     external_id: str | None = "ChIJ_aaa",
-    subcategory: str | None = "cafe",
+    subcategory: str | None = None,
+    place_type: PlaceType = PlaceType.food_and_drink,
 ) -> PlaceCreate:
+    attrs_kwargs: dict[str, Any] = {"price_hint": "moderate"}
+    if place_type == PlaceType.food_and_drink:
+        attrs_kwargs["cuisine"] = "japanese"
     return PlaceCreate(
         user_id="u1",
         place_name=place_name,
-        place_type=PlaceType.food_and_drink,
-        subcategory=subcategory,
+        place_type=place_type,
+        subcategory=(
+            subcategory
+            if subcategory is not None
+            else _DEFAULT_SUBCATEGORY_BY_TYPE[place_type]
+        ),
         tags=["hidden-gem"],
-        attributes=PlaceAttributes(cuisine="japanese", price_hint="moderate"),
+        attributes=PlaceAttributes(**attrs_kwargs),
         source=PlaceSource.manual,
         provider=provider,
         external_id=external_id,
@@ -119,28 +139,33 @@ def test_build_provider_id_with_none_external_id_returns_none() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_create_inserts_namespaced_provider_id() -> None:
+@pytest.mark.parametrize("place_type", list(PlaceType))
+async def test_create_inserts_namespaced_provider_id(place_type: PlaceType) -> None:
     session = _mock_session()
     session.execute.return_value = _returning_result(
-        [_row_mapping(provider_id="google:ChIJ_aaa")]
+        [
+            _row_mapping(
+                provider_id="google:ChIJ_aaa",
+                place_type=place_type.value,
+            )
+        ]
     )
     repo = PlacesRepository(session)
 
-    place = await repo.create(_make_place_create())
+    place = await repo.create(_make_place_create(place_type=place_type))
 
     session.execute.assert_awaited_once()
     session.commit.assert_awaited_once()
     assert place.provider_id == "google:ChIJ_aaa"
     assert place.place_name == "Cafe A"
+    assert place.place_type == place_type
     assert place.geo_fresh is False
     assert place.enriched is False
 
 
 async def test_create_without_provider_stores_null_provider_id() -> None:
     session = _mock_session()
-    session.execute.return_value = _returning_result(
-        [_row_mapping(provider_id=None)]
-    )
+    session.execute.return_value = _returning_result([_row_mapping(provider_id=None)])
     repo = PlacesRepository(session)
 
     data = _make_place_create(provider=None, external_id=None)

@@ -22,7 +22,9 @@ async def test_run_happy_path(
     mock_llm.complete.return_value = "Tokyo is outstanding for food."
     mock_get_llm.return_value = mock_llm
 
-    service = ChatAssistantService()
+    memory = MagicMock()
+    memory.load_memories = AsyncMock(return_value=[])
+    service = ChatAssistantService(memory_service=memory)
     result = await service.run("What do you think about Tokyo for food?", "user_123")
 
     assert result == "Tokyo is outstanding for food."
@@ -41,7 +43,9 @@ async def test_run_llm_failure_raises_llm_unavailable_error(
     mock_llm.complete.side_effect = RuntimeError("timeout")
     mock_get_llm.return_value = mock_llm
 
-    service = ChatAssistantService()
+    memory = MagicMock()
+    memory.load_memories = AsyncMock(return_value=[])
+    service = ChatAssistantService(memory_service=memory)
     with pytest.raises(LLMUnavailableError, match="timeout"):
         await service.run("What do you think about Tokyo for food?", "user_123")
 
@@ -61,7 +65,9 @@ async def test_run_tracks_langfuse_generation(mock_get_llm: MagicMock) -> None:
         "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client",
         return_value=mock_lf,
     ):
-        service = ChatAssistantService()
+        memory = MagicMock()
+        memory.load_memories = AsyncMock(return_value=[])
+        service = ChatAssistantService(memory_service=memory)
         await service.run("Tokyo food?", "user_123")
 
     mock_lf.generation.assert_called_once_with(
@@ -83,7 +89,9 @@ async def test_system_prompt_passed_to_llm(
     mock_llm.complete.return_value = "Yes, go for omakase."
     mock_get_llm.return_value = mock_llm
 
-    service = ChatAssistantService()
+    memory = MagicMock()
+    memory.load_memories = AsyncMock(return_value=[])
+    service = ChatAssistantService(memory_service=memory)
     await service.run("Is omakase worth it?", "user_123")
 
     call_args = mock_llm.complete.call_args

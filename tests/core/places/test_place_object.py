@@ -58,12 +58,8 @@ def test_place_attributes_defaults_to_none_and_empty_lists() -> None:
 
 def test_place_object_attributes_default_factory_is_isolated_per_instance() -> None:
     # Guards against the classic Pydantic "mutable default shared across instances".
-    a = PlaceObject(
-        place_id="a", place_name="A", place_type=PlaceType.food_and_drink
-    )
-    b = PlaceObject(
-        place_id="b", place_name="B", place_type=PlaceType.food_and_drink
-    )
+    a = PlaceObject(place_id="a", place_name="A", place_type=PlaceType.food_and_drink)
+    b = PlaceObject(place_id="b", place_name="B", place_type=PlaceType.food_and_drink)
     a.tags.append("date-night")
     a.attributes.dietary.append("vegan")
     assert b.tags == []
@@ -225,12 +221,8 @@ def test_attributes_can_carry_location_context() -> None:
 
 
 def test_duplicate_place_error_carries_conflicts_list() -> None:
-    c1 = DuplicateProviderId(
-        provider_id="google:ChIJ_aaa", existing_place_id="pid-1"
-    )
-    c2 = DuplicateProviderId(
-        provider_id="google:ChIJ_bbb", existing_place_id="pid-2"
-    )
+    c1 = DuplicateProviderId(provider_id="google:ChIJ_aaa", existing_place_id="pid-1")
+    c2 = DuplicateProviderId(provider_id="google:ChIJ_bbb", existing_place_id="pid-2")
     err = DuplicatePlaceError([c1, c2])
     assert err.conflicts == [c1, c2]
     assert "google:ChIJ_aaa" in str(err)

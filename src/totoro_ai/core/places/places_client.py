@@ -3,7 +3,7 @@
 import difflib
 import re
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 from pydantic import BaseModel
@@ -65,8 +65,7 @@ def _map_opening_hours(response: dict[str, Any]) -> HoursDict | None:
             close_time = close_obj.get("time", "")
             # Google returns "HHMM" strings; slice into "HH:MM-HH:MM".
             hours[day_name] = (
-                f"{open_time[:2]}:{open_time[2:]}"
-                f"-{close_time[:2]}:{close_time[2:]}"
+                f"{open_time[:2]}:{open_time[2:]}-{close_time[:2]}:{close_time[2:]}"
             )
 
     # Any day not represented by a period is closed.
@@ -74,7 +73,7 @@ def _map_opening_hours(response: dict[str, Any]) -> HoursDict | None:
         if day_name not in hours:
             hours[day_name] = None
 
-    result: HoursDict = {**hours, "timezone": timezone_id}  # type: ignore[misc]
+    result = cast(HoursDict, {**hours, "timezone": timezone_id})
     return result
 
 
@@ -194,10 +193,10 @@ class GooglePlacesClient:
 
     def __init__(self) -> None:
         """Initialize with API key from config."""
-        self.api_key = get_secrets().GOOGLE_API_KEY
-
-        if not self.api_key:
+        api_key = get_secrets().GOOGLE_API_KEY
+        if not api_key:
             raise ValueError("Google API key not configured")
+        self.api_key: str = api_key
 
     async def validate_place(
         self, name: str, location: str | None = None
@@ -303,7 +302,7 @@ class GooglePlacesClient:
 
         # Add radius — fallback to config default if not in filters
         params["radius"] = (
-            filters.get("radius") or get_config().consult.radius_defaults.default
+            filters.get("radius") or get_config().consult.default_radius_m
         )
 
         # Add open_now if present
@@ -330,7 +329,8 @@ class GooglePlacesClient:
                 raise RuntimeError(f"Google Places Nearby Search API error: {e}") from e
 
         data = response.json()
-        return data.get("results", [])
+        results = data.get("results", [])
+        return cast(list[dict[str, Any]], results)
 
     async def geocode(
         self,

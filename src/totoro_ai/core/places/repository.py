@@ -31,6 +31,21 @@ from totoro_ai.db.models import Place
 logger = logging.getLogger(__name__)
 
 
+def build_provider_id(
+    provider: PlaceProvider | None, external_id: str | None
+) -> str | None:
+    """Build a namespaced provider_id string: ``{provider}:{external_id}``.
+
+    This is the ONLY construction site for the provider_id namespace in the
+    codebase. Every call site outside this module imports this function
+    instead of inlining the f-string, so future namespace changes live in
+    one place. The counterpart parser lives in `PlacesService._strip_namespace`.
+    """
+    if provider is None or external_id is None:
+        return None
+    return f"{provider.value}:{external_id}"
+
+
 class PlacesRepository:
     """Async repository over the `places` table (ADR-054, feature 019)."""
 
@@ -40,14 +55,15 @@ class PlacesRepository:
     # ------------------------------------------------------------------
     # Provider-id namespace — the ONLY construction site in the codebase.
     # PlacesService._strip_namespace is the ONLY parser. Do not inline.
+    # Callers outside this module use the module-level `build_provider_id`
+    # helper (alias of the same function) so all namespace construction
+    # flows through this one implementation.
     # ------------------------------------------------------------------
     @staticmethod
     def _build_provider_id(
         provider: PlaceProvider | None, external_id: str | None
     ) -> str | None:
-        if provider is None or external_id is None:
-            return None
-        return f"{provider.value}:{external_id}"
+        return build_provider_id(provider, external_id)
 
     # ------------------------------------------------------------------
     # Writes
@@ -145,9 +161,7 @@ class PlacesRepository:
             raise DuplicatePlaceError(conflicts) from None
         except SQLAlchemyError as exc:
             await self._session.rollback()
-            raise RuntimeError(
-                f"PlacesRepository.create_batch failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"PlacesRepository.create_batch failed: {exc}") from exc
 
         # Preserve input order: map returned rows back to input order by
         # matching on (user_id, place_name, provider_id) — unique enough
@@ -217,9 +231,7 @@ class PlacesRepository:
             )
             rows = result.scalars().all()
         except SQLAlchemyError as exc:
-            raise RuntimeError(
-                f"PlacesRepository.get_batch failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"PlacesRepository.get_batch failed: {exc}") from exc
         by_id: dict[str, Place] = {row.id: row for row in rows}
         return [
             self._orm_to_place_object(by_id[pid]) for pid in place_ids if pid in by_id
@@ -261,9 +273,7 @@ class PlacesRepository:
         return conflicts
 
     @staticmethod
-    def _to_insert_values(
-        data: PlaceCreate, provider_id: str | None
-    ) -> dict[str, Any]:
+    def _to_insert_values(data: PlaceCreate, provider_id: str | None) -> dict[str, Any]:
         return {
             "id": str(uuid4()),
             "user_id": data.user_id,

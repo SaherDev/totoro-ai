@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-
 from typing import TYPE_CHECKING
 
 from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
@@ -11,8 +10,8 @@ from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
 from totoro_ai.core.chat.router import classify_intent
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.consult.types import NoMatchesError
-from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.events.events import PersonalFactsExtracted
+from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.recall.service import RecallService
 
 if TYPE_CHECKING:

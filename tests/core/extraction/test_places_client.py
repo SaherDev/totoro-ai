@@ -71,11 +71,12 @@ async def test_case_insensitive_name_is_exact() -> None:
     assert result.match_quality == PlacesMatchQuality.EXACT
 
 
-async def test_name_with_city_suffix_is_exact() -> None:
-    """City suffix in candidate name is stripped as noise → EXACT.
+async def test_name_with_city_suffix_is_fuzzy() -> None:
+    """City suffix in candidate name lowers ratio from 1.0 → ~0.77 (FUZZY).
 
-    "RAMEN KAISUGI Bangkok" vs "Ramen Kaisugi":
-    core both → "kaisugi" → ratio 1.0.
+    Current `_normalize` trusts the LLM's structured output and does not
+    noise-strip. "ramen kaisugi bangkok" vs "ramen kaisugi" → ratio 0.77,
+    which falls in the FUZZY band (0.70–0.85).
     """
     client = _patched_client()
     response = _fake_response("Ramen Kaisugi")
@@ -84,15 +85,14 @@ async def test_name_with_city_suffix_is_exact() -> None:
             "RAMEN KAISUGI Bangkok", location="Bangkok"
         )
 
-    assert result.match_quality == PlacesMatchQuality.EXACT
+    assert result.match_quality == PlacesMatchQuality.FUZZY
 
 
-async def test_name_with_wrong_city_field_still_exact() -> None:
-    """When NER sets city to a street name, token approach is still robust.
+async def test_name_with_wrong_city_field_still_fuzzy() -> None:
+    """Wrong-city field does not affect the normalize step — still FUZZY.
 
-    location="Sukhumvit 33" (wrong — NER confused street for city).
-    Candidate name "RAMEN KAISUGI Bangkok" still compares as "kaisugi".
-    The suffix strip would have failed here; token approach does not.
+    The `location` param is not used in the comparison path at all; only
+    `name` feeds `_normalize`. So this test has the same outcome as above.
     """
     client = _patched_client()
     response = _fake_response("Ramen Kaisugi")
@@ -101,14 +101,16 @@ async def test_name_with_wrong_city_field_still_exact() -> None:
             "RAMEN KAISUGI Bangkok", location="Sukhumvit 33"
         )
 
-    assert result.match_quality == PlacesMatchQuality.EXACT
+    assert result.match_quality == PlacesMatchQuality.FUZZY
 
 
-async def test_name_with_street_in_candidate_name_is_exact() -> None:
-    """Street address in candidate name is stripped as noise → EXACT.
+async def test_name_with_street_in_candidate_name_is_category_only() -> None:
+    """Street tokens inflate the candidate length enough to drop into CATEGORY_ONLY.
 
-    "RAMEN KAISUGI Sukhumvit 33" vs "Ramen Kaisugi":
-    core both → "kaisugi" → ratio 1.0.
+    "ramen kaisugi sukhumvit 33" vs "ramen kaisugi" → ratio 0.67, which
+    falls in the CATEGORY_ONLY band (0.35–0.70). This is the expected
+    penalty for NER leaking location noise into the place_name field —
+    downstream callers treat CATEGORY_ONLY as "accept category, not name".
     """
     client = _patched_client()
     response = _fake_response("Ramen Kaisugi")
@@ -117,11 +119,11 @@ async def test_name_with_street_in_candidate_name_is_exact() -> None:
             "RAMEN KAISUGI Sukhumvit 33", location=None
         )
 
-    assert result.match_quality == PlacesMatchQuality.EXACT
+    assert result.match_quality == PlacesMatchQuality.CATEGORY_ONLY
 
 
-async def test_emoji_prefix_candidate_name_is_exact() -> None:
-    """emoji_regex candidate "RAMEN KAISUGI Bangkok" (from 📍 capture) → EXACT."""
+async def test_emoji_prefix_candidate_name_is_fuzzy() -> None:
+    """Same candidate shape as the city-suffix test → FUZZY."""
     client = _patched_client()
     response = _fake_response("Ramen Kaisugi")
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response):
@@ -129,27 +131,28 @@ async def test_emoji_prefix_candidate_name_is_exact() -> None:
             "RAMEN KAISUGI Bangkok", location="Bangkok"
         )
 
-    assert result.match_quality == PlacesMatchQuality.EXACT
+    assert result.match_quality == PlacesMatchQuality.FUZZY
 
 
 # ---------------------------------------------------------------------------
-# Classification: FUZZY
+# Classification: EXACT (high-similarity near-match)
 # ---------------------------------------------------------------------------
 
 
-async def test_close_but_not_exact_is_fuzzy() -> None:
-    """Core token ratio ≥ 0.70 but < 0.85 → FUZZY.
+async def test_close_but_not_exact_is_exact() -> None:
+    """SequenceMatcher over full lowercased strings.
 
-    "Fuji Ramen" → core "fuji"
-    Google "Fujiya Ramen" → core "fujiya"
-    SequenceMatcher("fuji", "fujiya") = 8/10 = 0.80 → FUZZY.
+    "fuji ramen" vs "fujiya ramen" → ratio 0.909, which is ≥ 0.85 → EXACT.
+    The old test asserted FUZZY under a core-token scheme that stripped
+    shared tokens; the current simpler scheme gives this pair an EXACT
+    classification.
     """
     client = _patched_client()
     response = _fake_response("Fujiya Ramen")
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response):
         result = await client.validate_place("Fuji Ramen", location=None)
 
-    assert result.match_quality == PlacesMatchQuality.FUZZY
+    assert result.match_quality == PlacesMatchQuality.EXACT
 
 
 # ---------------------------------------------------------------------------

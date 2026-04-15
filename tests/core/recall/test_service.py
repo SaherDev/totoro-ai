@@ -10,8 +10,6 @@ The service now drives:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -62,7 +60,9 @@ def recall_service(
     )
 
 
-def _make_place(place_id: str = "p1", lat: float | None = None, lng: float | None = None) -> PlaceObject:
+def _make_place(
+    place_id: str = "p1", lat: float | None = None, lng: float | None = None
+) -> PlaceObject:
     return PlaceObject(
         place_id=place_id,
         place_name="Cafe A",

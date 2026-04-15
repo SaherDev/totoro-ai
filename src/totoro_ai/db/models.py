@@ -3,7 +3,7 @@ from enum import Enum as PyEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from pgvector.sqlalchemy import Vector
+from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -82,9 +82,7 @@ class Place(Base):
     # Read-only tsvector column (GENERATED ALWAYS AS ... STORED). Computed
     # by PostgreSQL from place_name, subcategory, and selected JSONB
     # attributes. PlacesRepository excludes this from every INSERT/UPDATE.
-    search_vector: Mapped[str | None] = mapped_column(
-        "search_vector", nullable=True
-    )
+    search_vector: Mapped[str | None] = mapped_column("search_vector", nullable=True)
 
     embeddings: Mapped[list["Embedding"]] = relationship(
         "Embedding", back_populates="place", cascade="all, delete-orphan"

@@ -13,7 +13,7 @@ recomputing the tsvector per row.
 #   2. A full re-embedding of all saved places
 # Both steps must happen together or retrieval quality degrades silently.
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: c7e3a8d12b90
 Revises: 9a1c7b54e2f0
 Create Date: 2026-04-15 12:00:00.000000
 """
@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "a1b2c3d4e5f6"
+revision: str = "c7e3a8d12b90"
 down_revision: str | None = "9a1c7b54e2f0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

@@ -1,64 +1,61 @@
-"""Intent extraction from natural language queries using Instructor."""
+"""Intent extraction from natural language queries using Instructor.
+
+`ParsedIntent` is deliberately minimal: it carries only the fields that drive
+actual dispatch decisions (place_type, radius, location, discovery filters)
+plus `enriched_query`, which is the single text handle for vector search and
+Google Places keyword lookup. Cuisine, price, ambiance, dietary, and other
+attribute signals live *inside* `enriched_query` as plain text — the embedder
+and the Places keyword handle them semantically, so there is no structured
+duplicate on ParsedIntent.
+"""
+
+from __future__ import annotations
 
 import textwrap
 from typing import Any, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
+from totoro_ai.core.places.models import PlaceType
 from totoro_ai.providers import get_instructor_client, get_langfuse_client
 
 
-class _IntentLLMOutput(BaseModel):
-    """Schema for LLM extraction only. Not used outside this module."""
-
-    occasion: str | None = None
-    price_range: str | None = None
-    radius: int | None = None
-    discovery_filters: dict[str, Any] = {}
-    search_location_name: str | None = None
-    enriched_query: str | None = None
-
-
 class ParsedIntent(BaseModel):
-    """Structured representation of user intent extracted from a query."""
+    """Structured intent — the minimum set of fields that drive dispatch.
 
-    occasion: str | None = None
-    """Context/occasion (e.g., 'date night', 'quick lunch'), or None if not specified.
+    Everything here either routes the pipeline (place_type, discovery_filters),
+    constrains the search geometry (radius_m, search_location*), or feeds a
+    text-matching stage (enriched_query). No structured attribute fields —
+    cuisine / price / ambiance / dietary / good_for all travel inside
+    `enriched_query` and the embedder handles them semantically.
     """
 
-    price_range: str | None = None
-    """Price range preference ('low', 'mid', 'high'), or None if not specified."""
+    place_type: PlaceType | None = None
 
-    radius: int | None = None
-    """Preferred search radius in meters. LLM returns null when no radius signal
-    detected; falls back to config default."""
-
-    discovery_filters: dict[str, Any] = {}
-    """Filters to pass to PlacesClient.discover() (e.g., opennow, type, keyword)."""
+    radius_m: int | None = None
 
     search_location_name: str | None = None
-    """Raw location name extracted by LLM (e.g., 'Sukhumvit', 'Asok BTS').
-    Preserved for observability; coordinates live in search_location."""
+    """Raw LLM capture of the location (e.g. "Sukhumvit", "Asok BTS"). Not resolved."""
 
     search_location: dict[str, float] | None = None
-    """Resolved search location as {'lat': float, 'lng': float}, or None if
-    no location signal and request location not provided. Resolution sources:
-    - Request location (if provided)
-    - Geocoded city/neighborhood (if query names a destination)
-    - Geocoded street address (if query contains an address)
-    """
+    """Resolved {'lat': float, 'lng': float}. Filled by ConsultService after geocoding."""
 
-    enriched_query: str | None = None
-    """Original query rewritten to include user memory context. Used for
-    recall (vector search) and Google Places keyword. Falls back to raw
-    query if no memories apply."""
+    enriched_query: str = ""
+    """Always present, non-empty. Feeds both the recall vector search and Google
+    Places discovery `keyword` parameter. Cuisine, price, ambiance, dietary, and
+    other attribute signals are folded into this string — the embedder and the
+    Places keyword handle them semantically."""
+
+    discovery_filters: dict[str, Any] = Field(default_factory=dict)
+    """Google Places subtype hint ONLY. Keys: `type`, `opennow`. Nothing else."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class IntentParser:
     """Extract structured intent from natural language place recommendation queries."""
 
     def __init__(self) -> None:
-        """Initialize IntentParser with Instructor client for schema extraction."""
         self._client = get_instructor_client("intent_parser")
 
     async def parse(
@@ -66,70 +63,105 @@ class IntentParser:
     ) -> ParsedIntent:
         """Extract structured intent from a raw natural language query.
 
-        Uses GPT-4o-mini via Instructor for reliable structured extraction.
-        search_location is always None here — ConsultService resolves coordinates
-        from search_location_name after parsing.
-
-        Args:
-            query: Raw natural language query from user
-            user_memories: Optional list of user's personal facts (ADR-010)
-
-        Returns:
-            ParsedIntent with extracted fields; search_location always None
-
-        Raises:
-            ValidationError: If LLM response fails Pydantic validation
-                (FastAPI returns 422 to caller)
+        `search_location` is always None here — ConsultService resolves
+        coordinates from `search_location_name` after parsing.
         """
         lf = get_langfuse_client()
 
         from totoro_ai.core.config import get_config
 
         config = get_config()
-        radius_defaults = config.consult.radius_defaults
+        nearby_radius_m = config.consult.nearby_radius_m
+        walking_radius_m = config.consult.walking_radius_m
 
         system_prompt = textwrap.dedent(
             f"""\
-            Extract structured intent from a place recommendation query. Return a JSON object with these fields:
+            Extract structured intent from a place recommendation query. Return
+            ONLY these fields — nothing else:
 
-            - occasion: string or null. Why the user wants this place (e.g. "date night", "work lunch", "solo breakfast").
-            - price_range: "low" | "mid" | "high" | null. Map signals like "cheap", "budget" → "low". "nice", "upscale", "fancy" → "high". "moderate", "not too expensive" → "mid".
-            - radius: integer (metres) or null. Infer from proximity language in any language:
-              - "nearby", "near me", "around here", "قريب", "附近" → {radius_defaults.nearby}
-              - "walking distance" → {radius_defaults.walking}
-              - No proximity signal → null (system applies {radius_defaults.default} as fallback)
-            - search_location_name: string or null. Extract the location name exactly as mentioned in the query ("Tokyo", "Sukhumvit", "Asok BTS", "Shibuya"). Do not resolve to coordinates. If the query implies current location or names no place → null.
-            - enriched_query: string. Rewrite the original query into a short, search-optimized phrase that incorporates user preferences. Examples: query "dinner nearby" + preference "I only eat omakase" → "omakase restaurant nearby". query "somewhere to eat" + preference "I'm vegetarian" → "vegetarian restaurant". If no preferences, return the original query unchanged.
-            - discovery_filters: dict for Google Places Nearby Search API. This is the primary filter source. Build it from these rules:
-              - Set "type" to the closest Google Places type:
-                Any cuisine or food mention → "restaurant"
-                Coffee, cafe → "cafe"
-                Bar, pub, beer → "bar"
-                Club, nightclub → "night_club"
-                Hotel, hostel, resort → "lodging"
-              - Do NOT set "keyword" in discovery_filters. The keyword is handled separately via enriched_query.
-              - Add "opennow": true only if the query explicitly asks for currently open places.
-              - If the query has no venue or cuisine signal → empty dict {{}}.
+            - place_type: one of "food_and_drink" | "things_to_do" | "shopping" |
+              "services" | "accommodation" | null. Any food/drink mention →
+              "food_and_drink". Museum/park/attraction → "things_to_do". Shop/
+              store/mall → "shopping". Hotel/hostel/resort → "accommodation".
 
-            Return null for any field the query does not address. Do not invent values.
+            - radius_m: integer metres or null. Proximity in any language:
+                "nearby", "near me", "around here", "قريب", "附近" → {nearby_radius_m}
+                "walking distance" → {walking_radius_m}
+                no signal → null (service falls back to a default).
+
+            - search_location_name: the location name exactly as mentioned
+              ("Tokyo", "Sukhumvit", "Asok BTS"). Do not resolve to coordinates.
+              Null if the query implies current location or names no place.
+
+            - enriched_query: ALWAYS non-empty. Rewrite the raw query into a
+              short, keyword-dense phrase that folds in every signal the user
+              gave: cuisine, price, ambiance, dietary, occasion, and anything
+              else. This string feeds both the recall vector search and Google
+              Places discovery — keyword density matters more than grammar. If
+              user preferences are supplied, incorporate any that apply.
+              Examples:
+                raw "cheap ramen nearby" → "cheap japanese ramen nearby"
+                raw "nice dinner in Sukhumvit for a date" → "upscale romantic dinner Sukhumvit"
+                raw "somewhere relaxing for a solo coffee" → "cozy quiet cafe solo"
+                raw "late night drinks" → "late night bar drinks"
+                raw "halal food nearby" → "halal restaurant nearby"
+                raw "dinner nearby" + memory "I'm vegetarian" → "vegetarian dinner nearby"
+                If no signal to add, return the raw query verbatim.
+
+            - discovery_filters: dict for the Google Places Nearby Search API.
+              Keep ONLY these keys:
+                "type": "restaurant" | "cafe" | "bar" | "night_club" | "lodging"
+                  (include only when the query clearly targets one).
+                "opennow": true (ONLY if the query explicitly asks for "open now").
+              Do NOT include cuisine, price, keyword, or anything else. If
+              neither key applies, return {{}}.
+
+            Do NOT return cuisine, subcategory, price_hint, ambiance, dietary,
+            good_for, tags, neighborhood, city, country, source, or any other
+            attribute field. Fold those into `enriched_query` as text.
 
             Examples:
+
             Query: "cheap ramen nearby"
-            Output: {{"occasion": null, "price_range": "low", "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "cheap ramen nearby", "discovery_filters": {{"type": "restaurant"}}}}
+            Output: {{
+              "place_type": "food_and_drink",
+              "radius_m": {nearby_radius_m},
+              "enriched_query": "cheap japanese ramen nearby",
+              "discovery_filters": {{"type": "restaurant"}}
+            }}
 
             Query: "nice dinner in Sukhumvit for a date"
-            Output: {{"occasion": "date night", "price_range": "high", "radius": null, "search_location_name": "Sukhumvit", "enriched_query": "nice dinner in Sukhumvit for a date", "discovery_filters": {{"type": "restaurant"}}}}
+            Output: {{
+              "place_type": "food_and_drink",
+              "search_location_name": "Sukhumvit",
+              "enriched_query": "upscale romantic dinner Sukhumvit date",
+              "discovery_filters": {{"type": "restaurant"}}
+            }}
 
-            Query: "somewhere to eat", preferences: ["I only eat omakase"]
-            Output: {{"occasion": null, "price_range": null, "radius": null, "search_location_name": null, "enriched_query": "omakase restaurant", "discovery_filters": {{"type": "restaurant"}}}}
+            Query: "somewhere relaxing for a solo coffee"
+            Output: {{
+              "place_type": "food_and_drink",
+              "enriched_query": "cozy quiet cafe solo coffee",
+              "discovery_filters": {{"type": "cafe"}}
+            }}
 
-            Query: "dinner nearby", preferences: ["I'm vegetarian", "I eat late"]
-            Output: {{"occasion": "dinner", "price_range": null, "radius": {radius_defaults.nearby}, "search_location_name": null, "enriched_query": "vegetarian dinner nearby", "discovery_filters": {{"type": "restaurant"}}}}"""
+            Query: "late night drinks"
+            Output: {{
+              "place_type": "food_and_drink",
+              "enriched_query": "late night bar drinks",
+              "discovery_filters": {{"type": "bar"}}
+            }}
+
+            Query: "halal food nearby"
+            Output: {{
+              "place_type": "food_and_drink",
+              "radius_m": {nearby_radius_m},
+              "enriched_query": "halal restaurant nearby",
+              "discovery_filters": {{"type": "restaurant"}}
+            }}
+            """
         )
 
-        # Build user message with memories injected (ADR-010, ADR-044)
-        # Memories go in the user message, not system prompt, because Instructor
-        # uses function calling mode where the model extracts from user content.
         if user_memories:
             memories_text = ", ".join(f'"{m}"' for m in user_memories)
             user_content = f"User preferences: [{memories_text}]\n\nQuery: {query}"
@@ -141,7 +173,6 @@ class IntentParser:
             {"role": "user", "content": user_content},
         ]
 
-
         generation = None
         if lf:
             generation = lf.generation(
@@ -150,22 +181,16 @@ class IntentParser:
             )
 
         try:
-            llm_output = cast(
-                _IntentLLMOutput,
+            result = cast(
+                ParsedIntent,
                 await self._client.extract(
-                    _IntentLLMOutput,
+                    ParsedIntent,
                     messages=messages,
                 ),
             )
-
-            result = ParsedIntent(
-                occasion=llm_output.occasion,
-                price_range=llm_output.price_range,
-                radius=llm_output.radius,
-                discovery_filters=llm_output.discovery_filters,
-                search_location_name=llm_output.search_location_name,
-                enriched_query=llm_output.enriched_query or query,
-            )
+            if not result.enriched_query:
+                result.enriched_query = query
+            result.search_location = None
 
             if generation:
                 generation.end(output=result.model_dump())
@@ -175,3 +200,6 @@ class IntentParser:
             if generation:
                 generation.end(error=str(exc))
             raise
+
+
+__all__ = ["IntentParser", "ParsedIntent"]

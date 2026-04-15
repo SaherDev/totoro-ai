@@ -62,8 +62,7 @@ class RecallRepository(Protocol):
         """
         ...
 
-    async def count_saved_places(self, user_id: str) -> int:
-        ...
+    async def count_saved_places(self, user_id: str) -> int: ...
 
 
 class SQLAlchemyRecallRepository:
@@ -209,7 +208,9 @@ class SQLAlchemyRecallRepository:
                 place=self._row_to_place_object(row),
                 match_reason=self._match_reason_from_row(row),
                 relevance_score=(
-                    float(row["rrf_score"]) if row.get("rrf_score") is not None else None
+                    float(row["rrf_score"])
+                    if row.get("rrf_score") is not None
+                    else None
                 ),
             )
             for row in rows

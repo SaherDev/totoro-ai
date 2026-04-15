@@ -70,9 +70,7 @@ async def test_dedup_called_after_all_enrichers() -> None:
         )
 
     async def add_candidate_2(context: ExtractionContext) -> None:
-        context.candidates.append(
-            _candidate("Ramen House", ExtractionLevel.LLM_NER)
-        )
+        context.candidates.append(_candidate("Ramen House", ExtractionLevel.LLM_NER))
 
     e1 = _mock_enricher(side_effect=add_candidate_1)
     e2 = _mock_enricher(side_effect=add_candidate_2)

@@ -27,7 +27,6 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "9a1c7b54e2f0"
@@ -63,15 +62,15 @@ def upgrade() -> None:
     asymmetry is documented.
     """
     # ------------------------------------------------------------------
-    # 1. Add new columns (nullable at first)
+    # 1. Add new columns (nullable at first).
+    #    IF NOT EXISTS so this migration is a no-op for schema shape when
+    #    scripts/seed_migration.py has already self-provisioned them.
     # ------------------------------------------------------------------
-    op.add_column("places", sa.Column("place_type", sa.String(), nullable=True))
-    op.add_column("places", sa.Column("subcategory", sa.String(), nullable=True))
-    op.add_column("places", sa.Column("tags", postgresql.JSONB(), nullable=True))
-    op.add_column(
-        "places", sa.Column("attributes", postgresql.JSONB(), nullable=True)
-    )
-    op.add_column("places", sa.Column("provider_id", sa.String(), nullable=True))
+    op.execute("ALTER TABLE places ADD COLUMN IF NOT EXISTS place_type VARCHAR")
+    op.execute("ALTER TABLE places ADD COLUMN IF NOT EXISTS subcategory VARCHAR")
+    op.execute("ALTER TABLE places ADD COLUMN IF NOT EXISTS tags JSONB")
+    op.execute("ALTER TABLE places ADD COLUMN IF NOT EXISTS attributes JSONB")
+    op.execute("ALTER TABLE places ADD COLUMN IF NOT EXISTS provider_id VARCHAR")
 
     # ------------------------------------------------------------------
     # 2. Backfill provider_id from legacy composite pair

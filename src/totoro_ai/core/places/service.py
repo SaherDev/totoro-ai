@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 from redis.exceptions import RedisError
@@ -65,6 +66,14 @@ class PlacesService:
         return await self._repo.get(place_id)
 
     async def get_batch(self, place_ids: list[str]) -> list[PlaceObject]:
+        # Positional-alignment audit (feature 019, T071a):
+        # `get_batch` silently drops IDs the DB can't find, so
+        # `len(output) <= len(input)` and positional indices do NOT align.
+        # Every call site in src/totoro_ai was audited for `zip(...)`-style
+        # parallel-array joins against the input list; none exist. If a new
+        # caller needs to pair inputs with results, re-key the output by
+        # `place_id` into a dict, or call `get(place_id)` per ID — do NOT
+        # assume positional alignment.
         return await self._repo.get_batch(place_ids)
 
     async def get_by_external_id(
@@ -139,13 +148,11 @@ class PlacesService:
     # ------------------------------------------------------------------
     # Enrichment internals
     # ------------------------------------------------------------------
-    async def _read_geo_cache(
-        self, unique_ids: list[str]
-    ) -> dict[str, GeoData | None]:
+    async def _read_geo_cache(self, unique_ids: list[str]) -> dict[str, GeoData | None]:
         assert self._cache is not None
         try:
             return await self._cache.get_geo_batch(unique_ids)
-        except (RedisError, ConnectionError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, RedisError, ConnectionError) as exc:
             logger.warning(
                 "places.cache.read_failed",
                 extra={
@@ -162,7 +169,7 @@ class PlacesService:
         assert self._cache is not None
         try:
             return await self._cache.get_enrichment_batch(unique_ids)
-        except (RedisError, ConnectionError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, RedisError, ConnectionError) as exc:
             logger.warning(
                 "places.cache.read_failed",
                 extra={
@@ -214,7 +221,7 @@ class PlacesService:
 
         new_geo: dict[str, GeoData] = {}
         new_enr: dict[str, PlaceEnrichment] = {}
-        for pid, response in zip(misses, responses):
+        for pid, response in zip(misses, responses, strict=False):
             if isinstance(response, BaseException):
                 logger.warning(
                     "places.enrichment.fetch_failed",
@@ -288,7 +295,9 @@ class PlacesService:
                 update["photo_url"] = enr.photo_url
                 update["popularity"] = enr.popularity
                 update["enriched"] = True
-            out.append(place.model_copy(update=update) if update else place.model_copy())
+            out.append(
+                place.model_copy(update=update) if update else place.model_copy()
+            )
         return out
 
 
@@ -311,9 +320,9 @@ def _map_provider_response(
     Never issues a second API call. Both halves may be present, only one,
     or neither — the caller writes whichever half is non-None.
     """
-    from datetime import datetime, timezone as dt_timezone
+    from datetime import datetime
 
-    now = datetime.now(dt_timezone.utc)
+    now = datetime.now(UTC)
 
     lat = response.get("lat")
     lng = response.get("lng")

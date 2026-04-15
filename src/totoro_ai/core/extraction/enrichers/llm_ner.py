@@ -85,6 +85,11 @@ class _NERPlace(BaseModel):
     Missing only the fields that can't be produced from text alone:
     `user_id` (threaded from ExtractionContext) and `provider`/`external_id`
     (filled in by the validator from Google Places).
+
+    `attributes.cuisine` and `attributes.dietary` are food-only and should
+    be left at their defaults for non-food venues (hotels, museums, shops,
+    parks, services). Every other attribute (`ambiance`, `good_for`,
+    `price_hint`, `location_context`) applies across all place types.
     """
 
     place_name: str = Field(min_length=1)
@@ -126,8 +131,9 @@ class LLMNEREnricher:
             f"  hashtags: {hashtags}\n"
             f"  location_tag: {location_tag}\n"
             f"</metadata>\n\n"
-            "Extract all real venue names (restaurants, cafes, bars, shops,"
-            " attractions) from the above.\n"
+            "Extract all real venue names (restaurants, cafes, bars, hotels,"
+            " hostels, museums, parks, markets, shops, galleries, co-working"
+            " spaces, and similar places) from the above.\n"
             "Hashtags are context clues, not place names or city names.\n"
             "Hashtag typos are clues (e.g. #bangok means the city is Bangkok).\n"
             "Mall and shopping center names (e.g. #siamparagon) are not cities.\n"

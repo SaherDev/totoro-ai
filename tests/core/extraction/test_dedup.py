@@ -141,12 +141,8 @@ def test_same_name_with_punctuation_merged() -> None:
 
 def test_dedup_candidates_inherits_attributes_from_loser() -> None:
     """Winner with no cuisine inherits from a loser that had one."""
-    winner = _candidate(
-        "Ramen House", source=ExtractionLevel.EMOJI_REGEX, cuisine=None
-    )
-    loser = _candidate(
-        "Ramen House", source=ExtractionLevel.LLM_NER, cuisine="ramen"
-    )
+    winner = _candidate("Ramen House", source=ExtractionLevel.EMOJI_REGEX, cuisine=None)
+    loser = _candidate("Ramen House", source=ExtractionLevel.LLM_NER, cuisine="ramen")
     ctx = _ctx(winner, loser)
     dedup_candidates(ctx)
 
@@ -208,9 +204,7 @@ def test_two_different_external_ids_both_kept() -> None:
 
 
 def test_same_provider_id_emoji_wins_over_ner() -> None:
-    emoji = _make_validated(
-        resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.76
-    )
+    emoji = _make_validated(resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.76)
     ner = _make_validated(resolved_by=ExtractionLevel.LLM_NER, confidence=0.64)
     out = dedup_validated_by_provider_id([emoji, ner], _config())
 
@@ -219,9 +213,7 @@ def test_same_provider_id_emoji_wins_over_ner() -> None:
 
 
 def test_corroboration_bonus_applied_to_winner() -> None:
-    emoji = _make_validated(
-        resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.76
-    )
+    emoji = _make_validated(resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.76)
     ner = _make_validated(resolved_by=ExtractionLevel.LLM_NER, confidence=0.64)
     out = dedup_validated_by_provider_id(
         [emoji, ner], _config(corroboration_bonus=0.10, max_score=0.97)
@@ -232,9 +224,7 @@ def test_corroboration_bonus_applied_to_winner() -> None:
 
 
 def test_corroboration_bonus_capped_at_max_score() -> None:
-    emoji = _make_validated(
-        resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.95
-    )
+    emoji = _make_validated(resolved_by=ExtractionLevel.EMOJI_REGEX, confidence=0.95)
     ner = _make_validated(resolved_by=ExtractionLevel.LLM_NER, confidence=0.80)
     out = dedup_validated_by_provider_id(
         [emoji, ner], _config(corroboration_bonus=0.10, max_score=0.97)
@@ -256,9 +246,7 @@ def test_mixed_none_and_real_external_ids() -> None:
     emoji = _make_validated(
         resolved_by=ExtractionLevel.EMOJI_REGEX, external_id="same_id"
     )
-    ner = _make_validated(
-        resolved_by=ExtractionLevel.LLM_NER, external_id="same_id"
-    )
+    ner = _make_validated(resolved_by=ExtractionLevel.LLM_NER, external_id="same_id")
     out = dedup_validated_by_provider_id([no_id, emoji, ner], _config())
 
     assert len(out) == 2  # no_id + one winner

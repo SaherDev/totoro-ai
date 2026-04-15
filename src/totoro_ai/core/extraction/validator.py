@@ -108,11 +108,9 @@ class GooglePlacesValidator:
         self, candidate: CandidatePlace
     ) -> ValidatedCandidate | None:
         try:
-            places_match: PlacesMatchResult = (
-                await self._places_client.validate_place(
-                    name=candidate.place.place_name,
-                    location=self._lookup_city(candidate),
-                )
+            places_match: PlacesMatchResult = await self._places_client.validate_place(
+                name=candidate.place.place_name,
+                location=self._lookup_city(candidate),
             )
         except Exception:
             return None

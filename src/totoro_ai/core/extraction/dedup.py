@@ -26,6 +26,7 @@ from totoro_ai.core.extraction.types import (
     ValidatedCandidate,
 )
 from totoro_ai.core.places import PlaceAttributes
+from totoro_ai.core.places.repository import build_provider_id
 
 _LEVEL_ORDER = list(ExtractionLevel)
 
@@ -71,11 +72,7 @@ def dedup_candidates(context: ExtractionContext) -> None:
 
 
 def _provider_id(vc: ValidatedCandidate) -> str | None:
-    provider = vc.place.provider
-    external_id = vc.place.external_id
-    if provider is None or external_id is None:
-        return None
-    return f"{provider.value}:{external_id}"
+    return build_provider_id(vc.place.provider, vc.place.external_id)
 
 
 def dedup_validated_by_provider_id(

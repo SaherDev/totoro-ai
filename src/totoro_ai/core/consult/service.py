@@ -55,7 +55,7 @@ class ConsultService:
         places_service: PlacesService,
         taste_service: TasteModelService,
         ranking_service: RankingService,
-        memory_service: "UserMemoryService",
+        memory_service: UserMemoryService,
         consult_log_repo: ConsultLogRepository | None = None,
     ) -> None:
         self._intent_parser = intent_parser
@@ -96,8 +96,8 @@ class ConsultService:
         from totoro_ai.core.config import get_config
 
         config = get_config()
-        if intent.radius is None:
-            intent.radius = config.consult.radius_defaults.default
+        if intent.radius_m is None:
+            intent.radius_m = config.consult.default_radius_m
 
         reasoning_steps: list[ReasoningStep] = []
 
@@ -109,17 +109,18 @@ class ConsultService:
         for recall_result in recall_response.results:
             place = recall_result.place
 
-            if intent.price_range and place.attributes.price_hint != intent.price_range:
-                continue
-
-            if intent.search_location and place.lat is not None and place.lng is not None:
+            if (
+                intent.search_location
+                and place.lat is not None
+                and place.lng is not None
+            ):
                 distance_m = haversine_m(
                     intent.search_location["lat"],
                     intent.search_location["lng"],
                     place.lat,
                     place.lng,
                 )
-                if distance_m > intent.radius:
+                if distance_m > intent.radius_m:
                     continue
 
             saved_places.append(place)
@@ -143,7 +144,7 @@ class ConsultService:
             try:
                 discovery_results = await self._places_client.discover(
                     intent.search_location,
-                    discovery_filters | {"radius": intent.radius},
+                    discovery_filters | {"radius": intent.radius_m},
                 )
                 for google_result in discovery_results:
                     discovered_places.append(
@@ -307,7 +308,9 @@ class ConsultService:
         elif popularity >= 0.6:
             reasoning_parts.append("popular")
 
-        reasoning = ", ".join(reasoning_parts) if reasoning_parts else "Recommended for you"
+        reasoning = (
+            ", ".join(reasoning_parts) if reasoning_parts else "Recommended for you"
+        )
 
         return PlaceResult(
             place_name=place.place_name,

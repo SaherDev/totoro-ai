@@ -268,9 +268,7 @@ async def test_below_threshold_becomes_failed_item_with_confidence(
 ) -> None:
     vc = _make_validated(confidence=0.50)
     pipeline.run = AsyncMock(return_value=[vc])
-    persistence.save_and_emit = AsyncMock(
-        return_value=[_below_threshold_outcome(vc)]
-    )
+    persistence.save_and_emit = AsyncMock(return_value=[_below_threshold_outcome(vc)])
 
     response = await service.run("The Coffee Shop", user_id="user-1")
 

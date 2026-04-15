@@ -350,9 +350,7 @@ async def test_multi_place_calls_bulk_upsert_with_all_records(
         _make_saved_object(f"place-{i}", f"Place {i}") for i in range(5)
     ]
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024] * 5)
-    vcs = [
-        _make_validated(f"Place {i}", external_id=f"ext_{i}") for i in range(5)
-    ]
+    vcs = [_make_validated(f"Place {i}", external_id=f"ext_{i}") for i in range(5)]
 
     outcomes = await service.save_and_emit(vcs, user_id="user-1")
 

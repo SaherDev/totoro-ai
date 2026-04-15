@@ -201,21 +201,13 @@ class SystemPromptsConfig(BaseModel):
     )
 
 
-class RadiusDefaultsConfig(BaseModel):
-    """Default radius values for intent parsing (in metres)."""
-
-    default: int
-    nearby: int
-    walking: int
-
-
 class ConsultConfig(BaseModel):
     max_alternatives: int = 2
     placeholder_photo_url: str = "https://placehold.co/800x450.webp"
     response_timeout_seconds: int = 10
-    radius_defaults: RadiusDefaultsConfig = RadiusDefaultsConfig(
-        default=2000, nearby=1000, walking=500
-    )
+    default_radius_m: int = 1500
+    nearby_radius_m: int = 500
+    walking_radius_m: int = 1000
 
 
 class RecallConfig(BaseModel):

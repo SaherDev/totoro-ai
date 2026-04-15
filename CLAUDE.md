@@ -83,11 +83,9 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 
 ## Recent Changes
 - 019-places-service: Added Python 3.11 (constitution ADR-006: >=3.11,<3.13) + SQLAlchemy 2.x async + asyncpg (Tier 1), redis.asyncio (Tier 2 + 3), Pydantic 2.10 (all I/O models), Alembic (schema migration), httpx (existing GooglePlacesClient — reused), Langfuse (tracing on provider calls only), pytest + pytest-asyncio (test runner)
+- 019-places-service: Added Python 3.11 (constitution ADR-006: >=3.11,<3.13) + SQLAlchemy 2.x async + asyncpg (Tier 1), redis.asyncio (Tier 2 + 3), Pydantic 2.10 (all I/O models), Alembic (schema migration), httpx (existing GooglePlacesClient — reused), Langfuse (tracing on provider calls only), pytest + pytest-asyncio (test runner)
 - 018-user-memory-layer: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, Langfuse, Instructor (for IntentParser)
-- 017-unified-chat-router: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, OpenAI SDK, Langfuse
 
 
 ## Active Technologies
-- Python 3.11 (constitution ADR-006: >=3.11,<3.13) + SQLAlchemy 2.x async + asyncpg (Tier 1), redis.asyncio (Tier 2 + 3), Pydantic 2.10 (all I/O models), Alembic (schema migration), httpx (existing GooglePlacesClient — reused), Langfuse (tracing on provider calls only), pytest + pytest-asyncio (test runner) (019-places-service)
-- PostgreSQL via SQLAlchemy async (system of record: `places` table); Redis (two key prefixes: `places:geo:{provider_id}` 30-day TTL, `places:enrichment:{provider_id}` 4-hour TTL) (019-places-service)
 

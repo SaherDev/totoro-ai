@@ -21,6 +21,7 @@ from totoro_ai.core.places import (
     PlaceObject,
     PlacesService,
 )
+from totoro_ai.core.places.repository import build_provider_id
 from totoro_ai.db.repositories import EmbeddingRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
 
@@ -114,12 +115,8 @@ class ExtractionPersistenceService:
 
         # 4. Embed all saved places in one batch (non-fatal on failure).
         try:
-            descriptions = [
-                self._build_description(o) for o in saved_outcomes
-            ]
-            vectors = await self._embedder.embed(
-                descriptions, input_type="document"
-            )
+            descriptions = [self._build_description(o) for o in saved_outcomes]
+            vectors = await self._embedder.embed(descriptions, input_type="document")
             model_name = get_config().models["embedder"].model
             records = [
                 (o.place.place_id, vec, model_name)  # type: ignore[union-attr]
@@ -232,9 +229,7 @@ class ExtractionPersistenceService:
 
     @staticmethod
     def _format_provider_id(place: PlaceCreate) -> str | None:
-        if place.provider is None or place.external_id is None:
-            return None
-        return f"{place.provider.value}:{place.external_id}"
+        return build_provider_id(place.provider, place.external_id)
 
     def _build_description(self, outcome: PlaceSaveOutcome) -> str:
         """Build the embedding input from a saved `PlaceObject`.

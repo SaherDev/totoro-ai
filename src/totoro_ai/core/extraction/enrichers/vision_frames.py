@@ -84,10 +84,11 @@ class VisionFramesEnricher:
             )
 
     async def _run(self, context: ExtractionContext) -> None:
+        assert context.url is not None  # guarded in the caller
         png_bytes = await asyncio.get_running_loop().run_in_executor(
             None,
             self._capture_frames,
-            context.url,  # type: ignore[arg-type]  # guarded above
+            context.url,
         )
         if not png_bytes:
             return

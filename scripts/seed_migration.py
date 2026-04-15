@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from dataclasses import dataclass, field
@@ -78,17 +79,68 @@ _THINGS_TO_DO_KEYWORDS = frozenset(
         "waterfall",
     }
 )
+_SHOPPING_KEYWORDS = frozenset(
+    {
+        "mall",
+        "boutique",
+        "market",
+        "store",
+        "bookstore",
+        "shop",
+    }
+)
+_ACCOMMODATION_KEYWORDS = frozenset(
+    {
+        "hotel",
+        "hostel",
+        "resort",
+        "inn",
+        "ryokan",
+        "guesthouse",
+        "rental",
+    }
+)
+_SERVICES_KEYWORDS = frozenset(
+    {
+        "gym",
+        "spa",
+        "salon",
+        "barber",
+        "coworking",
+        "pharmacy",
+        "clinic",
+        "laundry",
+    }
+)
+
+
+def _count_hits(name_lower: str, keywords: frozenset[str]) -> int:
+    return sum(1 for kw in keywords if kw in name_lower)
 
 
 def infer_place_type(place_name: str | None, cuisine: str | None) -> tuple[str, bool]:
-    """Return (place_type, defaulted) per the heuristic ladder."""
+    """Return (place_type, defaulted) per the keyword ladder.
+
+    1. Check every non-food category's keyword set in parallel. The set with
+       the most hits wins. Ties prefer things_to_do → shopping →
+       accommodation → services (alphabetical-ish; matches legacy behaviour).
+    2. If no keyword matched, fall back to the cuisine signal → food_and_drink.
+    3. Otherwise default to `services` with the existing defaulted log line.
+    """
+    name_lower = (place_name or "").lower()
+
+    hits: dict[str, int] = {
+        "things_to_do": _count_hits(name_lower, _THINGS_TO_DO_KEYWORDS),
+        "shopping": _count_hits(name_lower, _SHOPPING_KEYWORDS),
+        "accommodation": _count_hits(name_lower, _ACCOMMODATION_KEYWORDS),
+        "services": _count_hits(name_lower, _SERVICES_KEYWORDS),
+    }
+    best = max(hits.items(), key=lambda kv: kv[1])
+    if best[1] > 0:
+        return best[0], False
+
     if cuisine is not None and cuisine.strip() != "":
         return "food_and_drink", False
-
-    name_lower = (place_name or "").lower()
-    for kw in _THINGS_TO_DO_KEYWORDS:
-        if kw in name_lower:
-            return "things_to_do", False
 
     return "services", True
 
@@ -137,6 +189,19 @@ async def _relocate(
 
     Runs in a single transaction so a crash mid-script leaves the DB clean.
     """
+    # Self-provision the new columns if the DB is still at the legacy
+    # (pre-feature-019) schema. IF NOT EXISTS means this is a no-op on a DB
+    # that already has them, and the Alembic migration below this step has
+    # been made idempotent in the same way so both orderings work.
+    for stmt in (
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS place_type VARCHAR",
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS subcategory VARCHAR",
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS tags JSONB",
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS attributes JSONB",
+        "ALTER TABLE places ADD COLUMN IF NOT EXISTS provider_id VARCHAR",
+    ):
+        await session.execute(text(stmt))
+
     # Fetch legacy columns directly via raw SQL — the ORM no longer knows
     # about them.
     result = await session.execute(
@@ -208,8 +273,11 @@ async def _relocate(
 
         if attrs_updated:
             await session.execute(
-                text("UPDATE places SET attributes = :attrs WHERE id = :rid"),
-                {"attrs": existing_attrs, "rid": row_id},
+                text(
+                    "UPDATE places SET attributes = CAST(:attrs AS JSONB) "
+                    "WHERE id = :rid"
+                ),
+                {"attrs": json.dumps(existing_attrs), "rid": row_id},
             )
 
         # ------------------------------------------------------------------
@@ -336,8 +404,11 @@ async def main(accept_defaults: bool) -> int:
     from totoro_ai.core.config import get_secrets
 
     secrets = get_secrets()
-    engine = create_async_engine(secrets.database_url, future=True)
-    redis_client = aioredis.from_url(secrets.redis_url, decode_responses=False)
+    db_url = secrets.DATABASE_URL
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    engine = create_async_engine(db_url, future=True)
+    redis_client = aioredis.from_url(secrets.REDIS_URL, decode_responses=False)
 
     counters = Counters()
 

@@ -1,7 +1,8 @@
 """Unit tests for UserMemoryRepository implementations."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from totoro_ai.core.memory.repository import (
     NullUserMemoryRepository,

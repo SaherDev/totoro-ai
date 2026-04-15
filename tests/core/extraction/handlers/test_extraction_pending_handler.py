@@ -162,9 +162,7 @@ async def test_dedup_called_after_enrichers() -> None:
         _mock_enricher(
             _append_candidate("Ramen House", ExtractionLevel.SUBTITLE_CHECK)
         ),
-        _mock_enricher(
-            _append_candidate("Ramen House", ExtractionLevel.WHISPER_AUDIO)
-        ),
+        _mock_enricher(_append_candidate("Ramen House", ExtractionLevel.WHISPER_AUDIO)),
     ]
     validator = MagicMock()
     validator.validate = AsyncMock(return_value=None)
