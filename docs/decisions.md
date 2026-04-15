@@ -15,6 +15,76 @@ Format:
 
 ---
 
+## ADR-057: Save tentative extractions above 0.30, surface low-confidence band to the user
+
+**Date:** 2026-04-15\
+**Status:** accepted\
+**Context:** The prior save gate was `confidence ≥ 0.70` (ADR-029 multiplicative formula). In practice most real TikTok captions generate confidences in the 0.60–0.68 band, because the LLM typically resolves via `caption` signal (base 0.75) and Google Places returns `FUZZY` (0.9) or `CATEGORY_ONLY` (0.8) matches rather than `EXACT` — `0.75 × 0.9 = 0.675`, `0.75 × 0.8 = 0.60`. These are correct places the user intended to save; we were silently dropping them at the save gate and surfacing them as `failed`. The user has more signal than we do about whether the match is right (they saw the video), so dropping the row is strictly worse than saving it with a "needs review" flag.\
+**Decision:** Lower the save gate to `confidence ≥ 0.30` (below that we still drop). Introduce a second threshold `confident_threshold = 0.70` that splits saved rows into two bands:
+- `confidence ≥ 0.70` → `PlaceSaveOutcome.status = "saved"` — written silently, shown as "Saved: X" in the chat message.
+- `0.30 ≤ confidence < 0.70` → `PlaceSaveOutcome.status = "needs_review"` — still written to Tier 1 and embedded for recall, but the API surface marks the row `status="needs_review"` so the UI can prompt the user to confirm or delete. The chat message surfaces these as "Low confidence — please confirm: X".
+- `confidence < 0.30` → not written; row appears in the response with `status="failed"` and `place=null`.
+
+Both `"saved"` and `"needs_review"` rows:
+- Go through `PlacesService.create_batch` (the same write path; `DuplicatePlaceError` handling is unchanged).
+- Get embedded in the same bulk call — without this, a needs-review row is invisible to recall and the user would never encounter it again to confirm or reject.
+- Emit `PlaceSaved` events for the taste model, because an unreviewed-but-uncontested extraction is still a signal.
+
+The `ExtractPlaceItem.status` string gains `"needs_review"` alongside the existing `saved | duplicate | pending | failed`. `PlaceSaveOutcome.status` gains the same value.
+
+**Consequences:** Most TikTok extractions that previously failed silently now land in the user's saved places with a review flag. The user gains agency over the "is this the right place?" decision that we were making implicitly at the save gate. The UI must grow a confirm/reject action on `needs_review` rows — until that lands, users will see needs_review rows in recall alongside confirmed ones, which is acceptable because the alternative (losing the row) is worse. The taste model treats needs_review saves as positive signal; if this turns out to be too noisy we can reweight in a later ADR, but untrained assumption is that "user saved a video with this place in it" is meaningful evidence regardless of name-match quality. `save_threshold` and `confident_threshold` are both in `config/app.yaml` under `extraction.confidence` so they can be tuned from evals without code changes.
+
+---
+
+## ADR-056: PlaceObject as the single place shape across all services
+
+**Date:** 2026-04-15\
+**Status:** accepted\
+**Context:** Before feature 019, every service had its own intermediate place type — ExtractionResult, CandidatePlace, SavedPlace, RecallRow. Each required a translation layer when crossing a service boundary. Field names were inconsistent (cuisine as a top-level column, price_range with low/mid/high vocab, lat/lng in PostgreSQL). Google-sourced data mixed with user-sourced data in the same table with no TTL. No single shape existed that all three agent tools (save, recall, consult) could share.\
+**Decision:** PlaceObject is the single shape for any "place" flowing between services in this repo. It has three tiers:
+- Tier 1: PostgreSQL — permanent, our data only. `place_id`, `place_name`, `place_type`, `subcategory`, `tags`, `attributes` (JSONB), `source_url`, `source`, `provider_id`. Never expires.
+- Tier 2: Redis geo cache — `places:geo:{provider_id}`, 30-day TTL (Google TOS maximum). `lat`, `lng`, `address`. `geo_fresh=True` when populated.
+- Tier 3: Redis enrichment cache — `places:enrichment:{provider_id}`, 30-day TTL. `hours` (with IANA timezone), `rating`, `phone`, `photo_url`, `popularity`. `enriched=True` when populated.
+
+All intermediate types are deleted: ExtractionResult, CandidatePlace, SavedPlace, RecallRow. No service constructs or returns anything other than PlaceObject (reads) or PlaceCreate (writes).
+
+PlaceAttributes captures user-sourced structured data: `cuisine`, `price_hint` (cheap/moderate/expensive/luxury), `ambiance`, `dietary`, `good_for`, `location_context`. These map directly to RecallFilters and `ParsedIntent.place` with no translation.
+
+`provider_id` is namespaced: `"{provider}:{external_id}"` e.g. `"google:ChIJN1t_..."`. Built only in `PlacesRepository._build_provider_id` (via the module-level `build_provider_id` helper). Parsed only in `PlacesService._strip_namespace`. Nowhere else.
+
+Zero Google content in PostgreSQL except `provider_id` (explicitly allowed by Google TOS). All Google-sourced fields live in Redis with TTL-based expiry. No cleanup jobs needed.
+
+`PlacesCache` (single class) handles both Tier 2 and Tier 3 — same TTL, same MGET/pipeline pattern, different key prefixes.
+
+`IntentParser` outputs `ParsedIntent` with two nested groups:
+- `ParsedIntent.place` — field names match PlaceObject/PlaceAttributes exactly, maps directly to RecallFilters with no translation.
+- `ParsedIntent.search` — search mechanics (`radius_m`, `enriched_query`, `discovery_filters`, `search_location_name`) consumed by ConsultService.
+- `search_location` excluded from LLM schema via `Field(exclude=True)`, filled by ConsultService after geocoding.
+
+**Consequences:** Any new service that reads or writes a place uses PlaceObject. Any new field on a place goes into PlaceAttributes (JSONB) first — a new top-level column requires an ADR. Changing PlaceAttributes field names requires updating PlaceCreate, RecallFilters, `ParsedIntent.place`, the embedding `description_fields` config, and the `search_vector` generated column — all in one migration. The startup validator (ADR-055) catches `description_fields` / `search_vector` drift at boot time.
+
+---
+
+## ADR-055: search_vector generated column is coupled to embeddings.description_fields
+
+**Date:** 2026-04-15\
+**Status:** accepted\
+**Context:** The `places.search_vector` generated column and the embedding text built by `_build_description` both determine what gets searched at recall time. If they use different fields, vector similarity and FTS search different things — retrieval quality degrades silently.\
+**Decision:** The `search_vector` generated column fields must always match `config/app.yaml` `embeddings.description_fields` minus four intentionally excluded fields (`tags`, `good_for`, `dietary`, `place_type` — JSONB arrays and enum values not suitable for FTS). A startup validator logs `CRITICAL` if drift is detected. Changing `description_fields` requires a new migration to update the generated column AND a full re-embedding of all saved places. Both steps are mandatory and must ship together.\
+**Consequences:** Config changes to `description_fields` are never safe alone. Re-embedding is always required alongside a schema migration. The startup validator catches drift introduced by incomplete deployments.
+
+---
+
+## ADR-054: PlacesService strict-create with explicit duplicate-detection lookup
+
+**Date:** 2026-04-14\
+**Status:** accepted (supersedes ADR-041)\
+**Context:** The original `places` schema used a composite `(external_provider, external_id)` unique key with upsert semantics on `SQLAlchemyPlaceRepository.save()`. Upsert hides intent at the data layer and was made when the only caller was the extraction pipeline. Feature 019 (`PlacesService`) introduces three callers (save, recall, consult) and the save tool needs to detect collisions explicitly so manual saves are not silently overwritten by background extractions. Feature 019 also introduces a tier-split schema (Tier 1 PostgreSQL holds only our data; Tier 2/3 Redis hold provider data), which requires replacing the composite key columns with a single namespaced `provider_id` column.\
+**Decision:** Replace the composite `(external_provider, external_id)` columns with a single namespaced `provider_id` column on the `places` table. The format is `"{provider}:{external_id}"`, constructed only inside `PlacesRepository._build_provider_id()` (never elsewhere). A partial unique index enforces that any non-null `provider_id` is unique across the table. `PlacesRepository.create()` raises `DuplicatePlaceError` (with the existing `place_id` attached via `DuplicateProviderId(provider_id, existing_place_id)`) on collision instead of upserting. `PlacesRepository.create_batch()` runs in a single transaction and raises `DuplicatePlaceError` listing every conflicting `provider_id` if any row collides — partial inserts are not permitted. Callers wanting idempotency call `get_by_external_id(provider, external_id)` first and decide explicitly whether to skip, surface, or merge.\
+**Consequences:** ADR-041's upsert semantics and composite-key field naming are superseded. The legacy `SQLAlchemyPlaceRepository` in `src/totoro_ai/db/repositories/place_repository.py` is deleted by feature 019. `ExtractionService.persistence` is migrated to use `PlacesService.create_batch()` and catches `DuplicatePlaceError` to produce the existing `PlaceSaveOutcome(status="duplicate")` behavior. NestJS does not read `external_provider` or `external_id`, so no product-side coordination is needed. The Alembic migration renames the columns in-place: it backfills `provider_id` from the existing composite pair, adds the partial unique index, drops the old composite constraint, and finally drops the legacy `external_provider` + `external_id` columns. A seed migration script (`scripts/seed_migration.py`) runs before the Alembic revision to relocate other legacy data (cuisine → attributes.cuisine, price_range → attributes.price_hint, lat/lng/address → Redis Tier 2 cache) so nothing is lost when those columns are dropped. The save tool can now detect duplicates before they are written and decide what to do with them — manual saves, extraction saves, and link-share saves all compose cleanly without overwrite risk.
+
+---
+
 ## ADR-053: This repo owns consult_logs table for AI recommendation history
 
 **Date:** 2026-04-09\
@@ -176,7 +246,7 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 ## ADR-041: Provider-agnostic place identity via (external_provider, external_id) pair
 
 **Date:** 2026-03-25\
-**Status:** accepted\
+**Status:** superseded by ADR-054 (2026-04-14)\
 **Context:** The original schema used a `google_place_id` column as the unique identifier for places. This locks place identity to a single provider — adding Yelp, Foursquare, or any future data source would either break uniqueness guarantees or require per-provider schema changes. The extraction pipeline is designed to support multiple place data sources (ADR-022, ADR-038), so the identity key must match.\
 **Decision:** Place identity is stored as a composite `(external_provider, external_id)` pair with a UniqueConstraint enforced at the database level. `external_provider` is a required, non-empty string identifying the data source (e.g. `"google"`, `"yelp"`). `external_id` is the provider's own identifier for the place. Re-submitting an existing `(external_provider, external_id)` pair triggers an upsert — all mutable place fields (name, address, category, metadata) are overwritten with the new values. Submissions with a null or empty `external_provider` are rejected at the API boundary with a 400 validation error before any database operation. The Alembic migration backfills all existing rows by setting `external_provider='google'` and copying the current `google_place_id` value into `external_id`, then drops the old column. No data loss is permitted.\
 **Consequences:** Any place data source can be added without schema changes — only a new `external_provider` string value is needed. The NestJS product repo reads and joins on this pair. The migration is a non-destructive backfill, safe to run against environments with existing data. Future provider integrations must supply a stable, non-empty provider identifier and are validated at the extraction boundary before reaching the repository layer.

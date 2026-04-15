@@ -102,7 +102,12 @@ extraction:
       vision_frames: 0.55
     corroboration_bonus: 0.10
     max_score: 0.97
-    save_threshold: 0.70
+    # ADR-057: two-band save gate.
+    #   confidence < save_threshold    → not written, surfaces as "failed".
+    #   save_threshold ≤ c < confident → written with status "needs_review".
+    #   confidence ≥ confident_threshold → written silently as "saved".
+    save_threshold: 0.30
+    confident_threshold: 0.70
   circuit_breaker_threshold: 5
   circuit_breaker_cooldown: 900
   vision:
@@ -167,10 +172,9 @@ consult:
   max_alternatives: 2
   placeholder_photo_url: "https://placehold.co/800x450.webp"
   response_timeout_seconds: 10
-  radius_defaults:
-    default: 2000
-    nearby: 1000
-    walking: 500
+  default_radius_m: 1500
+  nearby_radius_m: 500
+  walking_radius_m: 1000
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration
@@ -178,7 +182,20 @@ consult:
 # ---------------------------------------------------------------------------
 embeddings:
   dimensions: 1024
-  description_separator: ", "
+  description_separator: " | "
+  description_fields:
+    - place_name
+    - subcategory
+    - place_type
+    - cuisine
+    - ambiance
+    - price_hint
+    - tags
+    - good_for
+    - dietary
+    - neighborhood
+    - city
+    - country
 
 # ---------------------------------------------------------------------------
 # Taste Model Configuration
@@ -262,3 +279,20 @@ memory:
   confidence:
     stated: 0.9
     inferred: 0.6
+
+# ---------------------------------------------------------------------------
+# PlacesService Configuration (ADR-054, feature 019)
+# Single TTL for both the geo cache (Tier 2) and the enrichment cache
+# (Tier 3), plus the per-request cap on external provider fetches in
+# enrich_batch(geo_only=False).
+# ---------------------------------------------------------------------------
+places:
+  cache_ttl_days: 30
+  # Per-consult fetch cap. Raised from 10 to 20 after the initial cap hit
+  # on real Bangkok queries (1 saved + 19 discovered). Combined with the
+  # saved-pid priority in `_fetch_and_split_misses`, saved places are
+  # guaranteed to be fetched and discovered places get the remaining
+  # budget up to this cap. Each fetch is a single Places API (New) Pro-
+  # tier call, cached for `cache_ttl_days`, so the amortized cost is
+  # dominated by the first consult for each place_id.
+  max_enrichment_batch: 20

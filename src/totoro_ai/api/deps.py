@@ -11,23 +11,23 @@ from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_s
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
-from totoro_ai.core.memory.repository import SQLAlchemyUserMemoryRepository
-from totoro_ai.core.memory.service import UserMemoryService
 from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.intent.intent_parser import IntentParser
-from totoro_ai.core.places import GooglePlacesClient
+from totoro_ai.core.memory.repository import SQLAlchemyUserMemoryRepository
+from totoro_ai.core.memory.service import UserMemoryService
+from totoro_ai.core.places import GooglePlacesClient, PlacesService
+from totoro_ai.core.places.cache import PlacesCache
+from totoro_ai.core.places.repository import PlacesRepository
 from totoro_ai.core.ranking.service import RankingService
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
     EmbeddingRepository,
-    PlaceRepository,
     SQLAlchemyEmbeddingRepository,
-    SQLAlchemyPlaceRepository,
     SQLAlchemyRecallRepository,
 )
 from totoro_ai.db.repositories.consult_log_repository import (
@@ -55,11 +55,33 @@ def get_status_repo(
     return ExtractionStatusRepository(cache=cache)
 
 
-def get_place_repo(
+def _build_places_cache() -> PlacesCache:
+    """Construct a PlacesCache from the Redis URL in secrets.
+
+    A fresh `redis.asyncio.Redis` client is built per call. The async client
+    reuses its connection pool internally, so per-request construction is
+    cheap and avoids the "client bound to the wrong event loop" pitfall.
+    """
+    from redis.asyncio import Redis
+
+    redis_client = Redis.from_url(get_secrets().REDIS_URL, decode_responses=True)
+    return PlacesCache(redis_client)
+
+
+def get_places_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> PlaceRepository:
-    """FastAPI dependency providing PlaceRepository."""
-    return SQLAlchemyPlaceRepository(db_session)
+) -> PlacesService:
+    """FastAPI dependency providing `PlacesService` (ADR-054, feature 019).
+
+    Wires the `PlacesRepository`, `PlacesCache`, and `GooglePlacesClient` so
+    every caller consuming `PlacesService` sees a fully functional
+    `enrich_batch` in both recall (`geo_only=True`) and consult modes.
+    """
+    return PlacesService(
+        repo=PlacesRepository(db_session),
+        cache=_build_places_cache(),
+        client=GooglePlacesClient(),
+    )
 
 
 def get_embedding_repo(
@@ -149,8 +171,12 @@ async def get_event_dispatcher(
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
     from totoro_ai.core.places import GooglePlacesClient
 
+    pending_cache = _build_places_cache()
     pending_persistence = ExtractionPersistenceService(
-        place_repo=SQLAlchemyPlaceRepository(db_session),
+        places_service=PlacesService(
+            repo=PlacesRepository(db_session), cache=pending_cache, client=None
+        ),
+        places_cache=pending_cache,
         embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
         embedder=get_embedder(),
         event_dispatcher=dispatcher,
@@ -185,15 +211,28 @@ async def get_event_dispatcher(
     return dispatcher
 
 
+def get_places_cache_dep() -> PlacesCache:
+    """FastAPI dependency providing `PlacesCache`.
+
+    Extraction persistence takes this separately from `PlacesService` so
+    it can write Tier 2 geo data directly after Google validation (ADR-057
+    follow-up) — the service facade is the query path, the cache is the
+    write path.
+    """
+    return _build_places_cache()
+
+
 def get_extraction_persistence(
-    place_repo: PlaceRepository = Depends(get_place_repo),  # noqa: B008
+    places_service: PlacesService = Depends(get_places_service),  # noqa: B008
+    places_cache: PlacesCache = Depends(get_places_cache_dep),  # noqa: B008
     embedding_repo: EmbeddingRepository = Depends(get_embedding_repo),  # noqa: B008
     embedder: EmbedderProtocol = Depends(get_embedder_dep),  # noqa: B008
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
 ) -> ExtractionPersistenceService:
     """FastAPI dependency providing ExtractionPersistenceService."""
     return ExtractionPersistenceService(
-        place_repo=place_repo,
+        places_service=places_service,
+        places_cache=places_cache,
         embedding_repo=embedding_repo,
         embedder=embedder,
         event_dispatcher=event_dispatcher,
@@ -284,12 +323,14 @@ def get_extraction_service(
 async def get_recall_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
     config: AppConfig = Depends(get_config),  # noqa: B008
+    places_service: PlacesService = Depends(get_places_service),  # noqa: B008
 ) -> RecallService:
     """FastAPI dependency providing a fully wired RecallService."""
     return RecallService(
         embedder=get_embedder(),
         recall_repo=SQLAlchemyRecallRepository(db_session),
         config=config.recall,
+        places_service=places_service,
     )
 
 
@@ -313,14 +354,21 @@ async def get_consult_service(
     Also injects ConsultLogRepository for persistence (FR-010) and
     UserMemoryService for context injection (ADR-010, ADR-038).
     """
+    places_service = PlacesService(
+        repo=PlacesRepository(db_session),
+        cache=_build_places_cache(),
+        client=GooglePlacesClient(),
+    )
     return ConsultService(
         intent_parser=IntentParser(),
         recall_service=RecallService(
             embedder=get_embedder(),
             recall_repo=SQLAlchemyRecallRepository(db_session),
             config=config.recall,
+            places_service=places_service,
         ),
         places_client=GooglePlacesClient(),
+        places_service=places_service,
         taste_service=TasteModelService(session=db_session),
         ranking_service=RankingService(),
         memory_service=memory_service,
@@ -349,6 +397,7 @@ async def get_chat_service(
         extraction_service=extraction_service,
         consult_service=consult_service,
         recall_service=recall_service,
+        intent_parser=IntentParser(),
         assistant_service=assistant_service,
         event_dispatcher=event_dispatcher,
         memory_service=memory_service,

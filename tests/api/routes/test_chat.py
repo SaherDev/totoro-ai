@@ -35,7 +35,16 @@ class TestChatRouteHappyPath:
         mock_chat_service.run.return_value = ChatResponse(
             type="consult",
             message="Try Nara Eatery",
-            data={"primary": {"place_name": "Nara Eatery"}},
+            data={
+                "results": [
+                    {
+                        "place": {"place_name": "Nara Eatery"},
+                        "confidence": 0.87,
+                        "source": "saved",
+                    }
+                ],
+                "reasoning_steps": [],
+            },
         )
 
         response = client.post(
@@ -114,7 +123,16 @@ class TestChatRouteHappyPath:
         mock_chat_service.run.return_value = ChatResponse(
             type="consult",
             message="Try Nara Eatery",
-            data={"primary": {"place_name": "Nara Eatery"}},
+            data={
+                "results": [
+                    {
+                        "place": {"place_name": "Nara Eatery"},
+                        "confidence": 0.87,
+                        "source": "saved",
+                    }
+                ],
+                "reasoning_steps": [],
+            },
         )
 
         response = client.post(

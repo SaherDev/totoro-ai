@@ -62,27 +62,28 @@ class OpenAIVisionExtractor:
             else None
         )
 
+        messages: list[Any] = [
+            {"role": "system", "content": _VISION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    *image_content,
+                    {
+                        "type": "text",
+                        "text": (
+                            "List all place names visible in these frames. "
+                            "Return one name per line. "
+                            "If none, return an empty response."
+                        ),
+                    },
+                ],
+            },
+        ]
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
                 max_tokens=512,
-                messages=[
-                    {"role": "system", "content": _VISION_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": [
-                            *image_content,
-                            {
-                                "type": "text",
-                                "text": (
-                                    "List all place names visible in these frames. "
-                                    "Return one name per line. "
-                                    "If none, return an empty response."
-                                ),
-                            },
-                        ],
-                    },
-                ],
+                messages=messages,
             )
             text = response.choices[0].message.content or ""
             names = [

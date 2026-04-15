@@ -57,10 +57,18 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
-# LLM prompt strings are inherently long prose — line length is not enforced here
+# LLM prompt strings, long SQL, and long error messages are inherently wide —
+# line length is not enforced in files where the signal is worse than the fix.
 "src/totoro_ai/core/intent/intent_parser.py" = ["E501"]
 "src/totoro_ai/core/chat/router.py" = ["E501"]
+"src/totoro_ai/core/chat/service.py" = ["E501"]
 "src/totoro_ai/core/consult/service.py" = ["E501"]
+"src/totoro_ai/core/extraction/enrichers/vision_frames.py" = ["E501"]
+"src/totoro_ai/core/places/places_client.py" = ["E501"]
+"src/totoro_ai/db/repositories/recall_repository.py" = ["E501"]
+"src/totoro_ai/providers/llm.py" = ["E501"]
+"tests/providers/test_llm_ollama.py" = ["E501"]
+"src/totoro_ai/core/extraction/circuit_breaker.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"

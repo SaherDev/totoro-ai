@@ -74,10 +74,15 @@ class ConfidenceWeights(BaseModel):
 
 
 class ConfidenceConfig(BaseModel):
-    """Per-level confidence scoring config (ADR-029).
+    """Per-level confidence scoring config (ADR-029, ADR-057).
 
     base_scores keys are ExtractionLevel.value strings (e.g. "emoji_regex").
     max_score caps the output — no extraction path earns 1.0.
+
+    Two-band save gate (ADR-057):
+      confidence <  save_threshold      → not written, surfaces as "failed".
+      save_threshold ≤ c < confident    → written with status "needs_review".
+      confidence ≥  confident_threshold → written silently as "saved".
     """
 
     base_scores: dict[str, float] = {
@@ -95,7 +100,8 @@ class ConfidenceConfig(BaseModel):
     }
     corroboration_bonus: float = 0.10
     max_score: float = 0.97
-    save_threshold: float = 0.70
+    save_threshold: float = 0.30
+    confident_threshold: float = 0.70
 
 
 class ExtractionThresholds(BaseModel):
@@ -167,8 +173,31 @@ class ExternalServicesConfig(BaseModel):
 
 
 class EmbeddingsConfig(BaseModel):
+    """Embedding configuration (ADR-054).
+
+    `description_fields` drives the order and inclusion of `PlaceObject`
+    Tier 1 fields in the embedding input. The persistence layer walks this
+    list and emits each available value separated by
+    `description_separator`. Retrieval evals can re-tune field order and
+    inclusion by editing the config and re-embedding — no code change.
+    """
+
     dimensions: int = 1024
-    description_separator: str = ", "
+    description_separator: str = " | "
+    description_fields: list[str] = [
+        "place_name",
+        "subcategory",
+        "place_type",
+        "cuisine",
+        "ambiance",
+        "price_hint",
+        "tags",
+        "good_for",
+        "dietary",
+        "neighborhood",
+        "city",
+        "country",
+    ]
 
 
 class SystemPromptsConfig(BaseModel):
@@ -178,21 +207,13 @@ class SystemPromptsConfig(BaseModel):
     )
 
 
-class RadiusDefaultsConfig(BaseModel):
-    """Default radius values for intent parsing (in metres)."""
-
-    default: int
-    nearby: int
-    walking: int
-
-
 class ConsultConfig(BaseModel):
     max_alternatives: int = 2
     placeholder_photo_url: str = "https://placehold.co/800x450.webp"
     response_timeout_seconds: int = 10
-    radius_defaults: RadiusDefaultsConfig = RadiusDefaultsConfig(
-        default=2000, nearby=1000, walking=500
-    )
+    default_radius_m: int = 1500
+    nearby_radius_m: int = 500
+    walking_radius_m: int = 1000
 
 
 class RecallConfig(BaseModel):
@@ -296,6 +317,21 @@ class AppProvidersConfig(BaseModel):
     )
 
 
+class PlacesConfig(BaseModel):
+    """PlacesService cache TTL and per-request fetch cap (ADR-054, feature 019).
+
+    - cache_ttl_days: single lifetime for both the Tier 2 geo cache and the
+      Tier 3 enrichment cache. Both set_batch methods in PlacesCache use
+      `cache_ttl_days * 86400` seconds. Default 30 days.
+    - max_enrichment_batch: per-request cap on external provider fetches
+      in PlacesService.enrich_batch(geo_only=False). Counts unique provider_id,
+      not input positions.
+    """
+
+    cache_ttl_days: int = 30
+    max_enrichment_batch: int = 10
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -309,6 +345,7 @@ class AppConfig(BaseModel):
     taste_model: TasteModelConfig
     ranking: RankingConfig
     memory: MemoryConfig = MemoryConfig()
+    places: PlacesConfig = PlacesConfig()
 
 
 _config: AppConfig | None = None

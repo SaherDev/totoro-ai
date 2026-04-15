@@ -1,6 +1,14 @@
-"""Tests for ExtractionPersistenceService."""
+"""Tests for ExtractionPersistenceService (ADR-054 / feature 019).
 
-from unittest.mock import AsyncMock, MagicMock
+The persistence service now goes through `PlacesService.create_batch` and
+receives `ValidatedCandidate` wrappers (not the removed `ExtractionResult`).
+`DuplicatePlaceError` is the signal for "already in DB" — the service
+retries conflicting rows one by one so successful rows are not lost.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -9,38 +17,91 @@ from totoro_ai.core.extraction.persistence import (
     ExtractionPersistenceService,
     PlaceSaveOutcome,
 )
-from totoro_ai.core.extraction.types import ExtractionLevel, ExtractionResult
+from totoro_ai.core.extraction.types import ExtractionLevel, ValidatedCandidate
+from totoro_ai.core.places import (
+    DuplicatePlaceError,
+    DuplicateProviderId,
+    PlaceAttributes,
+    PlaceCreate,
+    PlaceObject,
+    PlaceProvider,
+    PlaceType,
+)
+
+# ---------------------------------------------------------------------------
+# factories
+# ---------------------------------------------------------------------------
 
 
-def _make_result(
+def _make_place_create(
     place_name: str = "Fuji Ramen",
-    address: str | None = "123 Sukhumvit",
-    city: str | None = "Bangkok",
-    cuisine: str | None = "ramen",
-    confidence: float = 0.87,
-    resolved_by: ExtractionLevel = ExtractionLevel.LLM_NER,
     external_id: str | None = "place_123",
-    external_provider: str | None = "google",
-) -> ExtractionResult:
-    return ExtractionResult(
+    provider: PlaceProvider | None = PlaceProvider.google,
+    cuisine: str | None = "ramen",
+    user_id: str = "user-1",
+) -> PlaceCreate:
+    return PlaceCreate(
+        user_id=user_id,
         place_name=place_name,
-        address=address,
-        city=city,
-        cuisine=cuisine,
-        confidence=confidence,
-        resolved_by=resolved_by,
-        corroborated=False,
-        external_provider=external_provider,
+        place_type=PlaceType.food_and_drink,
+        subcategory="restaurant",
+        attributes=PlaceAttributes(cuisine=cuisine),
+        provider=provider,
         external_id=external_id,
     )
 
 
+def _make_validated(
+    place_name: str = "Fuji Ramen",
+    confidence: float = 0.87,
+    resolved_by: ExtractionLevel = ExtractionLevel.LLM_NER,
+    external_id: str | None = "place_123",
+    provider: PlaceProvider | None = PlaceProvider.google,
+    cuisine: str | None = "ramen",
+    user_id: str = "user-1",
+    match_lat: float | None = None,
+    match_lng: float | None = None,
+    match_address: str | None = None,
+) -> ValidatedCandidate:
+    return ValidatedCandidate(
+        place=_make_place_create(
+            place_name=place_name,
+            external_id=external_id,
+            provider=provider,
+            cuisine=cuisine,
+            user_id=user_id,
+        ),
+        confidence=confidence,
+        resolved_by=resolved_by,
+        corroborated=False,
+        match_lat=match_lat,
+        match_lng=match_lng,
+        match_address=match_address,
+    )
+
+
+def _make_saved_object(
+    place_id: str,
+    place_name: str = "Fuji Ramen",
+    provider_id: str | None = "google:place_123",
+) -> PlaceObject:
+    return PlaceObject(
+        place_id=place_id,
+        place_name=place_name,
+        place_type=PlaceType.food_and_drink,
+        subcategory="restaurant",
+        attributes=PlaceAttributes(cuisine="ramen"),
+        provider_id=provider_id,
+    )
+
+
 @pytest.fixture
-def place_repo() -> AsyncMock:
-    repo = AsyncMock()
-    repo.get_by_provider = AsyncMock(return_value=None)
-    repo.save = AsyncMock()
-    return repo
+def places_service() -> AsyncMock:
+    svc = AsyncMock()
+    svc.create_batch = AsyncMock()
+    svc.create = AsyncMock()
+    svc.get = AsyncMock()
+    return svc
 
 
 @pytest.fixture
@@ -65,14 +126,24 @@ def event_dispatcher() -> AsyncMock:
 
 
 @pytest.fixture
+def places_cache() -> AsyncMock:
+    c = AsyncMock()
+    c.set_geo_batch = AsyncMock()
+    c.set_enrichment_batch = AsyncMock()
+    return c
+
+
+@pytest.fixture
 def service(
-    place_repo: AsyncMock,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
     embedding_repo: AsyncMock,
     embedder: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> ExtractionPersistenceService:
     return ExtractionPersistenceService(
-        place_repo=place_repo,
+        places_service=places_service,
+        places_cache=places_cache,
         embedding_repo=embedding_repo,
         embedder=embedder,
         event_dispatcher=event_dispatcher,
@@ -80,36 +151,36 @@ def service(
 
 
 # ---------------------------------------------------------------------------
-# New place — write + dispatch + embed
+# Happy path — create_batch succeeds
 # ---------------------------------------------------------------------------
 
 
 async def test_new_place_is_saved_and_place_saved_dispatched(
     service: ExtractionPersistenceService,
-    place_repo: AsyncMock,
+    places_service: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """A new place with external_id is saved and PlaceSaved dispatched."""
-    result = _make_result()
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
 
-    outcomes = await service.save_and_emit([result], user_id="user-1")
+    outcomes = await service.save_and_emit([_make_validated()], user_id="user-1")
 
     assert len(outcomes) == 1
     assert outcomes[0].status == "saved"
-    assert outcomes[0].place_id is not None
-    place_repo.save.assert_awaited_once()
+    assert outcomes[0].place_id == "place-1"
+    places_service.create_batch.assert_awaited_once()
     event_dispatcher.dispatch.assert_awaited_once()
     dispatched: PlaceSaved = event_dispatcher.dispatch.call_args[0][0]
-    assert dispatched.place_ids == [outcomes[0].place_id]
+    assert dispatched.place_ids == ["place-1"]
     assert dispatched.user_id == "user-1"
 
 
 async def test_returns_list_of_outcomes(
     service: ExtractionPersistenceService,
-    place_repo: AsyncMock,
+    places_service: AsyncMock,
 ) -> None:
-    """save_and_emit returns a list of PlaceSaveOutcome objects."""
-    outcomes = await service.save_and_emit([_make_result()], user_id="user-1")
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
+
+    outcomes = await service.save_and_emit([_make_validated()], user_id="user-1")
 
     assert isinstance(outcomes, list)
     assert len(outcomes) == 1
@@ -119,107 +190,212 @@ async def test_returns_list_of_outcomes(
 
 
 # ---------------------------------------------------------------------------
-# Deduplication
+# Duplicate handling — via DuplicatePlaceError from PlacesService
 # ---------------------------------------------------------------------------
 
 
-async def test_duplicate_place_has_duplicate_status(
+async def test_all_duplicates_marked_and_no_place_saved_event(
     service: ExtractionPersistenceService,
-    place_repo: AsyncMock,
+    places_service: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """When existing place found by provider+external_id, outcome is 'duplicate'."""
-    existing = MagicMock()
-    existing.id = "existing-uuid"
-    place_repo.get_by_provider = AsyncMock(return_value=existing)
-
-    outcomes = await service.save_and_emit([_make_result()], user_id="user-1")
-
-    assert len(outcomes) == 1
-    assert outcomes[0].status == "duplicate"
-    assert outcomes[0].place_id == "existing-uuid"
-    place_repo.save.assert_not_awaited()
-
-
-async def test_all_duplicates_no_place_saved_event(
-    service: ExtractionPersistenceService,
-    place_repo: AsyncMock,
-    event_dispatcher: AsyncMock,
-) -> None:
-    """When all candidates are duplicates, PlaceSaved is NOT dispatched."""
-    existing = MagicMock()
-    existing.id = "existing-uuid"
-    place_repo.get_by_provider = AsyncMock(return_value=existing)
-
-    outcomes = await service.save_and_emit(
-        [_make_result("Place A"), _make_result("Place B")], user_id="user-1"
+    """When create_batch raises DuplicatePlaceError listing every row, all
+    outcomes are marked "duplicate" and PlaceSaved is NOT dispatched."""
+    vcs = [
+        _make_validated("Place A", external_id="ext_a"),
+        _make_validated("Place B", external_id="ext_b"),
+    ]
+    places_service.create_batch.side_effect = DuplicatePlaceError(
+        [
+            DuplicateProviderId(
+                provider_id="google:ext_a", existing_place_id="existing-a"
+            ),
+            DuplicateProviderId(
+                provider_id="google:ext_b", existing_place_id="existing-b"
+            ),
+        ]
     )
+    places_service.get.side_effect = [
+        _make_saved_object("existing-a", "Place A", "google:ext_a"),
+        _make_saved_object("existing-b", "Place B", "google:ext_b"),
+    ]
+
+    outcomes = await service.save_and_emit(vcs, user_id="user-1")
 
     assert all(o.status == "duplicate" for o in outcomes)
+    assert {o.place_id for o in outcomes} == {"existing-a", "existing-b"}
     event_dispatcher.dispatch.assert_not_awaited()
 
 
-async def test_external_id_none_skips_dedup_check(
+async def test_partial_duplicate_retries_one_by_one(
     service: ExtractionPersistenceService,
-    place_repo: AsyncMock,
+    places_service: AsyncMock,
+    event_dispatcher: AsyncMock,
 ) -> None:
-    """When external_id is None, no dedup check is performed, place is saved."""
-    result = _make_result(external_id=None, external_provider=None)
+    """When only some rows are duplicates, non-conflicting rows are retried
+    via create() so successful rows are not lost."""
+    vcs = [
+        _make_validated("Place A", external_id="ext_a"),
+        _make_validated("Place B", external_id="ext_b"),
+    ]
+    places_service.create_batch.side_effect = DuplicatePlaceError(
+        [
+            DuplicateProviderId(
+                provider_id="google:ext_b", existing_place_id="existing-b"
+            )
+        ]
+    )
+    # Retry loop: B is looked up as duplicate; A is re-created successfully.
+    places_service.get.return_value = _make_saved_object(
+        "existing-b", "Place B", "google:ext_b"
+    )
+    places_service.create.return_value = _make_saved_object(
+        "new-a", "Place A", "google:ext_a"
+    )
 
-    outcomes = await service.save_and_emit([result], user_id="user-1")
+    outcomes = await service.save_and_emit(vcs, user_id="user-1")
 
-    place_repo.get_by_provider.assert_not_awaited()
-    assert len(outcomes) == 1
+    statuses = [o.status for o in outcomes]
+    assert statuses == ["saved", "duplicate"]
+    assert outcomes[0].place_id == "new-a"
+    assert outcomes[1].place_id == "existing-b"
+
+
+async def test_external_id_none_passes_through_create_batch(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+) -> None:
+    """When external_id is None, no namespace collision is possible; the
+    row is just saved with provider_id=NULL."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("place-1", provider_id=None)
+    ]
+
+    vc = _make_validated(external_id=None, provider=None)
+    outcomes = await service.save_and_emit([vc], user_id="user-1")
+
+    places_service.create_batch.assert_awaited_once()
     assert outcomes[0].status == "saved"
 
 
 # ---------------------------------------------------------------------------
-# Confidence threshold — below_threshold
+# Confidence bands — ADR-057: three-way partition
+#   c < save_threshold (0.30)             → below_threshold, never written
+#   save_threshold ≤ c < confident (0.70) → needs_review, written + flagged
+#   c ≥ confident_threshold (0.70)        → saved silently
 # ---------------------------------------------------------------------------
 
 
 async def test_below_threshold_is_not_saved(
     service: ExtractionPersistenceService,
-    place_repo: AsyncMock,
+    places_service: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """Place with confidence below save_threshold (0.70) is not written to DB."""
-    result = _make_result(confidence=0.69)
+    """Confidence below save_threshold (0.30) is not written to DB."""
+    vc = _make_validated(confidence=0.25)
 
-    outcomes = await service.save_and_emit([result], user_id="user-1")
+    outcomes = await service.save_and_emit([vc], user_id="user-1")
 
-    assert len(outcomes) == 1
     assert outcomes[0].status == "below_threshold"
     assert outcomes[0].place_id is None
-    place_repo.save.assert_not_awaited()
+    places_service.create_batch.assert_not_awaited()
     event_dispatcher.dispatch.assert_not_awaited()
 
 
-async def test_at_threshold_is_saved(
+async def test_at_confident_threshold_is_saved(
     service: ExtractionPersistenceService,
-    place_repo: AsyncMock,
+    places_service: AsyncMock,
 ) -> None:
-    """Place with confidence exactly at save_threshold (0.70) is saved."""
-    result = _make_result(confidence=0.70)
+    """Confidence exactly at confident_threshold (0.70) is a silent save."""
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
+    vc = _make_validated(confidence=0.70)
 
-    outcomes = await service.save_and_emit([result], user_id="user-1")
+    outcomes = await service.save_and_emit([vc], user_id="user-1")
 
     assert outcomes[0].status == "saved"
-    place_repo.save.assert_awaited_once()
+    places_service.create_batch.assert_awaited_once()
 
 
 async def test_all_below_threshold_no_place_saved_event(
     service: ExtractionPersistenceService,
+    places_service: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """When all candidates are below threshold, PlaceSaved is NOT dispatched."""
+    """Every candidate below save_threshold (0.30) → nothing written, no event."""
     outcomes = await service.save_and_emit(
-        [_make_result(confidence=0.50), _make_result(confidence=0.60)],
+        [
+            _make_validated("A", confidence=0.20, external_id="ext_a"),
+            _make_validated("B", confidence=0.28, external_id="ext_b"),
+        ],
         user_id="user-1",
     )
 
     assert all(o.status == "below_threshold" for o in outcomes)
+    places_service.create_batch.assert_not_awaited()
     event_dispatcher.dispatch.assert_not_awaited()
+
+
+async def test_needs_review_band_is_saved_with_flag(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    event_dispatcher: AsyncMock,
+    embedder: AsyncMock,
+    embedding_repo: AsyncMock,
+) -> None:
+    """Confidence in [save_threshold, confident_threshold) is saved as
+    'needs_review': written to the repo, embedded, and a PlaceSaved event
+    is dispatched — but the status flags the row as user-confirmable."""
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
+    embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
+    vc = _make_validated(confidence=0.60)
+
+    outcomes = await service.save_and_emit([vc], user_id="user-1")
+
+    assert outcomes[0].status == "needs_review"
+    assert outcomes[0].place is not None
+    assert outcomes[0].place_id == "place-1"
+    places_service.create_batch.assert_awaited_once()
+    event_dispatcher.dispatch.assert_awaited_once()
+    embedding_repo.bulk_upsert_embeddings.assert_awaited_once()
+
+
+async def test_three_band_partition_mixed_batch(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    event_dispatcher: AsyncMock,
+    embedder: AsyncMock,
+) -> None:
+    """A mixed batch yields one saved, one needs_review, one below_threshold.
+
+    Both eligible bands share the single create_batch call and the single
+    PlaceSaved event, carrying both place_ids."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p-confident", "Confident Place"),
+        _make_saved_object(
+            "p-tentative", "Tentative Place", provider_id="google:ext_t"
+        ),
+    ]
+    embedder.embed = AsyncMock(return_value=[[0.1] * 1024, [0.2] * 1024])
+    vcs = [
+        _make_validated("Confident Place", external_id="ext_c", confidence=0.90),
+        _make_validated("Tentative Place", external_id="ext_t", confidence=0.55),
+        _make_validated("Junk", external_id="ext_j", confidence=0.20),
+    ]
+
+    outcomes = await service.save_and_emit(vcs, user_id="user-1")
+
+    statuses = [o.status for o in outcomes]
+    assert statuses == ["saved", "needs_review", "below_threshold"]
+
+    # Both write-band rows share the single create_batch call.
+    places_service.create_batch.assert_awaited_once()
+    items_arg = places_service.create_batch.call_args[0][0]
+    assert len(items_arg) == 2
+
+    # One event, both saved_ids present (below_threshold excluded).
+    event_dispatcher.dispatch.assert_awaited_once()
+    event: PlaceSaved = event_dispatcher.dispatch.call_args[0][0]
+    assert set(event.place_ids) == {"p-confident", "p-tentative"}
 
 
 # ---------------------------------------------------------------------------
@@ -229,13 +405,14 @@ async def test_all_below_threshold_no_place_saved_event(
 
 async def test_single_place_calls_bulk_upsert_with_one_record(
     service: ExtractionPersistenceService,
+    places_service: AsyncMock,
     embedding_repo: AsyncMock,
     embedder: AsyncMock,
 ) -> None:
-    """Single place → embedder called with 1 text, bulk_upsert_embeddings called with 1 record."""  # noqa: E501
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
 
-    await service.save_and_emit([_make_result()], user_id="user-1")
+    await service.save_and_emit([_make_validated()], user_id="user-1")
 
     embedder.embed.assert_awaited_once()
     texts = embedder.embed.call_args[0][0]
@@ -248,14 +425,17 @@ async def test_single_place_calls_bulk_upsert_with_one_record(
 
 async def test_multi_place_calls_bulk_upsert_with_all_records(
     service: ExtractionPersistenceService,
+    places_service: AsyncMock,
     embedding_repo: AsyncMock,
     embedder: AsyncMock,
 ) -> None:
-    """5 places → one embed call with 5 texts, one bulk_upsert_embeddings call with 5 records."""  # noqa: E501
+    places_service.create_batch.return_value = [
+        _make_saved_object(f"place-{i}", f"Place {i}") for i in range(5)
+    ]
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024] * 5)
-    results = [_make_result(f"Place {i}", external_id=f"ext_{i}") for i in range(5)]
+    vcs = [_make_validated(f"Place {i}", external_id=f"ext_{i}") for i in range(5)]
 
-    outcomes = await service.save_and_emit(results, user_id="user-1")
+    outcomes = await service.save_and_emit(vcs, user_id="user-1")
 
     assert len(outcomes) == 5
     assert all(o.status == "saved" for o in outcomes)
@@ -270,15 +450,16 @@ async def test_multi_place_calls_bulk_upsert_with_all_records(
 
 async def test_embedding_failure_is_non_fatal(
     service: ExtractionPersistenceService,
+    places_service: AsyncMock,
     embedding_repo: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """If bulk_upsert_embeddings raises RuntimeError, place is still saved and outcomes returned."""  # noqa: E501
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
     embedding_repo.bulk_upsert_embeddings = AsyncMock(
         side_effect=RuntimeError("DB error")
     )
 
-    outcomes = await service.save_and_emit([_make_result()], user_id="user-1")
+    outcomes = await service.save_and_emit([_make_validated()], user_id="user-1")
 
     assert len(outcomes) == 1
     assert outcomes[0].status == "saved"
@@ -292,10 +473,11 @@ async def test_embedding_failure_is_non_fatal(
 
 async def test_place_saved_dispatched_before_embeddings(
     service: ExtractionPersistenceService,
+    places_service: AsyncMock,
     event_dispatcher: AsyncMock,
     embedding_repo: AsyncMock,
 ) -> None:
-    """PlaceSaved must be dispatched AFTER DB writes, BEFORE bulk_upsert_embeddings."""
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
     call_order: list[str] = []
 
     async def dispatch_side_effect(event: object) -> None:
@@ -307,7 +489,7 @@ async def test_place_saved_dispatched_before_embeddings(
     event_dispatcher.dispatch = AsyncMock(side_effect=dispatch_side_effect)
     embedding_repo.bulk_upsert_embeddings = AsyncMock(side_effect=embed_side_effect)
 
-    await service.save_and_emit([_make_result()], user_id="user-1")
+    await service.save_and_emit([_make_validated()], user_id="user-1")
 
     assert call_order == ["dispatch", "embed_bulk"]
 
@@ -319,17 +501,21 @@ async def test_place_saved_dispatched_before_embeddings(
 
 async def test_multiple_places_one_place_saved_event_with_all_ids(
     service: ExtractionPersistenceService,
+    places_service: AsyncMock,
     event_dispatcher: AsyncMock,
     embedder: AsyncMock,
 ) -> None:
-    """Multiple new places → one PlaceSaved event with all saved place_ids."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p-a", "Place A"),
+        _make_saved_object("p-b", "Place B"),
+    ]
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024, [0.2] * 1024])
-    results = [
-        _make_result("Place A", external_id="ext_a"),
-        _make_result("Place B", external_id="ext_b"),
+    vcs = [
+        _make_validated("Place A", external_id="ext_a"),
+        _make_validated("Place B", external_id="ext_b"),
     ]
 
-    outcomes = await service.save_and_emit(results, user_id="user-1")
+    outcomes = await service.save_and_emit(vcs, user_id="user-1")
 
     saved_ids = [o.place_id for o in outcomes if o.status == "saved"]
     event_dispatcher.dispatch.assert_awaited_once()
@@ -338,19 +524,155 @@ async def test_multiple_places_one_place_saved_event_with_all_ids(
     assert len(event.place_ids) == 2
 
 
+# ---------------------------------------------------------------------------
+# Geo cache write — Tier 2 data from Google validation lands in Redis
+# ---------------------------------------------------------------------------
+
+
+async def test_geo_cache_written_for_saved_rows_with_full_match_data(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """When the validator returned lat/lng/address, persistence writes
+    them to the Tier 2 cache keyed by provider_id."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p1", provider_id="google:ext_a")
+    ]
+    vc = _make_validated(
+        "Place A",
+        external_id="ext_a",
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address="1 Sukhumvit Rd, Bangkok, Thailand",
+    )
+
+    await service.save_and_emit([vc], user_id="user-1")
+
+    places_cache.set_geo_batch.assert_awaited_once()
+    geo_arg = places_cache.set_geo_batch.call_args[0][0]
+    assert set(geo_arg.keys()) == {"google:ext_a"}
+    entry = geo_arg["google:ext_a"]
+    assert entry.lat == 13.7563
+    assert entry.lng == 100.5018
+    assert entry.address == "1 Sukhumvit Rd, Bangkok, Thailand"
+
+
+async def test_geo_cache_skipped_when_match_address_missing(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """Partial geo data (lat/lng but no address) is not written — a
+    GeoData entry must be complete to be useful downstream."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p1", provider_id="google:ext_a")
+    ]
+    vc = _make_validated(
+        "Place A",
+        external_id="ext_a",
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address=None,
+    )
+
+    await service.save_and_emit([vc], user_id="user-1")
+
+    places_cache.set_geo_batch.assert_not_awaited()
+
+
+async def test_geo_cache_skipped_for_below_threshold_rows(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """Below-threshold rows never reach Tier 1, so nothing to cache either."""
+    vc = _make_validated(
+        "Place A",
+        confidence=0.20,
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address="Bangkok",
+    )
+
+    await service.save_and_emit([vc], user_id="user-1")
+
+    places_cache.set_geo_batch.assert_not_awaited()
+    places_service.create_batch.assert_not_awaited()
+
+
+async def test_geo_cache_written_for_needs_review_rows(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """Tentative saves also get their geo cached — they're Tier 1 rows
+    that recall should surface with geo_fresh=True."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p1", provider_id="google:ext_a")
+    ]
+    vc = _make_validated(
+        "Place A",
+        confidence=0.55,
+        external_id="ext_a",
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address="Bangkok",
+    )
+
+    outcomes = await service.save_and_emit([vc], user_id="user-1")
+
+    assert outcomes[0].status == "needs_review"
+    places_cache.set_geo_batch.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Source / source_url stamping
+# ---------------------------------------------------------------------------
+
+
+async def test_source_url_and_source_stamped_on_place_create(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+) -> None:
+    """source_url and source passed in to save_and_emit are stamped onto
+    every PlaceCreate handed to places_service.create_batch."""
+    from totoro_ai.core.places import PlaceSource
+
+    places_service.create_batch.return_value = [_make_saved_object("p1")]
+    vc = _make_validated()
+
+    await service.save_and_emit(
+        [vc],
+        user_id="user-1",
+        source_url="https://www.tiktok.com/@user/video/123",
+        source=PlaceSource.tiktok,
+    )
+
+    places_service.create_batch.assert_awaited_once()
+    items = places_service.create_batch.call_args[0][0]
+    assert items[0].source_url == "https://www.tiktok.com/@user/video/123"
+    assert items[0].source == PlaceSource.tiktok
+
+
 async def test_mixed_saved_and_below_threshold_only_saved_in_event(
     service: ExtractionPersistenceService,
+    places_service: AsyncMock,
     event_dispatcher: AsyncMock,
     embedder: AsyncMock,
 ) -> None:
-    """PlaceSaved event contains only saved place IDs, not below_threshold ones."""
+    """Confident save + below-threshold drop: only the confident place_id
+    lands in the PlaceSaved event."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p-good", "Good Place")
+    ]
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
-    results = [
-        _make_result("Good Place", external_id="ext_good", confidence=0.85),
-        _make_result("Low Conf", external_id="ext_low", confidence=0.50),
+    vcs = [
+        _make_validated("Good Place", external_id="ext_good", confidence=0.85),
+        _make_validated("Junk", external_id="ext_junk", confidence=0.20),
     ]
 
-    outcomes = await service.save_and_emit(results, user_id="user-1")
+    outcomes = await service.save_and_emit(vcs, user_id="user-1")
 
     saved = [o for o in outcomes if o.status == "saved"]
     below = [o for o in outcomes if o.status == "below_threshold"]

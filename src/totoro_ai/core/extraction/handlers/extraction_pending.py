@@ -17,54 +17,54 @@ from totoro_ai.core.extraction.validator import PlacesValidatorProtocol
 logger = logging.getLogger(__name__)
 
 
+def _outcome_to_item_dict(outcome: PlaceSaveOutcome) -> dict[str, Any]:
+    """Project one outcome into an `ExtractPlaceItem`-shaped dict.
+
+    Same schema `ExtractionService.run()` emits synchronously; used by the
+    background handler to write the final status to the cache so the
+    product repo polls a shape-identical payload.
+    """
+    if outcome.status == "below_threshold":
+        return {
+            "place": None,
+            "confidence": outcome.metadata.confidence,
+            "status": "failed",
+        }
+    place = outcome.place
+    return {
+        "place": place.model_dump(mode="json") if place else None,
+        "confidence": outcome.metadata.confidence,
+        "status": outcome.status,
+    }
+
+
 def _build_status_payload(
     outcomes: list[PlaceSaveOutcome],
     event: ExtractionPending,
 ) -> dict[str, Any]:
-    """Build ExtractPlaceResponse-compatible dict for cache storage."""
-    places = [
-        {
-            "place_id": o.place_id,
-            "place_name": o.result.place_name,
-            "address": o.result.address,
-            "city": o.result.city,
-            "cuisine": o.result.cuisine,
-            "confidence": o.result.confidence,
-            "resolved_by": o.result.resolved_by.value,
-            "external_provider": o.result.external_provider,
-            "external_id": o.result.external_id,
-            "extraction_status": o.status,
-        }
-        for o in outcomes
-    ]
-    statuses = {o.status for o in outcomes}
-    if "saved" in statuses:
-        top_status = "saved"
-    elif statuses <= {"below_threshold"}:
-        top_status = "below_threshold"
-    else:
-        top_status = "duplicate"
+    """Build the `ExtractPlaceResponse`-compatible status payload."""
     return {
-        "provisional": False,
-        "places": places,
-        "pending_levels": [],
-        "extraction_status": top_status,
+        "results": [_outcome_to_item_dict(o) for o in outcomes],
+        "source_url": event.url,
+        "request_id": None,
+    }
+
+
+def _failed_payload(event: ExtractionPending) -> dict[str, Any]:
+    """Single-item 'failed' payload when validation found nothing."""
+    return {
+        "results": [{"place": None, "confidence": None, "status": "failed"}],
         "source_url": event.url,
         "request_id": None,
     }
 
 
 class ExtractionPendingHandler:
-    """Handles ExtractionPending domain events dispatched by ExtractionPipeline.
-
-    Runs the three background enrichers in sequence, deduplicates, validates,
-    persists via ExtractionPersistenceService, and writes final status to cache
-    so the product repo can poll for results via GET /v1/extract-place/status/{id}.
-    """
+    """Handles ExtractionPending domain events dispatched by ExtractionPipeline."""
 
     def __init__(
         self,
-        background_enrichers: list[Any],  # list[Enricher] — Any for Protocol compat
+        background_enrichers: list[Any],
         validator: PlacesValidatorProtocol,
         persistence: ExtractionPersistenceService,
         status_repo: ExtractionStatusRepository,
@@ -87,9 +87,7 @@ class ExtractionPendingHandler:
             logger.warning(
                 "Background extraction found nothing for user %s", event.user_id
             )
-            await self._status_repo.write(
-                event.request_id, {"extraction_status": "failed"}
-            )
+            await self._status_repo.write(event.request_id, _failed_payload(event))
             return
 
         outcomes = await self._persistence.save_and_emit(results, event.user_id)
