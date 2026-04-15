@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from totoro_ai.api.schemas.chat import ChatRequest
 from totoro_ai.api.schemas.consult import (
     ConsultResponse,
+    ConsultResult,
     Location,
-    PlaceResult,
     ReasoningStep,
 )
 from totoro_ai.api.schemas.extract_place import (
@@ -63,13 +63,25 @@ def _make_service(
 
 def _consult_response() -> ConsultResponse:
     return ConsultResponse(
-        primary=PlaceResult(
-            place_name="Nara Eatery",
-            address="123 Test St",
-            reasoning="Great ramen",
-            source="saved",
-        ),
-        alternatives=[],
+        results=[
+            ConsultResult(
+                place=PlaceObject(
+                    place_id="nara-1",
+                    place_name="Nara Eatery",
+                    place_type=PlaceType.food_and_drink,
+                    subcategory="restaurant",
+                    attributes=PlaceAttributes(cuisine="japanese"),
+                    provider_id="google:ChIJnara",
+                    lat=13.7563,
+                    lng=100.5018,
+                    address="123 Test St",
+                    geo_fresh=True,
+                    enriched=True,
+                ),
+                confidence=0.87,
+                source="saved",
+            ),
+        ],
         reasoning_steps=[ReasoningStep(step="1", summary="Recalled from memory")],
     )
 
@@ -116,7 +128,9 @@ def _recall_response() -> RecallResponse:
 
 @patch("totoro_ai.core.chat.service.classify_intent")
 async def test_run_consult_intent(mock_classify: MagicMock) -> None:
-    """ChatService routes 'consult' intent to ConsultService."""
+    """ChatService routes 'consult' intent to ConsultService and pipes
+    the full ConsultResponse through as `data`. Each result carries a
+    full enriched PlaceObject and a confidence float in [0, 1]."""
     mock_classify.return_value = IntentClassification(
         intent="consult", confidence=0.95, clarification_needed=False
     )
@@ -130,7 +144,19 @@ async def test_run_consult_intent(mock_classify: MagicMock) -> None:
 
     assert result.type == "consult"
     assert result.data is not None
+    assert "Nara Eatery" in result.message
     consult_mock.consult.assert_called_once_with("user_1", "cheap dinner nearby", None)
+
+    # New response shape: list of ConsultResult with full PlaceObject.
+    results_payload = result.data["results"]
+    assert isinstance(results_payload, list)
+    assert len(results_payload) >= 1
+    first = results_payload[0]
+    assert first["place"]["place_name"] == "Nara Eatery"
+    assert first["place"]["enriched"] is True
+    assert isinstance(first["confidence"], float)
+    assert 0.0 <= first["confidence"] <= 1.0
+    assert first["source"] in ("saved", "discovered")
 
 
 def _place(place_id: str, name: str) -> PlaceObject:

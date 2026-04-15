@@ -88,6 +88,7 @@ class PlacesService:
         self,
         places: list[PlaceObject],
         geo_only: bool = False,
+        priority_provider_ids: set[str] | None = None,
     ) -> list[PlaceObject]:
         """Attach Tier 2 (and optionally Tier 3) data to each input place.
 
@@ -98,6 +99,14 @@ class PlacesService:
         union of misses via a single `get_place_details` call per unique
         provider_id (bounded by `config.places.max_enrichment_batch`), and
         writes both cache tiers from the merged response.
+
+        `priority_provider_ids` is an optional set of provider_ids the
+        caller wants guaranteed enrichment for. When the total miss count
+        exceeds the cap, priority ids are fetched first and the remaining
+        budget goes to non-priority ids (both sub-lists alphabetically
+        sorted for determinism). `ConsultService` uses this to ensure the
+        user's saved places are never dropped in favor of discovered
+        candidates with earlier Google Place IDs.
 
         Output preserves input order. Places with `provider_id=None` pass
         through unchanged.
@@ -129,7 +138,7 @@ class PlacesService:
 
         enr_hits = await self._read_enrichment_cache(unique_ids)
         new_geo, new_enr = await self._fetch_and_split_misses(
-            unique_ids, geo_hits, enr_hits
+            unique_ids, geo_hits, enr_hits, priority_provider_ids
         )
 
         # Best-effort writeback. Cache.set_*_batch swallow errors internally.
@@ -185,6 +194,7 @@ class PlacesService:
         unique_ids: list[str],
         geo_hits: dict[str, GeoData | None],
         enr_hits: dict[str, PlaceEnrichment | None],
+        priority_provider_ids: set[str] | None,
     ) -> tuple[dict[str, GeoData], dict[str, PlaceEnrichment]]:
         if self._client is None:
             raise RuntimeError(
@@ -199,17 +209,25 @@ class PlacesService:
         if not miss_set:
             return {}, {}
 
-        # Deterministic ordering for the cap: sorted string.
-        misses = sorted(miss_set)
+        # Two-pass priority sort: priority ids first (alphabetically),
+        # then non-priority ids (alphabetically). Cap applied after the
+        # sort so priority ids are kept and non-priority tail is dropped.
+        priority_set = priority_provider_ids or set()
+        priority_misses = sorted(m for m in miss_set if m in priority_set)
+        other_misses = sorted(m for m in miss_set if m not in priority_set)
+        misses = priority_misses + other_misses
+
         cap = get_config().places.max_enrichment_batch
         if len(misses) > cap:
             dropped = len(misses) - cap
+            dropped_priority = max(0, len(priority_misses) - cap)
             logger.warning(
                 "places.enrichment.fetch_cap_exceeded",
                 extra={
                     "requested": len(misses),
                     "cap": cap,
                     "dropped": dropped,
+                    "dropped_priority": dropped_priority,
                 },
             )
             misses = misses[:cap]

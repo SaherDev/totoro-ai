@@ -511,6 +511,107 @@ async def test_enrich_batch_full_caps_misses_and_logs() -> None:
         cfg.places.max_enrichment_batch = original_cap
 
 
+async def test_enrich_batch_full_priority_provider_ids_survive_cap() -> None:
+    """Saved places (priority) are guaranteed enrichment even when the
+    total miss count exceeds the cap. Without priority they'd be dropped
+    by alphabetical truncation (ADR-057 follow-up).
+
+    Fixture: 5 candidates, cap=2, one priority id alphabetically LAST
+    (`google:zzz`) so the plain-sort path would drop it; with priority
+    it must be kept and one non-priority id is dropped instead.
+    """
+    from totoro_ai.core.config import get_config
+
+    cfg = get_config()
+    original_cap = cfg.places.max_enrichment_batch
+    try:
+        cfg.places.max_enrichment_batch = 2
+
+        # provider_ids: aaa (early), bbb, ccc, ddd (all non-priority),
+        # and zzz (priority — last alphabetically, would normally be dropped).
+        pids = ["google:aaa", "google:bbb", "google:ccc", "google:ddd", "google:zzz"]
+        places_list = [
+            _make_enrichable_place(place_id=f"p{i}", provider_id=pid)
+            for i, pid in enumerate(pids)
+        ]
+
+        repo = MagicMock()
+        cache = MagicMock()
+        cache.get_geo_batch = AsyncMock(return_value={pid: None for pid in pids})
+        cache.get_enrichment_batch = AsyncMock(
+            return_value={pid: None for pid in pids}
+        )
+        cache.set_geo_batch = AsyncMock()
+        cache.set_enrichment_batch = AsyncMock()
+        client = MagicMock()
+        client.get_place_details = AsyncMock(return_value=_place_details_response())
+        service = PlacesService(repo=repo, cache=cache, client=client)
+
+        await service.enrich_batch(
+            places_list,
+            geo_only=False,
+            priority_provider_ids={"google:zzz"},
+        )
+
+        # Cap=2, so exactly 2 fetches happen.
+        assert client.get_place_details.await_count == 2
+        # Priority pid "zzz" MUST be one of them (kept via priority sort).
+        fetched_ids = {
+            call.args[0] for call in client.get_place_details.await_args_list
+        }
+        # Note: get_place_details receives the stripped external_id, so
+        # strip the "google:" prefix when asserting.
+        assert "zzz" in fetched_ids, (
+            f"Priority id not fetched; got {fetched_ids!r}"
+        )
+        # The other slot is filled by the alphabetically-first non-priority:
+        assert "aaa" in fetched_ids, (
+            f"Expected alphabetically-first non-priority; got {fetched_ids!r}"
+        )
+    finally:
+        cfg.places.max_enrichment_batch = original_cap
+
+
+async def test_enrich_batch_full_priority_default_none_preserves_old_behavior() -> None:
+    """With no priority_provider_ids, truncation falls back to plain
+    alphabetical ordering — the pre-ADR-057-followup behavior. Keeps
+    backward compatibility for callers that don't pass the new param."""
+    from totoro_ai.core.config import get_config
+
+    cfg = get_config()
+    original_cap = cfg.places.max_enrichment_batch
+    try:
+        cfg.places.max_enrichment_batch = 2
+
+        pids = ["google:aaa", "google:bbb", "google:ccc", "google:zzz"]
+        places_list = [
+            _make_enrichable_place(place_id=f"p{i}", provider_id=pid)
+            for i, pid in enumerate(pids)
+        ]
+
+        repo = MagicMock()
+        cache = MagicMock()
+        cache.get_geo_batch = AsyncMock(return_value={pid: None for pid in pids})
+        cache.get_enrichment_batch = AsyncMock(
+            return_value={pid: None for pid in pids}
+        )
+        cache.set_geo_batch = AsyncMock()
+        cache.set_enrichment_batch = AsyncMock()
+        client = MagicMock()
+        client.get_place_details = AsyncMock(return_value=_place_details_response())
+        service = PlacesService(repo=repo, cache=cache, client=client)
+
+        await service.enrich_batch(places_list, geo_only=False)
+
+        fetched_ids = {
+            call.args[0] for call in client.get_place_details.await_args_list
+        }
+        # Alphabetical truncation drops "ccc" and "zzz", keeps "aaa" and "bbb".
+        assert fetched_ids == {"aaa", "bbb"}
+    finally:
+        cfg.places.max_enrichment_batch = original_cap
+
+
 async def test_enrich_batch_full_redis_read_error_treated_as_all_miss() -> None:
     from redis.exceptions import RedisError
 

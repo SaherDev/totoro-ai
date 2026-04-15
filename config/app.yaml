@@ -288,4 +288,11 @@ memory:
 # ---------------------------------------------------------------------------
 places:
   cache_ttl_days: 30
-  max_enrichment_batch: 10
+  # Per-consult fetch cap. Raised from 10 to 20 after the initial cap hit
+  # on real Bangkok queries (1 saved + 19 discovered). Combined with the
+  # saved-pid priority in `_fetch_and_split_misses`, saved places are
+  # guaranteed to be fetched and discovered places get the remaining
+  # budget up to this cap. Each fetch is a single Places API (New) Pro-
+  # tier call, cached for `cache_ttl_days`, so the amortized cost is
+  # dominated by the first consult for each place_id.
+  max_enrichment_batch: 20

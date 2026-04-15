@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from totoro_ai.core.places.places_client import (
     GooglePlacesClient,
     PlacesMatchQuality,
+    _map_opening_hours,
 )
 
 
@@ -221,3 +222,145 @@ async def test_missing_formatted_address_leaves_address_none() -> None:
         result = await client.validate_place("Ramen Kaisugi", location=None)
 
     assert result.address is None
+
+
+async def test_get_place_details_passes_language_code_en() -> None:
+    """v1 `get_place_details` must set `languageCode=en` on the request
+    so `formattedAddress` comes back in English regardless of server IP
+    locale inference. Without this, addresses drift into the server's
+    default locale (e.g. "Tayland" / "Japonya" — Turkish for Thailand
+    / Japan)."""
+    client = _patched_client()
+    resp = MagicMock()
+    resp.json.return_value = {
+        "location": {"latitude": 13.75, "longitude": 100.5},
+        "formattedAddress": "1 Sukhumvit Rd, Bangkok 10110, Thailand",
+    }
+    resp.raise_for_status = MagicMock()
+
+    mock_get = AsyncMock(return_value=resp)
+    with patch("httpx.AsyncClient.get", new=mock_get):
+        result = await client.get_place_details("ChIJxxx")
+
+    assert result is not None
+    assert result["address"] == "1 Sukhumvit Rd, Bangkok 10110, Thailand"
+    # The request must have passed languageCode=en in the params.
+    call_kwargs = mock_get.await_args.kwargs
+    assert call_kwargs["params"] == {"languageCode": "en"}
+
+
+# ---------------------------------------------------------------------------
+# _map_opening_hours — v1 Places API shape
+# ---------------------------------------------------------------------------
+# The v1 Places API carries open/close in each period as separate integer
+# `hour` and `minute` fields (NOT a classic-style "HHMM" string). Regression
+# test for the schema mismatch that produced literal ":-:" strings on every
+# day before the fix.
+
+
+def test_map_opening_hours_formats_v1_periods_as_time_ranges() -> None:
+    response = {
+        "regularOpeningHours": {
+            "periods": [
+                # Monday 09:00 - 22:30
+                {
+                    "open": {"day": 1, "hour": 9, "minute": 0},
+                    "close": {"day": 1, "hour": 22, "minute": 30},
+                },
+                # Wednesday 12:05 - 23:00
+                {
+                    "open": {"day": 3, "hour": 12, "minute": 5},
+                    "close": {"day": 3, "hour": 23, "minute": 0},
+                },
+            ]
+        },
+        "timeZone": {"id": "Asia/Bangkok"},
+    }
+
+    hours = _map_opening_hours(response)
+
+    assert hours is not None
+    assert hours["monday"] == "09:00-22:30"
+    assert hours["wednesday"] == "12:05-23:00"
+    # Days without a period are None (closed).
+    assert hours["tuesday"] is None
+    assert hours["thursday"] is None
+    assert hours["timezone"] == "Asia/Bangkok"
+
+
+def test_map_opening_hours_handles_midnight_close() -> None:
+    """A place closing at midnight is encoded as close.hour=0 in v1.
+
+    Regression fixture for Thipsamai ("09:00-00:00" for every day).
+    """
+    response = {
+        "regularOpeningHours": {
+            "periods": [
+                {
+                    "open": {"day": 0, "hour": 9, "minute": 0},
+                    "close": {"day": 1, "hour": 0, "minute": 0},
+                },
+            ]
+        },
+        "timeZone": {"id": "Asia/Bangkok"},
+    }
+
+    hours = _map_opening_hours(response)
+
+    assert hours is not None
+    assert hours["sunday"] == "09:00-00:00"
+
+
+def test_map_opening_hours_open_without_close_is_24h() -> None:
+    """A period with `open` and no `close` means the place is open 24h."""
+    response = {
+        "regularOpeningHours": {
+            "periods": [
+                {"open": {"day": 5, "hour": 0, "minute": 0}},  # no close
+            ]
+        },
+        "timeZone": {"id": "UTC"},
+    }
+
+    hours = _map_opening_hours(response)
+
+    assert hours is not None
+    assert hours["friday"] == "00:00-00:00"
+
+
+def test_map_opening_hours_requires_timezone() -> None:
+    """A response without a timezone cannot build a valid HoursDict."""
+    response = {
+        "regularOpeningHours": {
+            "periods": [
+                {
+                    "open": {"day": 1, "hour": 9, "minute": 0},
+                    "close": {"day": 1, "hour": 17, "minute": 0},
+                },
+            ]
+        },
+        # No timeZone field
+    }
+
+    assert _map_opening_hours(response) is None
+
+
+def test_map_opening_hours_missing_hour_minute_defaults_to_zero() -> None:
+    """Degraded responses where hour/minute are absent default to 0,
+    producing `"00:00"` rather than malformed strings."""
+    response = {
+        "regularOpeningHours": {
+            "periods": [
+                {
+                    "open": {"day": 2},  # no hour/minute
+                    "close": {"day": 2, "hour": 17, "minute": 30},
+                },
+            ]
+        },
+        "timeZone": {"id": "UTC"},
+    }
+
+    hours = _map_opening_hours(response)
+
+    assert hours is not None
+    assert hours["tuesday"] == "00:00-17:30"

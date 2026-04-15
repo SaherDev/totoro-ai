@@ -16,9 +16,8 @@ from typing import TYPE_CHECKING
 
 from totoro_ai.api.schemas.consult import (
     ConsultResponse,
+    ConsultResult,
     Location,
-    PlacePhotos,
-    PlaceResult,
     ReasoningStep,
 )
 from totoro_ai.core.consult.types import (
@@ -179,9 +178,20 @@ class ConsultService:
             saved_places, discovered_places
         )
 
-        # Step 4.5: Enrich candidates with Tier 2 + Tier 3 data.
+        # Step 4.5: Enrich candidates with Tier 2 + Tier 3 data. Saved
+        # places get priority in the fetch cap — if the deduped pool
+        # exceeds `max_enrichment_batch`, the user's own saved places
+        # are guaranteed to be enriched and discovered candidates take
+        # the remaining budget.
+        saved_priority_pids = {
+            p.provider_id for p in saved_places if p.provider_id is not None
+        }
         enriched_places = (
-            await self._places_service.enrich_batch(deduped_places, geo_only=False)
+            await self._places_service.enrich_batch(
+                deduped_places,
+                geo_only=False,
+                priority_provider_ids=saved_priority_pids,
+            )
             if deduped_places
             else []
         )
@@ -251,8 +261,14 @@ class ConsultService:
         if not top:
             raise NoMatchesError(query)
 
-        primary_result = self._scored_to_place_result(top[0])
-        alternatives_results = [self._scored_to_place_result(sp) for sp in top[1:3]]
+        results = [
+            ConsultResult(
+                place=sp.place,
+                confidence=round(sp.score, 4),
+                source=sp.source,
+            )
+            for sp in top
+        ]
 
         reasoning_steps.append(
             ReasoningStep(
@@ -262,8 +278,7 @@ class ConsultService:
         )
 
         response = ConsultResponse(
-            primary=primary_result,
-            alternatives=alternatives_results,
+            results=results,
             reasoning_steps=reasoning_steps,
         )
 
@@ -279,10 +294,16 @@ class ConsultService:
         try:
             from totoro_ai.db.models import ConsultLog
 
+            # `mode="json"` serializes every field to a primitive JSON
+            # type — datetimes become ISO strings, enums become their
+            # values, etc. — so the dict is safe to hand to SQLAlchemy's
+            # JSONB column. The previous default `model_dump()` worked
+            # when the response held only strings, but the new shape
+            # carries full PlaceObject rows with `created_at: datetime`.
             log = ConsultLog(
                 user_id=user_id,
                 query=query,
-                response=response.model_dump(),
+                response=response.model_dump(mode="json"),
                 intent="consult",
             )
             await self._consult_log_repo.save(log)
@@ -291,39 +312,6 @@ class ConsultService:
                 "Failed to persist consult log for user %s: %s", user_id, exc
             )
 
-    @staticmethod
-    def _scored_to_place_result(scored: ScoredPlace) -> PlaceResult:
-        place = scored.place
-        reasoning_parts: list[str] = []
-        if scored.source == "saved":
-            reasoning_parts.append("Your saved place")
-        else:
-            reasoning_parts.append("Highly rated option")
-
-        if scored.distance_m > 0:
-            distance_km = scored.distance_m / 1000
-            reasoning_parts.append(f"{distance_km:.1f} km away")
-
-        popularity = place.popularity if place.popularity is not None else 0.5
-        if popularity >= 0.8:
-            reasoning_parts.append("very popular")
-        elif popularity >= 0.6:
-            reasoning_parts.append("popular")
-
-        reasoning = (
-            ", ".join(reasoning_parts) if reasoning_parts else "Recommended for you"
-        )
-
-        return PlaceResult(
-            place_name=place.place_name,
-            address=place.address or "",
-            reasoning=reasoning,
-            source=scored.source,
-            photos=PlacePhotos(
-                hero=place.photo_url,
-                square=place.photo_url,
-            ),
-        )
 
 
 def _dedupe_places(

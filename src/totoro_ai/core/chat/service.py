@@ -153,9 +153,10 @@ class ChatService:
                     message="I couldn't find a match for that. Try adding more places to your list, or give me a different area or vibe to work with.",
                     data=None,
                 )
+            top = consult_result.results[0].place.place_name
             return ChatResponse(
                 type="consult",
-                message=f"Here's my top pick: {consult_result.primary.place_name}",
+                message=f"Here's my top pick: {top}",
                 data=consult_result.model_dump(),
             )
 

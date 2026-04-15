@@ -1,6 +1,7 @@
 """Google Places API client for place validation and discovery."""
 
 import difflib
+import logging
 import re
 from enum import Enum
 from typing import Any, Protocol, cast
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 
 from totoro_ai.core.config import get_config, get_secrets
 from totoro_ai.core.places.models import HoursDict
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Opening-hours mapping (Google Places API v1 → HoursDict)
@@ -30,11 +33,17 @@ DAY_INT_TO_NAME: dict[int, str] = {
 def _map_opening_hours(response: dict[str, Any]) -> HoursDict | None:
     """Map a Places v1 Place Details response into a HoursDict.
 
-    Reads `regularOpeningHours.periods` (list of open/close pairs keyed by
-    integer day + HHMM string) and `timeZone.id` (IANA string). Returns
-    None if either is missing — HoursDict requires a timezone whenever any
-    day key is present, so a response without `timeZone.id` cannot produce
-    a valid HoursDict.
+    Reads `regularOpeningHours.periods` and `timeZone.id` (IANA string).
+    Returns None if either is missing — HoursDict requires a timezone
+    whenever any day key is present, so a response without `timeZone.id`
+    cannot produce a valid HoursDict.
+
+    Each period in the v1 API carries `open` and (optionally) `close`
+    objects shaped as:
+        {"day": <0-6>, "hour": <0-23>, "minute": <0-59>}
+    The classic Places API used `"time": "HHMM"` strings instead; this
+    parser is v1-only and is called only from `get_place_details`, which
+    targets the v1 endpoint.
 
     Days with no period at all are returned as None (closed). A period
     with an `open` but no `close` is treated as a 24-hour open day.
@@ -54,7 +63,6 @@ def _map_opening_hours(response: dict[str, Any]) -> HoursDict | None:
         open_obj = period.get("open") or {}
         close_obj = period.get("close")
         day_int = open_obj.get("day")
-        open_time = open_obj.get("time", "")
         if day_int is None or day_int not in DAY_INT_TO_NAME:
             continue
         day_name = DAY_INT_TO_NAME[day_int]
@@ -62,11 +70,7 @@ def _map_opening_hours(response: dict[str, Any]) -> HoursDict | None:
             # No close → 24-hour open day.
             hours[day_name] = "00:00-00:00"
         else:
-            close_time = close_obj.get("time", "")
-            # Google returns "HHMM" strings; slice into "HH:MM-HH:MM".
-            hours[day_name] = (
-                f"{open_time[:2]}:{open_time[2:]}-{close_time[:2]}:{close_time[2:]}"
-            )
+            hours[day_name] = f"{_fmt_clock(open_obj)}-{_fmt_clock(close_obj)}"
 
     # Any day not represented by a period is closed.
     for day_name in DAY_INT_TO_NAME.values():
@@ -75,6 +79,19 @@ def _map_opening_hours(response: dict[str, Any]) -> HoursDict | None:
 
     result = cast(HoursDict, {**hours, "timezone": timezone_id})
     return result
+
+
+def _fmt_clock(clock: dict[str, Any]) -> str:
+    """Format a Places v1 clock object (`{hour, minute}`) as `"HH:MM"`.
+
+    Missing or malformed values default to 0 so partial responses degrade
+    gracefully to `"00:00"` rather than producing a malformed string.
+    """
+    hour = clock.get("hour")
+    minute = clock.get("minute")
+    h = hour if isinstance(hour, int) and 0 <= hour <= 23 else 0
+    m = minute if isinstance(minute, int) and 0 <= minute <= 59 else 0
+    return f"{h:02d}:{m:02d}"
 
 
 def _normalize(text: str) -> str:
@@ -455,16 +472,47 @@ class GooglePlacesClient:
             "X-Goog-Api-Key": self.api_key,
             "X-Goog-FieldMask": field_mask,
         }
+        # `languageCode=en` forces English `formattedAddress` values.
+        # Without it, the v1 Places API infers locale from server IP and
+        # can return addresses in the wrong language (e.g. "Japonya" /
+        # "Tayland" for Japan / Thailand when the server geolocates to
+        # Turkey). English is the product default; swap to a user pref
+        # if the product grows a locale dimension.
+        params = {"languageCode": "en"}
 
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(
                     url,
                     headers=headers,
+                    params=params,
                     timeout=get_config().external_services.google_places.timeout_seconds,
                 )
                 response.raise_for_status()
-            except (httpx.HTTPError, httpx.TimeoutException):
+            except httpx.HTTPStatusError as exc:
+                # 4xx/5xx with a response body — surface the status and a
+                # prefix of the body so the operator can diagnose
+                # misconfiguration (disabled API, expired key, quota,
+                # region block) without having to reproduce the call.
+                logger.warning(
+                    "places.get_place_details.http_error",
+                    extra={
+                        "provider_id": external_id,
+                        "status_code": exc.response.status_code,
+                        "error_body": exc.response.text[:200],
+                    },
+                )
+                return None
+            except (httpx.HTTPError, httpx.TimeoutException) as exc:
+                # Network-level failures (connection refused, DNS, timeout)
+                # — no response body to log, just the exception message.
+                logger.warning(
+                    "places.get_place_details.request_failed",
+                    extra={
+                        "provider_id": external_id,
+                        "error": str(exc),
+                    },
+                )
                 return None
 
         try:
