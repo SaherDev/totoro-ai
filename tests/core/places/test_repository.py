@@ -237,29 +237,6 @@ async def test_create_batch_three_items_issues_exactly_one_execute() -> None:
     assert [p.place_id for p in result] == ["p_a", "p_b", "p_c"]
 
 
-async def test_create_batch_preserves_input_order_when_db_returns_shuffled() -> None:
-    session = _mock_session()
-    inputs = [
-        _make_place_create(place_name="A", external_id="id_a"),
-        _make_place_create(place_name="B", external_id="id_b"),
-        _make_place_create(place_name="C", external_id="id_c"),
-    ]
-    # DB returns in reverse order
-    returned = _returning_result(
-        [
-            _row_mapping(id="p_c", place_name="C", provider_id="google:id_c"),
-            _row_mapping(id="p_a", place_name="A", provider_id="google:id_a"),
-            _row_mapping(id="p_b", place_name="B", provider_id="google:id_b"),
-        ]
-    )
-    session.execute.return_value = returned
-    repo = PlacesRepository(session)
-
-    result = await repo.create_batch(inputs)
-
-    assert [p.place_name for p in result] == ["A", "B", "C"]
-
-
 async def test_create_batch_collision_rolls_back_and_raises_duplicate() -> None:
     session = _mock_session()
     inputs = [

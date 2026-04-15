@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 
 from totoro_ai.core.places.models import PlaceObject
 
@@ -35,6 +36,10 @@ class RecallResult:
     place: PlaceObject
     match_reason: str
     relevance_score: float | None = None
+    """Score scale depends on score_type — rrf scores are typically 0.01–0.03,
+    ts_rank scores are 0–1. Never compare across types."""
+
+    score_type: Literal["rrf", "ts_rank"] | None = None
 
 
 __all__ = ["RecallFilters", "RecallResult"]

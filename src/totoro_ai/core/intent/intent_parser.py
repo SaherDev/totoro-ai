@@ -118,8 +118,14 @@ class IntentParser:
             structure mirrors PlaceObject exactly:
             - place.place_type: one of "food_and_drink" | "things_to_do" |
               "shopping" | "services" | "accommodation" | null.
-            - place.subcategory: narrower kind ("restaurant", "cafe", "bar",
-              "museum", "hotel", "bookstore"). Prefer one word.
+            - place.subcategory: must be one of the values below for the
+              given place_type:
+                food_and_drink: restaurant, cafe, bar, bakery, food_truck, brewery, dessert_shop
+                things_to_do:   nature, cultural_site, museum, nightlife, experience, wellness, event_venue
+                shopping:       market, boutique, mall, bookstore, specialty_store
+                services:       coworking, laundry, pharmacy, atm, car_rental, barbershop
+                accommodation:  hotel, hostel, rental, unique_stay
+              Use null if the query does not clearly map to one of these values.
             - place.tags: list of free-form user-mentioned tags that do not
               fit a dedicated slot (e.g. ["rooftop", "view"]). Keep it short.
             - place.attributes.cuisine: "japanese" | "italian" | "thai" |

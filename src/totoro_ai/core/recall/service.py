@@ -108,8 +108,11 @@ class RecallService:
         )
 
         # Re-key match metadata by place_id so we can survive distance gaps.
-        metadata_by_id: dict[str, tuple[str, float | None]] = {
-            r.place.place_id: (r.match_reason, r.relevance_score) for r in raw_results
+        metadata_by_id: dict[
+            str, tuple[str, float | None, Literal["rrf", "ts_rank"] | None]
+        ] = {
+            r.place.place_id: (r.match_reason, r.relevance_score, r.score_type)
+            for r in raw_results
         }
 
         if (
@@ -133,8 +136,15 @@ class RecallService:
         response_results = [
             RecallResult(
                 place=place,
-                match_reason=metadata_by_id.get(place.place_id, ("filter", None))[0],
-                relevance_score=metadata_by_id.get(place.place_id, ("filter", None))[1],
+                match_reason=metadata_by_id.get(
+                    place.place_id, ("filter", None, None)
+                )[0],
+                relevance_score=metadata_by_id.get(
+                    place.place_id, ("filter", None, None)
+                )[1],
+                score_type=metadata_by_id.get(
+                    place.place_id, ("filter", None, None)
+                )[2],
             )
             for place in final_places
         ]

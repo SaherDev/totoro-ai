@@ -8,6 +8,8 @@ list wraps a place with its `match_reason` (`"filter"`, `"semantic"`,
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from totoro_ai.core.places.models import PlaceObject
@@ -30,7 +32,14 @@ class RecallResult(BaseModel):
     match_reason: str = Field(
         description='"filter" | "semantic" | "keyword" | "semantic + keyword"'
     )
-    relevance_score: float | None = None
+    relevance_score: float | None = Field(
+        default=None,
+        description=(
+            "Score scale depends on score_type — rrf scores are typically "
+            "0.01–0.03, ts_rank scores are 0–1. Never compare across types."
+        ),
+    )
+    score_type: Literal["rrf", "ts_rank"] | None = None
 
 
 class RecallResponse(BaseModel):

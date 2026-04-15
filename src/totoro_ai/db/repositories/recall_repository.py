@@ -21,6 +21,7 @@ never touches `lat`, `lng`, `address`, or any cache tier.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Literal, Protocol
@@ -162,6 +163,7 @@ class SQLAlchemyRecallRepository:
                 place=self._row_to_place_object(row),
                 match_reason="filter",
                 relevance_score=None,
+                score_type=None,
             )
             for row in rows
         ]
@@ -193,13 +195,16 @@ class SQLAlchemyRecallRepository:
             "max_cosine_distance": max_cosine_distance,
         }
 
+        score_type: Literal["rrf", "ts_rank"]
         if query_vector is not None:
             exec_params["query_vector"] = (
                 "[" + ",".join(str(v) for v in query_vector) + "]"
             )
             sql = self._build_hybrid_sql(where_sql, sort_by=sort_by)
+            score_type = "rrf"
         else:
             sql = self._build_fts_only_sql(where_sql, sort_by=sort_by)
+            score_type = "ts_rank"
 
         result = await self._session.execute(sql, exec_params)
         rows = result.mappings().fetchall()
@@ -212,6 +217,7 @@ class SQLAlchemyRecallRepository:
                     if row.get("rrf_score") is not None
                     else None
                 ),
+                score_type=score_type,
             )
             for row in rows
         ]
@@ -318,6 +324,12 @@ class SQLAlchemyRecallRepository:
     # Shared helpers
     # ------------------------------------------------------------------
     async def _total_count(self, where_sql: str, params: dict[str, Any]) -> int:
+        """Count places matching the WHERE filter clauses only.
+
+        Counts the full filter-scope match, ignoring query/RRF thresholds,
+        distance cap, and LIMIT. Used for pagination total. Not the count
+        of what was returned to the caller.
+        """
         sql = text(f"SELECT COUNT(*) FROM places p WHERE {where_sql}")
         result = await self._session.scalar(sql, params)
         return int(result or 0)
@@ -367,8 +379,6 @@ class SQLAlchemyRecallRepository:
         if filters.tags_include is not None:
             clauses.append("p.tags @> :tags_include::jsonb")
             # sqlalchemy will serialize the list; we pass JSON via json.dumps
-            import json
-
             params["tags_include"] = json.dumps(filters.tags_include)
 
         return " AND ".join(clauses), params

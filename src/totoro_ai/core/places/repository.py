@@ -163,32 +163,7 @@ class PlacesRepository:
             await self._session.rollback()
             raise RuntimeError(f"PlacesRepository.create_batch failed: {exc}") from exc
 
-        # Preserve input order: map returned rows back to input order by
-        # matching on (user_id, place_name, provider_id) — unique enough
-        # inside one batch since provider_id is unique across rows.
-        by_key: dict[tuple[str, str, str | None], Any] = {
-            (
-                row._mapping["user_id"],
-                row._mapping["place_name"],
-                row._mapping["provider_id"],
-            ): row._mapping
-            for row in returned_rows
-        }
-        ordered: list[PlaceObject] = []
-        for built_row in rows:
-            key = (
-                built_row["user_id"],
-                built_row["place_name"],
-                built_row["provider_id"],
-            )
-            mapping = by_key.get(key)
-            if mapping is None:
-                # Should never happen if the INSERT succeeded — but fall back
-                # to the built row values to stay order-aligned.
-                ordered.append(self._fallback_place_object(built_row))
-            else:
-                ordered.append(self._row_to_place_object(mapping))
-        return ordered
+        return [self._row_to_place_object(row._mapping) for row in returned_rows]
 
     # ------------------------------------------------------------------
     # Reads
@@ -331,25 +306,3 @@ class PlacesRepository:
             created_at=row.created_at,
         )
 
-    @staticmethod
-    def _fallback_place_object(row: dict[str, Any]) -> PlaceObject:
-        attributes_raw = row["attributes"]
-        attributes = (
-            PlaceAttributes.model_validate(attributes_raw)
-            if attributes_raw
-            else PlaceAttributes()
-        )
-        source_raw = row["source"]
-        source = PlaceSource(source_raw) if source_raw else None
-        return PlaceObject(
-            place_id=row["id"],
-            place_name=row["place_name"],
-            place_type=PlaceType(row["place_type"]),
-            subcategory=row["subcategory"],
-            tags=list(row["tags"]) if row["tags"] else [],
-            attributes=attributes,
-            source_url=row["source_url"],
-            source=source,
-            provider_id=row["provider_id"],
-            created_at=None,
-        )
