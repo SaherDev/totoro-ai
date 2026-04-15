@@ -15,6 +15,35 @@ Format:
 
 ---
 
+## ADR-056: PlaceObject as the single place shape across all services
+
+**Date:** 2026-04-15\
+**Status:** accepted\
+**Context:** Before feature 019, every service had its own intermediate place type — ExtractionResult, CandidatePlace, SavedPlace, RecallRow. Each required a translation layer when crossing a service boundary. Field names were inconsistent (cuisine as a top-level column, price_range with low/mid/high vocab, lat/lng in PostgreSQL). Google-sourced data mixed with user-sourced data in the same table with no TTL. No single shape existed that all three agent tools (save, recall, consult) could share.\
+**Decision:** PlaceObject is the single shape for any "place" flowing between services in this repo. It has three tiers:
+- Tier 1: PostgreSQL — permanent, our data only. `place_id`, `place_name`, `place_type`, `subcategory`, `tags`, `attributes` (JSONB), `source_url`, `source`, `provider_id`. Never expires.
+- Tier 2: Redis geo cache — `places:geo:{provider_id}`, 30-day TTL (Google TOS maximum). `lat`, `lng`, `address`. `geo_fresh=True` when populated.
+- Tier 3: Redis enrichment cache — `places:enrichment:{provider_id}`, 30-day TTL. `hours` (with IANA timezone), `rating`, `phone`, `photo_url`, `popularity`. `enriched=True` when populated.
+
+All intermediate types are deleted: ExtractionResult, CandidatePlace, SavedPlace, RecallRow. No service constructs or returns anything other than PlaceObject (reads) or PlaceCreate (writes).
+
+PlaceAttributes captures user-sourced structured data: `cuisine`, `price_hint` (cheap/moderate/expensive/luxury), `ambiance`, `dietary`, `good_for`, `location_context`. These map directly to RecallFilters and `ParsedIntent.place` with no translation.
+
+`provider_id` is namespaced: `"{provider}:{external_id}"` e.g. `"google:ChIJN1t_..."`. Built only in `PlacesRepository._build_provider_id` (via the module-level `build_provider_id` helper). Parsed only in `PlacesService._strip_namespace`. Nowhere else.
+
+Zero Google content in PostgreSQL except `provider_id` (explicitly allowed by Google TOS). All Google-sourced fields live in Redis with TTL-based expiry. No cleanup jobs needed.
+
+`PlacesCache` (single class) handles both Tier 2 and Tier 3 — same TTL, same MGET/pipeline pattern, different key prefixes.
+
+`IntentParser` outputs `ParsedIntent` with two nested groups:
+- `ParsedIntent.place` — field names match PlaceObject/PlaceAttributes exactly, maps directly to RecallFilters with no translation.
+- `ParsedIntent.search` — search mechanics (`radius_m`, `enriched_query`, `discovery_filters`, `search_location_name`) consumed by ConsultService.
+- `search_location` excluded from LLM schema via `Field(exclude=True)`, filled by ConsultService after geocoding.
+
+**Consequences:** Any new service that reads or writes a place uses PlaceObject. Any new field on a place goes into PlaceAttributes (JSONB) first — a new top-level column requires an ADR. Changing PlaceAttributes field names requires updating PlaceCreate, RecallFilters, `ParsedIntent.place`, the embedding `description_fields` config, and the `search_vector` generated column — all in one migration. The startup validator (ADR-055) catches `description_fields` / `search_vector` drift at boot time.
+
+---
+
 ## ADR-055: search_vector generated column is coupled to embeddings.description_fields
 
 **Date:** 2026-04-15\

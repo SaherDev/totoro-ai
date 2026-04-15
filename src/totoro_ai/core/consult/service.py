@@ -83,26 +83,26 @@ class ConsultService:
         intent = await self._intent_parser.parse(query, user_memories=user_memories)
         logger.info("Parsed intent for user %s: %s", user_id, intent.model_dump())
 
-        if intent.search_location_name:
+        if intent.search.search_location_name:
             location_bias = (
                 {"lat": location.lat, "lng": location.lng} if location else None
             )
-            intent.search_location = await self._places_client.geocode(
-                intent.search_location_name, location_bias=location_bias
+            intent.search.search_location = await self._places_client.geocode(
+                intent.search.search_location_name, location_bias=location_bias
             )
-        if intent.search_location is None and location:
-            intent.search_location = {"lat": location.lat, "lng": location.lng}
+        if intent.search.search_location is None and location:
+            intent.search.search_location = {"lat": location.lat, "lng": location.lng}
 
         from totoro_ai.core.config import get_config
 
         config = get_config()
-        if intent.radius_m is None:
-            intent.radius_m = config.consult.default_radius_m
+        if intent.search.radius_m is None:
+            intent.search.radius_m = config.consult.default_radius_m
 
         reasoning_steps: list[ReasoningStep] = []
 
         # Step 2: Retrieve saved places via RecallService.
-        search_query = intent.enriched_query or query
+        search_query = intent.search.enriched_query or query
         recall_response = await self._recall_service.run(search_query, user_id)
         saved_places: list[PlaceObject] = []
 
@@ -110,17 +110,17 @@ class ConsultService:
             place = recall_result.place
 
             if (
-                intent.search_location
+                intent.search.search_location
                 and place.lat is not None
                 and place.lng is not None
             ):
                 distance_m = haversine_m(
-                    intent.search_location["lat"],
-                    intent.search_location["lng"],
+                    intent.search.search_location["lat"],
+                    intent.search.search_location["lng"],
                     place.lat,
                     place.lng,
                 )
-                if distance_m > intent.radius_m:
+                if distance_m > intent.search.radius_m:
                     continue
 
             saved_places.append(place)
@@ -137,14 +137,14 @@ class ConsultService:
 
         # Step 3: Discover external candidates via Google Places.
         discovered_places: list[PlaceObject] = []
-        discovery_filters = dict(intent.discovery_filters)
-        discovery_filters["keyword"] = intent.enriched_query or query
+        discovery_filters = dict(intent.search.discovery_filters)
+        discovery_filters["keyword"] = intent.search.enriched_query or query
 
-        if intent.search_location:
+        if intent.search.search_location:
             try:
                 discovery_results = await self._places_client.discover(
-                    intent.search_location,
-                    discovery_filters | {"radius": intent.radius_m},
+                    intent.search.search_location,
+                    discovery_filters | {"radius": intent.search.radius_m},
                 )
                 for google_result in discovery_results:
                     discovered_places.append(
@@ -187,7 +187,9 @@ class ConsultService:
         )
 
         # Step 5: Validation (opennow) — if present in intent.
-        validate_candidates = bool(intent.discovery_filters.get("opennow", False))
+        validate_candidates = bool(
+            intent.search.discovery_filters.get("opennow", False)
+        )
         if validate_candidates and saved_places:
             validated: list[PlaceObject] = []
             for place in enriched_places:
@@ -196,7 +198,7 @@ class ConsultService:
                     continue
                 try:
                     if await self._places_client.validate(
-                        place, intent.discovery_filters
+                        place, intent.search.discovery_filters
                     ):
                         validated.append(place)
                 except RuntimeError:
@@ -234,7 +236,7 @@ class ConsultService:
         ranked: list[ScoredPlace] = self._ranking_service.rank(
             enriched_places,
             taste_vector,
-            intent.search_location,
+            intent.search.search_location,
             sources_by_place_id=sources_by_place_id,
         )
 
