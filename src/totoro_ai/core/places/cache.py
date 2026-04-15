@@ -59,9 +59,19 @@ class PlacesCache:
             try:
                 result[pid] = GeoData.model_validate_json(value)
             except ValueError as exc:
+                # Diagnostic-only: the raw_value_prefix is captured so the
+                # next repro of the `enriched: false` intermittent bug
+                # shows us exactly what payload broke deserialization —
+                # schema drift, partial write, encoding issue, etc. No
+                # behavioral change; result[pid] still falls back to None.
                 logger.warning(
                     "places.cache.deserialize_failed",
-                    extra={"tier": "geo", "provider_id": pid, "error": str(exc)},
+                    extra={
+                        "tier": "geo",
+                        "provider_id": pid,
+                        "error": str(exc),
+                        "raw_value_prefix": value[:100] if value else None,
+                    },
                 )
                 result[pid] = None
         return result
@@ -107,12 +117,15 @@ class PlacesCache:
             try:
                 result[pid] = PlaceEnrichment.model_validate_json(value)
             except ValueError as exc:
+                # Diagnostic-only: see the geo-tier comment above for
+                # why raw_value_prefix is captured here.
                 logger.warning(
                     "places.cache.deserialize_failed",
                     extra={
                         "tier": "enrichment",
                         "provider_id": pid,
                         "error": str(exc),
+                        "raw_value_prefix": value[:100] if value else None,
                     },
                 )
                 result[pid] = None
