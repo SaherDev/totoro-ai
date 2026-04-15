@@ -82,8 +82,7 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
-- 019-places-service: Added Python 3.11 (constitution ADR-006: >=3.11,<3.13) + SQLAlchemy 2.x async + asyncpg (Tier 1), redis.asyncio (Tier 2 + 3), Pydantic 2.10 (all I/O models), Alembic (schema migration), httpx (existing GooglePlacesClient — reused), Langfuse (tracing on provider calls only), pytest + pytest-asyncio (test runner)
-- 019-places-service: Added Python 3.11 (constitution ADR-006: >=3.11,<3.13) + SQLAlchemy 2.x async + asyncpg (Tier 1), redis.asyncio (Tier 2 + 3), Pydantic 2.10 (all I/O models), Alembic (schema migration), httpx (existing GooglePlacesClient — reused), Langfuse (tracing on provider calls only), pytest + pytest-asyncio (test runner)
+- 019-places-service: Unified `PlaceObject` shape end-to-end (ADR-054/055/056). Three-tier storage (Postgres Tier 1, Redis Tier 2 geo, Redis Tier 3 enrichment). Strict-create with `DuplicatePlaceError`. Nested `ParsedIntent` (place + search). Recall two-mode search (filter + hybrid with RRF). Consult full-enrichment path with dedupe + fetch cap. `search_vector` generated tsvector column coupled to `embeddings.description_fields` with startup validator.
 - 018-user-memory-layer: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, Langfuse, Instructor (for IntentParser)
 
 

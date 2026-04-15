@@ -188,6 +188,11 @@ async def _relocate(
     """Walk every legacy row, relocate data, update place_type/attributes.
 
     Runs in a single transaction so a crash mid-script leaves the DB clean.
+
+    Idempotent: if the Alembic migration has already dropped the legacy
+    columns, this function exits cleanly as a no-op (nothing left to
+    relocate). The operator can re-run the script any number of times
+    against a fully migrated DB without errors.
     """
     # Self-provision the new columns if the DB is still at the legacy
     # (pre-feature-019) schema. IF NOT EXISTS means this is a no-op on a DB
@@ -202,19 +207,52 @@ async def _relocate(
     ):
         await session.execute(text(stmt))
 
-    # Fetch legacy columns directly via raw SQL — the ORM no longer knows
-    # about them.
-    result = await session.execute(
+    # Which legacy columns still exist? The Alembic migration drops them,
+    # so after a full upgrade the information_schema returns an empty set
+    # and this script becomes a no-op (T062 — idempotency).
+    legacy_cols_result = await session.execute(
         text(
             """
-            SELECT id, place_name, cuisine, price_range, ambiance,
-                   lat, lng, address,
-                   external_provider, external_id,
-                   place_type, attributes, provider_id
-              FROM places
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_name = 'places'
+               AND column_name IN (
+                   'cuisine', 'price_range', 'ambiance',
+                   'lat', 'lng', 'address',
+                   'external_provider', 'external_id'
+               )
             """
         )
     )
+    legacy_cols = {row[0] for row in legacy_cols_result.fetchall()}
+
+    if not legacy_cols:
+        # DB is fully migrated — nothing to relocate. This is the normal
+        # case on any re-run after the Alembic migration has landed.
+        logger.info(
+            "seed_migration: legacy columns already dropped, nothing to relocate"
+        )
+        return
+
+    # Build the SELECT list dynamically, using NULL placeholders for any
+    # legacy column that has already been dropped.
+    def _col_or_null(name: str) -> str:
+        return name if name in legacy_cols else f"NULL AS {name}"
+
+    select_sql = f"""
+        SELECT id, place_name,
+               {_col_or_null("cuisine")},
+               {_col_or_null("price_range")},
+               {_col_or_null("ambiance")},
+               {_col_or_null("lat")},
+               {_col_or_null("lng")},
+               {_col_or_null("address")},
+               {_col_or_null("external_provider")},
+               {_col_or_null("external_id")},
+               place_type, attributes, provider_id
+          FROM places
+    """
+    result = await session.execute(text(select_sql))
     rows = result.mappings().all()
 
     config = get_config()
