@@ -59,6 +59,9 @@ def _make_validated(
     provider: PlaceProvider | None = PlaceProvider.google,
     cuisine: str | None = "ramen",
     user_id: str = "user-1",
+    match_lat: float | None = None,
+    match_lng: float | None = None,
+    match_address: str | None = None,
 ) -> ValidatedCandidate:
     return ValidatedCandidate(
         place=_make_place_create(
@@ -71,6 +74,9 @@ def _make_validated(
         confidence=confidence,
         resolved_by=resolved_by,
         corroborated=False,
+        match_lat=match_lat,
+        match_lng=match_lng,
+        match_address=match_address,
     )
 
 
@@ -120,14 +126,24 @@ def event_dispatcher() -> AsyncMock:
 
 
 @pytest.fixture
+def places_cache() -> AsyncMock:
+    c = AsyncMock()
+    c.set_geo_batch = AsyncMock()
+    c.set_enrichment_batch = AsyncMock()
+    return c
+
+
+@pytest.fixture
 def service(
     places_service: AsyncMock,
+    places_cache: AsyncMock,
     embedding_repo: AsyncMock,
     embedder: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> ExtractionPersistenceService:
     return ExtractionPersistenceService(
         places_service=places_service,
+        places_cache=places_cache,
         embedding_repo=embedding_repo,
         embedder=embedder,
         event_dispatcher=event_dispatcher,
@@ -263,7 +279,10 @@ async def test_external_id_none_passes_through_create_batch(
 
 
 # ---------------------------------------------------------------------------
-# Confidence threshold — below_threshold
+# Confidence bands — ADR-057: three-way partition
+#   c < save_threshold (0.30)             → below_threshold, never written
+#   save_threshold ≤ c < confident (0.70) → needs_review, written + flagged
+#   c ≥ confident_threshold (0.70)        → saved silently
 # ---------------------------------------------------------------------------
 
 
@@ -272,8 +291,8 @@ async def test_below_threshold_is_not_saved(
     places_service: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
-    """Confidence below save_threshold (0.70) is not written to DB."""
-    vc = _make_validated(confidence=0.69)
+    """Confidence below save_threshold (0.30) is not written to DB."""
+    vc = _make_validated(confidence=0.25)
 
     outcomes = await service.save_and_emit([vc], user_id="user-1")
 
@@ -283,11 +302,11 @@ async def test_below_threshold_is_not_saved(
     event_dispatcher.dispatch.assert_not_awaited()
 
 
-async def test_at_threshold_is_saved(
+async def test_at_confident_threshold_is_saved(
     service: ExtractionPersistenceService,
     places_service: AsyncMock,
 ) -> None:
-    """Confidence exactly at save_threshold (0.70) is saved."""
+    """Confidence exactly at confident_threshold (0.70) is a silent save."""
     places_service.create_batch.return_value = [_make_saved_object("place-1")]
     vc = _make_validated(confidence=0.70)
 
@@ -302,10 +321,11 @@ async def test_all_below_threshold_no_place_saved_event(
     places_service: AsyncMock,
     event_dispatcher: AsyncMock,
 ) -> None:
+    """Every candidate below save_threshold (0.30) → nothing written, no event."""
     outcomes = await service.save_and_emit(
         [
-            _make_validated("A", confidence=0.50, external_id="ext_a"),
-            _make_validated("B", confidence=0.60, external_id="ext_b"),
+            _make_validated("A", confidence=0.20, external_id="ext_a"),
+            _make_validated("B", confidence=0.28, external_id="ext_b"),
         ],
         user_id="user-1",
     )
@@ -313,6 +333,69 @@ async def test_all_below_threshold_no_place_saved_event(
     assert all(o.status == "below_threshold" for o in outcomes)
     places_service.create_batch.assert_not_awaited()
     event_dispatcher.dispatch.assert_not_awaited()
+
+
+async def test_needs_review_band_is_saved_with_flag(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    event_dispatcher: AsyncMock,
+    embedder: AsyncMock,
+    embedding_repo: AsyncMock,
+) -> None:
+    """Confidence in [save_threshold, confident_threshold) is saved as
+    'needs_review': written to the repo, embedded, and a PlaceSaved event
+    is dispatched — but the status flags the row as user-confirmable."""
+    places_service.create_batch.return_value = [_make_saved_object("place-1")]
+    embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
+    vc = _make_validated(confidence=0.60)
+
+    outcomes = await service.save_and_emit([vc], user_id="user-1")
+
+    assert outcomes[0].status == "needs_review"
+    assert outcomes[0].place is not None
+    assert outcomes[0].place_id == "place-1"
+    places_service.create_batch.assert_awaited_once()
+    event_dispatcher.dispatch.assert_awaited_once()
+    embedding_repo.bulk_upsert_embeddings.assert_awaited_once()
+
+
+async def test_three_band_partition_mixed_batch(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    event_dispatcher: AsyncMock,
+    embedder: AsyncMock,
+) -> None:
+    """A mixed batch yields one saved, one needs_review, one below_threshold.
+
+    Both eligible bands share the single create_batch call and the single
+    PlaceSaved event, carrying both place_ids."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p-confident", "Confident Place"),
+        _make_saved_object(
+            "p-tentative", "Tentative Place", provider_id="google:ext_t"
+        ),
+    ]
+    embedder.embed = AsyncMock(return_value=[[0.1] * 1024, [0.2] * 1024])
+    vcs = [
+        _make_validated("Confident Place", external_id="ext_c", confidence=0.90),
+        _make_validated("Tentative Place", external_id="ext_t", confidence=0.55),
+        _make_validated("Junk", external_id="ext_j", confidence=0.20),
+    ]
+
+    outcomes = await service.save_and_emit(vcs, user_id="user-1")
+
+    statuses = [o.status for o in outcomes]
+    assert statuses == ["saved", "needs_review", "below_threshold"]
+
+    # Both write-band rows share the single create_batch call.
+    places_service.create_batch.assert_awaited_once()
+    items_arg = places_service.create_batch.call_args[0][0]
+    assert len(items_arg) == 2
+
+    # One event, both saved_ids present (below_threshold excluded).
+    event_dispatcher.dispatch.assert_awaited_once()
+    event: PlaceSaved = event_dispatcher.dispatch.call_args[0][0]
+    assert set(event.place_ids) == {"p-confident", "p-tentative"}
 
 
 # ---------------------------------------------------------------------------
@@ -441,19 +524,152 @@ async def test_multiple_places_one_place_saved_event_with_all_ids(
     assert len(event.place_ids) == 2
 
 
+# ---------------------------------------------------------------------------
+# Geo cache write — Tier 2 data from Google validation lands in Redis
+# ---------------------------------------------------------------------------
+
+
+async def test_geo_cache_written_for_saved_rows_with_full_match_data(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """When the validator returned lat/lng/address, persistence writes
+    them to the Tier 2 cache keyed by provider_id."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p1", provider_id="google:ext_a")
+    ]
+    vc = _make_validated(
+        "Place A",
+        external_id="ext_a",
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address="1 Sukhumvit Rd, Bangkok, Thailand",
+    )
+
+    await service.save_and_emit([vc], user_id="user-1")
+
+    places_cache.set_geo_batch.assert_awaited_once()
+    geo_arg = places_cache.set_geo_batch.call_args[0][0]
+    assert set(geo_arg.keys()) == {"google:ext_a"}
+    entry = geo_arg["google:ext_a"]
+    assert entry.lat == 13.7563
+    assert entry.lng == 100.5018
+    assert entry.address == "1 Sukhumvit Rd, Bangkok, Thailand"
+
+
+async def test_geo_cache_skipped_when_match_address_missing(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """Partial geo data (lat/lng but no address) is not written — a
+    GeoData entry must be complete to be useful downstream."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p1", provider_id="google:ext_a")
+    ]
+    vc = _make_validated(
+        "Place A",
+        external_id="ext_a",
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address=None,
+    )
+
+    await service.save_and_emit([vc], user_id="user-1")
+
+    places_cache.set_geo_batch.assert_not_awaited()
+
+
+async def test_geo_cache_skipped_for_below_threshold_rows(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """Below-threshold rows never reach Tier 1, so nothing to cache either."""
+    vc = _make_validated(
+        "Place A",
+        confidence=0.20,
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address="Bangkok",
+    )
+
+    await service.save_and_emit([vc], user_id="user-1")
+
+    places_cache.set_geo_batch.assert_not_awaited()
+    places_service.create_batch.assert_not_awaited()
+
+
+async def test_geo_cache_written_for_needs_review_rows(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+    places_cache: AsyncMock,
+) -> None:
+    """Tentative saves also get their geo cached — they're Tier 1 rows
+    that recall should surface with geo_fresh=True."""
+    places_service.create_batch.return_value = [
+        _make_saved_object("p1", provider_id="google:ext_a")
+    ]
+    vc = _make_validated(
+        "Place A",
+        confidence=0.55,
+        external_id="ext_a",
+        match_lat=13.7563,
+        match_lng=100.5018,
+        match_address="Bangkok",
+    )
+
+    outcomes = await service.save_and_emit([vc], user_id="user-1")
+
+    assert outcomes[0].status == "needs_review"
+    places_cache.set_geo_batch.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Source / source_url stamping
+# ---------------------------------------------------------------------------
+
+
+async def test_source_url_and_source_stamped_on_place_create(
+    service: ExtractionPersistenceService,
+    places_service: AsyncMock,
+) -> None:
+    """source_url and source passed in to save_and_emit are stamped onto
+    every PlaceCreate handed to places_service.create_batch."""
+    from totoro_ai.core.places import PlaceSource
+
+    places_service.create_batch.return_value = [_make_saved_object("p1")]
+    vc = _make_validated()
+
+    await service.save_and_emit(
+        [vc],
+        user_id="user-1",
+        source_url="https://www.tiktok.com/@user/video/123",
+        source=PlaceSource.tiktok,
+    )
+
+    places_service.create_batch.assert_awaited_once()
+    items = places_service.create_batch.call_args[0][0]
+    assert items[0].source_url == "https://www.tiktok.com/@user/video/123"
+    assert items[0].source == PlaceSource.tiktok
+
+
 async def test_mixed_saved_and_below_threshold_only_saved_in_event(
     service: ExtractionPersistenceService,
     places_service: AsyncMock,
     event_dispatcher: AsyncMock,
     embedder: AsyncMock,
 ) -> None:
+    """Confident save + below-threshold drop: only the confident place_id
+    lands in the PlaceSaved event."""
     places_service.create_batch.return_value = [
         _make_saved_object("p-good", "Good Place")
     ]
     embedder.embed = AsyncMock(return_value=[[0.1] * 1024])
     vcs = [
         _make_validated("Good Place", external_id="ext_good", confidence=0.85),
-        _make_validated("Low Conf", external_id="ext_low", confidence=0.50),
+        _make_validated("Junk", external_id="ext_junk", confidence=0.20),
     ]
 
     outcomes = await service.save_and_emit(vcs, user_id="user-1")

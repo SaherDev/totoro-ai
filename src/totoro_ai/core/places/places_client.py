@@ -109,6 +109,7 @@ class PlacesMatchResult(BaseModel):
     external_id: str | None = None  # provider's own ID for the place
     lat: float | None = None
     lng: float | None = None
+    address: str | None = None  # formatted_address from the provider
     place_types: list[str] = []  # Google Places 'types' (e.g. ["restaurant", "food"])
 
 
@@ -274,6 +275,7 @@ class GooglePlacesClient:
             external_id=first_match.get("place_id"),
             lat=location_data.get("lat"),
             lng=location_data.get("lng"),
+            address=first_match.get("formatted_address"),
             place_types=first_match.get("types", []),
         )
 

@@ -146,6 +146,9 @@ class GooglePlacesValidator:
             confidence=confidence,
             resolved_by=candidate.source,
             corroborated=candidate.corroborated,
+            match_lat=places_match.lat,
+            match_lng=places_match.lng,
+            match_address=places_match.address,
         )
 
     @staticmethod

@@ -5,11 +5,18 @@ instead of the deprecated `SQLAlchemyPlaceRepository`. `PlaceSaveOutcome.place`
 is now a `PlaceObject` — the unified shared shape — not the removed
 `ExtractionResult`. `DuplicatePlaceError` from `PlacesService` is caught and
 mapped per conflict into `PlaceSaveOutcome(status="duplicate")`.
+
+ADR-057 follow-up: after the Tier 1 write succeeds, persistence writes the
+Tier 2 geo cache from the `match_lat` / `match_lng` / `match_address` data
+Google Places returned during validation. Without this step, every saved
+row would carry `geo_fresh=False` even though the lat/lng/address was
+already in hand at save time.
 """
 
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from totoro_ai.core.config import get_config
@@ -17,10 +24,13 @@ from totoro_ai.core.events.events import PlaceSaved
 from totoro_ai.core.extraction.types import ValidatedCandidate
 from totoro_ai.core.places import (
     DuplicatePlaceError,
+    GeoData,
     PlaceCreate,
     PlaceObject,
+    PlaceSource,
     PlacesService,
 )
+from totoro_ai.core.places.cache import PlacesCache
 from totoro_ai.core.places.repository import build_provider_id
 from totoro_ai.db.repositories import EmbeddingRepository
 from totoro_ai.providers.embeddings import EmbedderProtocol
@@ -35,10 +45,16 @@ logger = logging.getLogger(__name__)
 class PlaceSaveOutcome:
     """Per-candidate outcome from save_and_emit.
 
-    `place`  → the persisted `PlaceObject` on "saved" or the existing
-               `PlaceObject` (Tier 1 only) on "duplicate"; `None` for
-               "below_threshold".
-    `status` → "saved" | "duplicate" | "below_threshold".
+    `place`  → the persisted `PlaceObject` on "saved" / "needs_review" or the
+               existing `PlaceObject` (Tier 1 only) on "duplicate"; `None`
+               for "below_threshold".
+    `status` → "saved" | "needs_review" | "duplicate" | "below_threshold".
+               Per ADR-057:
+                 confidence < save_threshold        → "below_threshold"
+                 save_threshold ≤ c < confident     → "needs_review"
+                 confidence ≥ confident_threshold   → "saved"
+               "duplicate" is orthogonal and set by the repository layer
+               when a provider_id already exists.
     `metadata` → the `ValidatedCandidate` this outcome was built from; held
                  so the handler/status-payload builder can read confidence,
                  resolved_by, and city without re-running the validator.
@@ -59,32 +75,53 @@ class ExtractionPersistenceService:
     def __init__(
         self,
         places_service: PlacesService,
+        places_cache: PlacesCache,
         embedding_repo: EmbeddingRepository,
         embedder: EmbedderProtocol,
         event_dispatcher: "EventDispatcherProtocol",
     ) -> None:
         self._places_service = places_service
+        self._places_cache = places_cache
         self._embedding_repo = embedding_repo
         self._embedder = embedder
         self._event_dispatcher = event_dispatcher
 
     async def save_and_emit(
-        self, results: list[ValidatedCandidate], user_id: str
+        self,
+        results: list[ValidatedCandidate],
+        user_id: str,
+        source_url: str | None = None,
+        source: PlaceSource | None = None,
     ) -> list[PlaceSaveOutcome]:
-        save_threshold = get_config().extraction.confidence.save_threshold
+        confidence_cfg = get_config().extraction.confidence
+        save_threshold = confidence_cfg.save_threshold
+        confident_threshold = confidence_cfg.confident_threshold
 
-        # 1. Partition the input into "above-threshold" vs "below-threshold".
-        #    The below-threshold rows still surface in the response but are
-        #    never written to the database.
+        # 1. Partition into three bands per ADR-057:
+        #      c < save_threshold          → below (never written)
+        #      save_threshold ≤ c < confident → eligible, flagged "needs_review"
+        #      c ≥ confident_threshold      → eligible, flagged "saved"
+        #    Both eligible bands go through the same write path; the status
+        #    comes from which band the candidate belongs to. `tentative_pids`
+        #    holds the provider_ids that land in the needs_review band — so
+        #    _create_and_classify can stamp the right status after the write.
         below: list[ValidatedCandidate] = []
         eligible: list[ValidatedCandidate] = []
+        tentative_pids: set[str] = set()
         for vc in results:
-            if round(vc.confidence, 2) < save_threshold:
+            rounded = round(vc.confidence, 2)
+            if rounded < save_threshold:
                 below.append(vc)
-            else:
-                eligible.append(vc)
+                continue
+            eligible.append(vc)
+            if rounded < confident_threshold:
+                pid = self._format_provider_id(vc.place)
+                if pid is not None:
+                    tentative_pids.add(pid)
 
-        eligible_outcomes = await self._create_and_classify(eligible, user_id)
+        eligible_outcomes = await self._create_and_classify(
+            eligible, user_id, tentative_pids, source_url, source
+        )
 
         # 2. Re-assemble outcomes in original input order.
         outcome_map: dict[int, PlaceSaveOutcome] = {}
@@ -101,11 +138,23 @@ class ExtractionPersistenceService:
             outcome_map[idx] = outcome
         outcomes = [outcome_map[i] for i in range(len(results))]
 
-        saved_outcomes = [o for o in outcomes if o.status == "saved" and o.place]
+        # Both "saved" and "needs_review" rows are Tier 1 writes, emit
+        # PlaceSaved events, and get embedded so recall can surface them.
+        saved_outcomes = [
+            o
+            for o in outcomes
+            if o.status in ("saved", "needs_review") and o.place
+        ]
         if not saved_outcomes:
             return outcomes
 
-        # 3. Dispatch PlaceSaved AFTER all DB writes (ordering invariant).
+        # 3. Write Tier 2 geo cache from the data Google handed us during
+        #    validation. Runs before PlaceSaved dispatch so a downstream
+        #    recall fired by an event handler sees the populated cache.
+        #    Failures are swallowed inside PlacesCache.set_geo_batch.
+        await self._write_geo_cache(saved_outcomes)
+
+        # 4. Dispatch PlaceSaved AFTER all DB writes (ordering invariant).
         event = PlaceSaved(
             user_id=user_id,
             place_ids=[o.place.place_id for o in saved_outcomes if o.place],
@@ -137,8 +186,15 @@ class ExtractionPersistenceService:
         self,
         eligible: list[ValidatedCandidate],
         user_id: str,
+        tentative_pids: set[str],
+        source_url: str | None,
+        source: PlaceSource | None,
     ) -> list[PlaceSaveOutcome]:
         """Call `places_service.create_batch` and map each row back to an outcome.
+
+        `tentative_pids` is the set of provider_ids whose confidence falls
+        into the needs_review band (ADR-057); those rows get status
+        "needs_review" instead of "saved" after a successful write.
 
         On `DuplicatePlaceError`, the whole batch is rolled back (per FR-006a).
         We look up the existing place for each conflict and mark it as a
@@ -148,7 +204,7 @@ class ExtractionPersistenceService:
         if not eligible:
             return []
 
-        items = [self._with_user_id(vc.place, user_id) for vc in eligible]
+        items = [self._stamp(vc.place, user_id, source_url, source) for vc in eligible]
 
         try:
             saved = await self._places_service.create_batch(items)
@@ -156,14 +212,16 @@ class ExtractionPersistenceService:
             conflict_ids: dict[str, str] = {
                 c.provider_id: c.existing_place_id for c in exc.conflicts
             }
-            return await self._retry_one_by_one(eligible, user_id, conflict_ids)
+            return await self._retry_one_by_one(
+                eligible, user_id, conflict_ids, tentative_pids, source_url, source
+            )
 
         return [
             PlaceSaveOutcome(
                 metadata=vc,
                 place=place,
                 place_id=place.place_id,
-                status="saved",
+                status=self._status_for(vc, tentative_pids),
             )
             for vc, place in zip(eligible, saved, strict=True)
         ]
@@ -173,6 +231,9 @@ class ExtractionPersistenceService:
         eligible: list[ValidatedCandidate],
         user_id: str,
         conflict_ids: dict[str, str],
+        tentative_pids: set[str],
+        source_url: str | None,
+        source: PlaceSource | None,
     ) -> list[PlaceSaveOutcome]:
         outcomes: list[PlaceSaveOutcome] = []
         for vc in eligible:
@@ -190,7 +251,7 @@ class ExtractionPersistenceService:
                 )
                 continue
 
-            item = self._with_user_id(vc.place, user_id)
+            item = self._stamp(vc.place, user_id, source_url, source)
             try:
                 place = await self._places_service.create(item)
             except DuplicatePlaceError as inner:
@@ -210,26 +271,84 @@ class ExtractionPersistenceService:
                         metadata=vc,
                         place=place,
                         place_id=place.place_id,
-                        status="saved",
+                        status=self._status_for(vc, tentative_pids),
                     )
                 )
         return outcomes
 
+    def _status_for(
+        self, vc: ValidatedCandidate, tentative_pids: set[str]
+    ) -> str:
+        """Return "needs_review" if the candidate is in the tentative band."""
+        pid = self._format_provider_id(vc.place)
+        if pid is not None and pid in tentative_pids:
+            return "needs_review"
+        return "saved"
+
     @staticmethod
-    def _with_user_id(place: PlaceCreate, user_id: str) -> PlaceCreate:
-        """Re-stamp a PlaceCreate with the authoritative user_id.
+    def _stamp(
+        place: PlaceCreate,
+        user_id: str,
+        source_url: str | None,
+        source: PlaceSource | None,
+    ) -> PlaceCreate:
+        """Re-stamp a PlaceCreate with user_id, source_url, and source.
 
         The validator builds `PlaceCreate` with the user_id threaded through
-        from the pipeline; this helper is a safety net in case the caller
-        supplies a different user_id at save time.
+        from the pipeline; source/source_url come from `ExtractionService`
+        which knows the original URL and derived platform. A single helper
+        means the stamp is applied at exactly one site on both the batch
+        and retry paths.
+
+        Only fields that differ from the input are copied — no allocation
+        when the defaults already match.
         """
-        if place.user_id == user_id:
+        update: dict[str, object] = {}
+        if place.user_id != user_id:
+            update["user_id"] = user_id
+        if source_url is not None and place.source_url != source_url:
+            update["source_url"] = source_url
+        if source is not None and place.source != source:
+            update["source"] = source
+        if not update:
             return place
-        return place.model_copy(update={"user_id": user_id})
+        return place.model_copy(update=update)
 
     @staticmethod
     def _format_provider_id(place: PlaceCreate) -> str | None:
         return build_provider_id(place.provider, place.external_id)
+
+    async def _write_geo_cache(
+        self, saved_outcomes: list[PlaceSaveOutcome]
+    ) -> None:
+        """Write Tier 2 geo cache for newly saved rows whose validator
+        carried full lat/lng/address. Duplicates are skipped — the cache
+        already has an entry (or the next enrichment call will fill it).
+        Errors are swallowed inside `PlacesCache.set_geo_batch` per FR-026b.
+        """
+        geo_items: dict[str, GeoData] = {}
+        now = datetime.now(UTC)
+        for outcome in saved_outcomes:
+            if outcome.status not in ("saved", "needs_review"):
+                continue
+            place = outcome.place
+            if place is None or place.provider_id is None:
+                continue
+            vc = outcome.metadata
+            if (
+                vc.match_lat is None
+                or vc.match_lng is None
+                or vc.match_address is None
+            ):
+                continue
+            geo_items[place.provider_id] = GeoData(
+                lat=vc.match_lat,
+                lng=vc.match_lng,
+                address=vc.match_address,
+                cached_at=now,
+            )
+        if geo_items:
+            await self._places_cache.set_geo_batch(geo_items)
 
     def _build_description(self, outcome: PlaceSaveOutcome) -> str:
         """Build the embedding input from a saved `PlaceObject`.

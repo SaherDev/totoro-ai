@@ -102,7 +102,12 @@ extraction:
       vision_frames: 0.55
     corroboration_bonus: 0.10
     max_score: 0.97
-    save_threshold: 0.70
+    # ADR-057: two-band save gate.
+    #   confidence < save_threshold    → not written, surfaces as "failed".
+    #   save_threshold ≤ c < confident → written with status "needs_review".
+    #   confidence ≥ confident_threshold → written silently as "saved".
+    save_threshold: 0.30
+    confident_threshold: 0.70
   circuit_breaker_threshold: 5
   circuit_breaker_cooldown: 900
   vision:

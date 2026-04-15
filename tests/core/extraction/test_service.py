@@ -95,12 +95,25 @@ def _duplicate_outcome(
 def _below_threshold_outcome(
     validated: ValidatedCandidate | None = None,
 ) -> PlaceSaveOutcome:
-    vc = validated or _make_validated(confidence=0.50)
+    vc = validated or _make_validated(confidence=0.20)
     return PlaceSaveOutcome(
         metadata=vc,
         place=None,
         place_id=None,
         status="below_threshold",
+    )
+
+
+def _needs_review_outcome(
+    validated: ValidatedCandidate | None = None,
+    place_id: str = "place-uuid-review",
+) -> PlaceSaveOutcome:
+    vc = validated or _make_validated(confidence=0.55)
+    return PlaceSaveOutcome(
+        metadata=vc,
+        place=_make_place_object(place_id=place_id, place_name=vc.place.place_name),
+        place_id=place_id,
+        status="needs_review",
     )
 
 
@@ -266,7 +279,7 @@ async def test_below_threshold_becomes_failed_item_with_confidence(
     pipeline: MagicMock,
     persistence: MagicMock,
 ) -> None:
-    vc = _make_validated(confidence=0.50)
+    vc = _make_validated(confidence=0.20)
     pipeline.run = AsyncMock(return_value=[vc])
     persistence.save_and_emit = AsyncMock(return_value=[_below_threshold_outcome(vc)])
 
@@ -276,7 +289,30 @@ async def test_below_threshold_becomes_failed_item_with_confidence(
     item = response.results[0]
     assert item.status == "failed"
     assert item.place is None
-    assert item.confidence == pytest.approx(0.50)
+    assert item.confidence == pytest.approx(0.20)
+
+
+async def test_needs_review_outcome_passes_through_as_needs_review_item(
+    service: ExtractionService,
+    pipeline: MagicMock,
+    persistence: MagicMock,
+) -> None:
+    """needs_review outcomes surface unchanged: place is set, confidence
+    rides through, and status reads needs_review (ADR-057)."""
+    vc = _make_validated(confidence=0.55)
+    pipeline.run = AsyncMock(return_value=[vc])
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_needs_review_outcome(vc, place_id="place-uuid-review")]
+    )
+
+    response = await service.run("The Coffee Shop", user_id="user-1")
+
+    assert len(response.results) == 1
+    item = response.results[0]
+    assert item.status == "needs_review"
+    assert item.place is not None
+    assert item.place.place_id == "place-uuid-review"
+    assert item.confidence == pytest.approx(0.55)
 
 
 async def test_no_candidates_returns_single_failed_item(
@@ -419,24 +455,31 @@ async def test_pending_response_carries_request_id(
     assert response.request_id == "550e8400-e29b-41d4-a716-446655440000"
 
 
-async def test_pending_response_empty_request_id_becomes_none(
+async def test_pending_response_empty_request_id_falls_back_to_fresh_uuid(
     service: ExtractionService,
     pipeline: MagicMock,
 ) -> None:
+    """When the provisional pipeline returns an empty request_id, the
+    service falls back to its own freshly-generated UUID so the response
+    is always traceable."""
     provisional = _make_provisional()
     provisional.request_id = ""
     pipeline.run = AsyncMock(return_value=provisional)
 
     response = await service.run("https://tiktok.com/v/123", user_id="user-1")
 
-    assert response.request_id is None
+    assert response.request_id is not None
+    assert len(response.request_id) == 32  # uuid4().hex
 
 
-async def test_saved_path_request_id_is_none(
+async def test_saved_path_populates_request_id(
     service: ExtractionService,
 ) -> None:
+    """Every synchronous saved response carries a fresh uuid4 request_id
+    for log correlation and Langfuse trace joins."""
     response = await service.run("Fuji Ramen Bangkok", user_id="user-1")
-    assert response.request_id is None
+    assert response.request_id is not None
+    assert len(response.request_id) == 32
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +492,8 @@ async def test_persistence_called_with_pipeline_results(
     pipeline: MagicMock,
     persistence: MagicMock,
 ) -> None:
+    """Persistence is invoked with the results list, user_id, and the
+    URL/source stamping kwargs so every saved row carries its provenance."""
     results = [_make_validated()]
     pipeline.run = AsyncMock(return_value=results)
     persistence.save_and_emit = AsyncMock(
@@ -457,4 +502,29 @@ async def test_persistence_called_with_pipeline_results(
 
     await service.run("Fuji Ramen", user_id="user-1")
 
-    persistence.save_and_emit.assert_awaited_once_with(results, "user-1")
+    persistence.save_and_emit.assert_awaited_once_with(
+        results, "user-1", source_url=None, source=None
+    )
+
+
+async def test_persistence_called_with_tiktok_url_stamps_source(
+    service: ExtractionService,
+    pipeline: MagicMock,
+    persistence: MagicMock,
+) -> None:
+    """A TikTok URL in the input stamps `source=PlaceSource.tiktok` and
+    `source_url=<the url>` on the persistence call."""
+    from totoro_ai.core.places import PlaceSource
+
+    results = [_make_validated()]
+    pipeline.run = AsyncMock(return_value=results)
+    persistence.save_and_emit = AsyncMock(
+        return_value=[_saved_outcome(results[0], "uuid-1")]
+    )
+
+    url = "https://www.tiktok.com/@user/video/123"
+    await service.run(url, user_id="user-1")
+
+    persistence.save_and_emit.assert_awaited_once_with(
+        results, "user-1", source_url=url, source=PlaceSource.tiktok
+    )

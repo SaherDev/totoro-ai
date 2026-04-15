@@ -56,9 +56,13 @@ class ParsedIntentSearch(BaseModel):
     """
 
     radius_m: int | None = None
-    enriched_query: str = ""
-    """Always non-empty after `parse()` returns. Feeds both the recall
-    vector search and Google Places discovery `keyword` parameter."""
+    enriched_query: str | None = None
+    """Keyword-dense rewrite of the raw query OR `None` for meta-queries
+    (browse/list/pull-my-saves). Consumers:
+      - `RecallService`: `None` → filter-mode dispatch (WHERE clauses
+         from `ParsedIntent.place` only, no vector/FTS).
+      - `ConsultService`: falls back to the raw user message when `None`
+         (consult always needs *some* text for discovery keyword)."""
 
     discovery_filters: dict[str, Any] = Field(default_factory=dict)
     """Google Places subtype hint ONLY. Keys: `type`, `opennow`. Nothing else."""
@@ -153,12 +157,62 @@ class IntentParser:
                 "nearby", "near me", "around here", "قريب", "附近" → {nearby_radius_m}
                 "walking distance" → {walking_radius_m}
                 no signal → null.
-            - enriched_query: ALWAYS non-empty. Rewrite the raw query into a
-              short keyword-dense phrase that folds in every signal above
-              (cuisine, price, ambiance, dietary, good_for). If user memories
-              are supplied, incorporate any that apply. This string feeds both
-              the recall vector search and Google Places discovery as the
-              keyword. Grammar does not matter — keyword density does.
+            - enriched_query: keyword-dense rewrite OR null. For a query
+              that describes the kind of place the user wants, rewrite into
+              a short keyword-dense phrase that folds in every signal above
+              (cuisine, price, ambiance, dietary, good_for). Incorporate
+              applicable user memories when supplied. Grammar does not
+              matter — keyword density does.
+
+              SET enriched_query TO null for META-QUERIES where the user is
+              asking to browse, list, or retrieve their saved places
+              without describing what they're looking for. These have no
+              place-description content to enrich, and echoing the raw
+              query into FTS produces a strict AND-match over filler
+              words ("pull", "save", "show") that never appears in any
+              document. For meta-queries, `place.place_type` /
+              `place.subcategory` / `place.attributes.location_context`
+              already carry all the structured signal the recall service
+              needs; enriched_query must be null so the service can
+              dispatch to filter-mode.
+
+              Meta-query examples (enriched_query = null):
+                "Can you pull all restaurants I saved?"          → null
+                "Show me everything I saved in Bangkok"          → null
+                "What have I saved from TikTok?"                 → null
+                "Pull my saved places"                           → null
+                "List all the cafes I bookmarked"                → null
+
+              Place-description examples (enriched_query populated):
+                "cozy ramen place near my office"
+                  → "cozy ramen restaurant nearby"
+                "somewhere quiet for a date tonight"
+                  → "quiet romantic restaurant date night"
+                "cheap pad thai in Sukhumvit"
+                  → "cheap thai pad thai Sukhumvit"
+
+              IMPORTANT — counter-examples. These CONTAIN "I saved" /
+              "I bookmarked" / "from my saves" but are place-description
+              queries, NOT meta-queries, because the user is describing a
+              specific place they're trying to recall by attribute:
+                "that pad thai place I saved"
+                  → "pad thai restaurant"
+                "the ramen spot I bookmarked"
+                  → "ramen restaurant"
+                "that cozy cafe I saved last week"
+                  → "cozy cafe"
+                "the Japanese place from my saves"
+                  → "japanese restaurant"
+                "the sushi place I saved in Tokyo"
+                  → "sushi restaurant Tokyo"
+
+              The decision rule: does the query describe a PLACE — cuisine
+              (pad thai, ramen, sushi), venue type (cafe, bar, bookstore),
+              vibe (cozy, quiet, upscale), or name fragment? If yes, it's
+              a place-description query — populate enriched_query. If the
+              user is only asking to see a list with no describing
+              attributes ("pull my saves", "show me everything"), it's a
+              meta-query — enriched_query = null.
             - discovery_filters: dict for Google Places Nearby Search. Keep
               ONLY `"type"` (restaurant | cafe | bar | night_club | lodging)
               and `"opennow": true` (only when the query explicitly says so).
@@ -286,8 +340,12 @@ class IntentParser:
                     messages=messages,
                 ),
             )
-            if not result.search.enriched_query:
-                result.search.enriched_query = query
+
+            # ADR-057 follow-up: `enriched_query` is legitimately `None`
+            # for meta-queries (pull/list/show my saves). Collapse empty
+            # strings to None so downstream `None`-checks are sufficient.
+            if result.search.enriched_query == "":
+                result.search.enriched_query = None
 
             if generation:
                 generation.end(output=result.model_dump())

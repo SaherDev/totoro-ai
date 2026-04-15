@@ -171,10 +171,12 @@ async def get_event_dispatcher(
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
     from totoro_ai.core.places import GooglePlacesClient
 
+    pending_cache = _build_places_cache()
     pending_persistence = ExtractionPersistenceService(
         places_service=PlacesService(
-            repo=PlacesRepository(db_session), cache=None, client=None
+            repo=PlacesRepository(db_session), cache=pending_cache, client=None
         ),
+        places_cache=pending_cache,
         embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
         embedder=get_embedder(),
         event_dispatcher=dispatcher,
@@ -209,8 +211,20 @@ async def get_event_dispatcher(
     return dispatcher
 
 
+def get_places_cache_dep() -> PlacesCache:
+    """FastAPI dependency providing `PlacesCache`.
+
+    Extraction persistence takes this separately from `PlacesService` so
+    it can write Tier 2 geo data directly after Google validation (ADR-057
+    follow-up) — the service facade is the query path, the cache is the
+    write path.
+    """
+    return _build_places_cache()
+
+
 def get_extraction_persistence(
     places_service: PlacesService = Depends(get_places_service),  # noqa: B008
+    places_cache: PlacesCache = Depends(get_places_cache_dep),  # noqa: B008
     embedding_repo: EmbeddingRepository = Depends(get_embedding_repo),  # noqa: B008
     embedder: EmbedderProtocol = Depends(get_embedder_dep),  # noqa: B008
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
@@ -218,6 +232,7 @@ def get_extraction_persistence(
     """FastAPI dependency providing ExtractionPersistenceService."""
     return ExtractionPersistenceService(
         places_service=places_service,
+        places_cache=places_cache,
         embedding_repo=embedding_repo,
         embedder=embedder,
         event_dispatcher=event_dispatcher,
@@ -382,6 +397,7 @@ async def get_chat_service(
         extraction_service=extraction_service,
         consult_service=consult_service,
         recall_service=recall_service,
+        intent_parser=IntentParser(),
         assistant_service=assistant_service,
         event_dispatcher=event_dispatcher,
         memory_service=memory_service,

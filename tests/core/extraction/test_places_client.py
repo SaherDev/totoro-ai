@@ -186,3 +186,38 @@ async def test_no_candidates_returns_none_quality() -> None:
 
     assert result.match_quality == PlacesMatchQuality.NONE
     assert result.external_id is None
+
+
+async def test_formatted_address_read_from_response() -> None:
+    """Google's `formatted_address` field is surfaced on PlacesMatchResult
+    so the persistence layer can write it to the Tier 2 geo cache."""
+    client = _patched_client()
+    payload = {
+        "candidates": [
+            {
+                "name": "Ramen Kaisugi",
+                "place_id": "place_123",
+                "geometry": {"location": {"lat": 13.7, "lng": 100.5}},
+                "formatted_address": "1 Sukhumvit Rd, Bangkok 10110, Thailand",
+            }
+        ]
+    }
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=resp):
+        result = await client.validate_place("Ramen Kaisugi", location=None)
+
+    assert result.address == "1 Sukhumvit Rd, Bangkok 10110, Thailand"
+    assert result.lat == 13.7
+    assert result.lng == 100.5
+
+
+async def test_missing_formatted_address_leaves_address_none() -> None:
+    """When Google omits formatted_address, PlacesMatchResult.address is None."""
+    client = _patched_client()
+    response = _fake_response("Ramen Kaisugi")  # no formatted_address
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=response):
+        result = await client.validate_place("Ramen Kaisugi", location=None)
+
+    assert result.address is None

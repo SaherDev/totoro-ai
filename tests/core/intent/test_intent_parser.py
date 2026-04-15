@@ -88,8 +88,12 @@ async def test_parse_returns_defaults_for_missing_fields() -> None:
         assert result.search.search_location_name is None
 
 
-async def test_parse_enriched_query_falls_back_to_raw_when_empty() -> None:
-    """If LLM returns empty enriched_query, fall back to the raw query string."""
+async def test_parse_empty_enriched_query_becomes_none() -> None:
+    """ADR-057 follow-up: empty enriched_query is normalized to None so
+    meta-queries ("pull my saves") can dispatch to recall filter-mode.
+    The prior behavior of echoing the raw query is gone — consult now
+    falls back to the raw message on its own side when enriched_query
+    is None."""
     with patch(
         "totoro_ai.core.intent.intent_parser.get_instructor_client"
     ) as mock_get_client:
@@ -101,9 +105,28 @@ async def test_parse_enriched_query_falls_back_to_raw_when_empty() -> None:
         )
 
         parser = IntentParser()
-        result = await parser.parse("find me something")
+        result = await parser.parse("Can you pull all restaurants I saved?")
 
-        assert result.search.enriched_query == "find me something"
+        assert result.search.enriched_query is None
+
+
+async def test_parse_null_enriched_query_stays_none() -> None:
+    """LLM emitting null for enriched_query passes through unchanged —
+    no fallback, no string coercion."""
+    with patch(
+        "totoro_ai.core.intent.intent_parser.get_instructor_client"
+    ) as mock_get_client:
+        mock_client = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        mock_client.extract.return_value = ParsedIntent(
+            search=ParsedIntentSearch(enriched_query=None),
+        )
+
+        parser = IntentParser()
+        result = await parser.parse("Show me my saves")
+
+        assert result.search.enriched_query is None
 
 
 async def test_parse_passes_through_search_location_name() -> None:

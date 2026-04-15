@@ -75,6 +75,13 @@ class RecallService:
 
         filters = filters or RecallFilters()
 
+        # Normalize empty/whitespace query to None — filter-mode dispatch
+        # downstream is keyed on `query is None` (db repository), so an
+        # empty string would otherwise fall into hybrid mode and hit the
+        # RRF floor with nothing to contribute (ADR-057 follow-up).
+        if query is not None and not query.strip():
+            query = None
+
         query_vector: list[float] | None = None
         if query is not None:
             try:

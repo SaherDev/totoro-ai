@@ -12,7 +12,9 @@ from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.consult.types import NoMatchesError
 from totoro_ai.core.events.events import PersonalFactsExtracted
 from totoro_ai.core.extraction.service import ExtractionService
+from totoro_ai.core.intent.intent_parser import IntentParser, ParsedIntent
 from totoro_ai.core.recall.service import RecallService
+from totoro_ai.core.recall.types import RecallFilters
 
 if TYPE_CHECKING:
     from totoro_ai.core.events.dispatcher import EventDispatcherProtocol
@@ -40,6 +42,7 @@ class ChatService:
         consult_service: ConsultService,
         recall_service: RecallService,
         assistant_service: ChatAssistantService,
+        intent_parser: IntentParser,
         event_dispatcher: EventDispatcherProtocol,
         memory_service: UserMemoryService,
     ) -> None:
@@ -47,6 +50,7 @@ class ChatService:
         self._consult = consult_service
         self._recall = recall_service
         self._assistant = assistant_service
+        self._intent_parser = intent_parser
         self._dispatcher = event_dispatcher
         self._memory = memory_service
 
@@ -104,15 +108,37 @@ class ChatService:
             extract_result = await self._extraction.run(
                 request.message, request.user_id
             )
-            first = extract_result.results[0] if extract_result.results else None
-            place_name = (
-                first.place.place_name
-                if first and first.place is not None
-                else "the place"
-            )
+            saved = [
+                r
+                for r in extract_result.results
+                if r.status == "saved" and r.place is not None
+            ]
+            needs_review = [
+                r
+                for r in extract_result.results
+                if r.status == "needs_review" and r.place is not None
+            ]
+            duplicates = [
+                r for r in extract_result.results if r.status == "duplicate"
+            ]
+            parts: list[str] = []
+            if saved:
+                names = ", ".join(r.place.place_name for r in saved if r.place)
+                parts.append(f"Saved: {names}")
+            if needs_review:
+                names = ", ".join(
+                    r.place.place_name for r in needs_review if r.place
+                )
+                parts.append(f"Low confidence — please confirm: {names}")
+            if parts:
+                message = " ".join(parts)
+            elif duplicates:
+                message = "Already in your saves."
+            else:
+                message = "Couldn't extract a place from that."
             return ChatResponse(
                 type="extract-place",
-                message=f"Saved: {place_name}",
+                message=message,
                 data=extract_result.model_dump(),
             )
 
@@ -134,7 +160,19 @@ class ChatService:
             )
 
         if intent == "recall":
-            recall_result = await self._recall.run(request.message, request.user_id)
+            # ADR-057 follow-up: route recall through the intent parser so
+            # meta-queries ("pull my saves") dispatch to filter-mode and
+            # structured filters (subcategory, cuisine, city, ...) survive
+            # as WHERE clauses instead of being lost to a raw-string vector
+            # search. `enriched_query` is None for meta-queries, which the
+            # recall service treats as filter-mode.
+            parsed = await self._intent_parser.parse(request.message)
+            filters = _filters_from_parsed(parsed)
+            recall_result = await self._recall.run(
+                query=parsed.search.enriched_query,
+                user_id=request.user_id,
+                filters=filters,
+            )
             count = len(recall_result.results)
             noun = "place" if count == 1 else "places"
             return ChatResponse(
@@ -159,3 +197,27 @@ class ChatService:
             message=text,
             data=None,
         )
+
+
+def _filters_from_parsed(parsed: ParsedIntent) -> RecallFilters:
+    """Project `ParsedIntent.place` onto `RecallFilters` for recall dispatch.
+
+    Field names on `ParsedIntentPlace` / `PlaceAttributes` /
+    `LocationContext` already match `RecallFilters` 1:1 (ADR-056), so this
+    is a direct assignment with no translation. `place_type` is an enum on
+    the intent side and a string on the filter side — we unwrap `.value`.
+    """
+    place = parsed.place
+    attrs = place.attributes
+    loc = attrs.location_context
+    return RecallFilters(
+        place_type=place.place_type.value if place.place_type else None,
+        subcategory=place.subcategory,
+        tags_include=list(place.tags) if place.tags else None,
+        cuisine=attrs.cuisine,
+        price_hint=attrs.price_hint,
+        ambiance=attrs.ambiance,
+        neighborhood=loc.neighborhood if loc else None,
+        city=loc.city if loc else None,
+        country=loc.country if loc else None,
+    )

@@ -74,10 +74,15 @@ class ConfidenceWeights(BaseModel):
 
 
 class ConfidenceConfig(BaseModel):
-    """Per-level confidence scoring config (ADR-029).
+    """Per-level confidence scoring config (ADR-029, ADR-057).
 
     base_scores keys are ExtractionLevel.value strings (e.g. "emoji_regex").
     max_score caps the output — no extraction path earns 1.0.
+
+    Two-band save gate (ADR-057):
+      confidence <  save_threshold      → not written, surfaces as "failed".
+      save_threshold ≤ c < confident    → written with status "needs_review".
+      confidence ≥  confident_threshold → written silently as "saved".
     """
 
     base_scores: dict[str, float] = {
@@ -95,7 +100,8 @@ class ConfidenceConfig(BaseModel):
     }
     corroboration_bonus: float = 0.10
     max_score: float = 0.97
-    save_threshold: float = 0.70
+    save_threshold: float = 0.30
+    confident_threshold: float = 0.70
 
 
 class ExtractionThresholds(BaseModel):

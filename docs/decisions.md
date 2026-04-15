@@ -15,6 +15,27 @@ Format:
 
 ---
 
+## ADR-057: Save tentative extractions above 0.30, surface low-confidence band to the user
+
+**Date:** 2026-04-15\
+**Status:** accepted\
+**Context:** The prior save gate was `confidence ≥ 0.70` (ADR-029 multiplicative formula). In practice most real TikTok captions generate confidences in the 0.60–0.68 band, because the LLM typically resolves via `caption` signal (base 0.75) and Google Places returns `FUZZY` (0.9) or `CATEGORY_ONLY` (0.8) matches rather than `EXACT` — `0.75 × 0.9 = 0.675`, `0.75 × 0.8 = 0.60`. These are correct places the user intended to save; we were silently dropping them at the save gate and surfacing them as `failed`. The user has more signal than we do about whether the match is right (they saw the video), so dropping the row is strictly worse than saving it with a "needs review" flag.\
+**Decision:** Lower the save gate to `confidence ≥ 0.30` (below that we still drop). Introduce a second threshold `confident_threshold = 0.70` that splits saved rows into two bands:
+- `confidence ≥ 0.70` → `PlaceSaveOutcome.status = "saved"` — written silently, shown as "Saved: X" in the chat message.
+- `0.30 ≤ confidence < 0.70` → `PlaceSaveOutcome.status = "needs_review"` — still written to Tier 1 and embedded for recall, but the API surface marks the row `status="needs_review"` so the UI can prompt the user to confirm or delete. The chat message surfaces these as "Low confidence — please confirm: X".
+- `confidence < 0.30` → not written; row appears in the response with `status="failed"` and `place=null`.
+
+Both `"saved"` and `"needs_review"` rows:
+- Go through `PlacesService.create_batch` (the same write path; `DuplicatePlaceError` handling is unchanged).
+- Get embedded in the same bulk call — without this, a needs-review row is invisible to recall and the user would never encounter it again to confirm or reject.
+- Emit `PlaceSaved` events for the taste model, because an unreviewed-but-uncontested extraction is still a signal.
+
+The `ExtractPlaceItem.status` string gains `"needs_review"` alongside the existing `saved | duplicate | pending | failed`. `PlaceSaveOutcome.status` gains the same value.
+
+**Consequences:** Most TikTok extractions that previously failed silently now land in the user's saved places with a review flag. The user gains agency over the "is this the right place?" decision that we were making implicitly at the save gate. The UI must grow a confirm/reject action on `needs_review` rows — until that lands, users will see needs_review rows in recall alongside confirmed ones, which is acceptable because the alternative (losing the row) is worse. The taste model treats needs_review saves as positive signal; if this turns out to be too noisy we can reweight in a later ADR, but untrained assumption is that "user saved a video with this place in it" is meaningful evidence regardless of name-match quality. `save_threshold` and `confident_threshold` are both in `config/app.yaml` under `extraction.confidence` so they can be tuned from evals without code changes.
+
+---
+
 ## ADR-056: PlaceObject as the single place shape across all services
 
 **Date:** 2026-04-15\

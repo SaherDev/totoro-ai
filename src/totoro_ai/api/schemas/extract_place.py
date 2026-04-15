@@ -16,12 +16,18 @@ class ExtractPlaceItem(BaseModel):
     """One row in the extract response.
 
     status values:
-    - "saved"     — newly written to the permanent store; `place` is set
-    - "duplicate" — already existed; `place` is the existing row
-    - "pending"   — background enrichers are still running; caller polls
-                    via `request_id`
-    - "failed"    — extraction did not yield a place (below confidence
-                    threshold, no candidates, validator found nothing, …)
+    - "saved"        — newly written to the permanent store; `place` is
+                       set; confidence ≥ `confident_threshold`.
+    - "needs_review" — newly written, but confidence falls in the
+                       tentative band (between `save_threshold` and
+                       `confident_threshold`); UI should prompt the user
+                       to confirm or delete (ADR-057).
+    - "duplicate"    — already existed; `place` is the existing row.
+    - "pending"      — background enrichers are still running; caller
+                       polls via `request_id`.
+    - "failed"       — extraction did not yield a place (below
+                       `save_threshold`, no candidates, validator found
+                       nothing, …); `place` is None.
     """
 
     place: PlaceObject | None = None

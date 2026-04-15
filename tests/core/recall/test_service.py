@@ -127,6 +127,25 @@ class TestRecallServiceHappyPath:
         assert call.kwargs["limit"] == recall_config.max_results
         assert call.kwargs["rrf_k"] == 60
 
+    async def test_empty_string_query_normalized_to_none_for_filter_mode(
+        self,
+        recall_service: RecallService,
+        mock_embedder: AsyncMock,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """An empty or whitespace-only query normalizes to None so the
+        repository dispatches to filter-mode (ADR-057 follow-up). The
+        embedder is NOT called for filter-mode queries."""
+        mock_repo.count_saved_places.return_value = 5
+        mock_repo.search.return_value = ([], 0)
+
+        await recall_service.run("   ", "test-user")
+
+        mock_embedder.embed.assert_not_called()
+        call = mock_repo.search.await_args
+        assert call.kwargs["query"] is None
+        assert call.kwargs["query_vector"] is None
+
 
 # ---------------------------------------------------------------------------
 # Cold start

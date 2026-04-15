@@ -79,15 +79,21 @@ class ValidatedCandidate:
     """Post-validation wrapper — same `PlaceCreate`, now with `provider` +
     `external_id` filled in by the validator.
 
-    `confidence`, `resolved_by`, and `corroborated` are the only
-    extraction-internal fields kept. Anything else (including `city`)
-    already lives on `place.attributes` and should be read from there.
+    `confidence`, `resolved_by`, and `corroborated` are extraction-internal
+    fields. `match_lat`, `match_lng`, `match_address` carry the Tier 2 geo
+    data Google Places returned from `validate_place` so the persistence
+    layer can write it to `PlacesCache` after the Tier 1 row is created
+    (ADR-057 follow-up). All three geo fields are optional — `None` when
+    Google returned NONE-quality or the validator was bypassed.
     """
 
     place: PlaceCreate
     confidence: float
     resolved_by: ExtractionLevel
     corroborated: bool = False
+    match_lat: float | None = None
+    match_lng: float | None = None
+    match_address: str | None = None
 
 
 @dataclass

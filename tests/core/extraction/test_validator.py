@@ -40,12 +40,18 @@ def _make_match(
     quality: PlacesMatchQuality = PlacesMatchQuality.EXACT,
     external_id: str | None = "place_123",
     validated_name: str = "Chez Claude",
+    lat: float | None = None,
+    lng: float | None = None,
+    address: str | None = None,
 ) -> PlacesMatchResult:
     return PlacesMatchResult(
         match_quality=quality,
         validated_name=validated_name,
         external_provider="google",
         external_id=external_id,
+        lat=lat,
+        lng=lng,
+        address=address,
     )
 
 
@@ -105,6 +111,30 @@ async def test_single_exact_match_returns_validated_candidate() -> None:
     assert r.place.attributes.cuisine == "french"
     assert r.place.attributes.location_context is not None
     assert r.place.attributes.location_context.city == "Paris"
+
+
+async def test_validator_propagates_match_geo_onto_validated_candidate() -> None:
+    """Lat/lng/address from Google validation must reach the persistence
+    layer via ValidatedCandidate so the geo cache write has data to use."""
+    client = AsyncMock()
+    client.validate_place.return_value = _make_match(
+        PlacesMatchQuality.EXACT,
+        lat=13.7563,
+        lng=100.5018,
+        address="1 Sukhumvit Rd, Bangkok, Thailand",
+    )
+    validator = GooglePlacesValidator(
+        places_client=client, confidence_config=_make_config()
+    )
+
+    results = await validator.validate([_make_candidate()])
+
+    assert results is not None
+    assert len(results) == 1
+    r = results[0]
+    assert r.match_lat == 13.7563
+    assert r.match_lng == 100.5018
+    assert r.match_address == "1 Sukhumvit Rd, Bangkok, Thailand"
 
 
 async def test_validator_passes_city_from_location_context_to_client() -> None:
