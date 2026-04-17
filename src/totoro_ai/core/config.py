@@ -296,6 +296,7 @@ class AppConfig(BaseModel):
     taste_model: TasteModelConfig = TasteModelConfig()
     memory: MemoryConfig = MemoryConfig()
     places: PlacesConfig = PlacesConfig()
+    prompts: dict[str, str] = {}
 
 
 _config: AppConfig | None = None
@@ -307,6 +308,42 @@ def get_config() -> AppConfig:
     if _config is None:
         _config = AppConfig(**load_yaml_config("app.yaml"))
     return _config
+
+
+# ---------------------------------------------------------------------------
+# Prompt loader (ADR-059) — cached, reads from config/prompts/
+# ---------------------------------------------------------------------------
+
+_prompt_cache: dict[str, str] = {}
+
+
+def get_prompt(name: str) -> str:
+    """Load a prompt template by logical name (ADR-059).
+
+    Resolves name → file path via app.yaml `prompts:` section,
+    reads from config/prompts/<filename>, caches on first call.
+
+    Raises:
+        KeyError: If name not found in app.yaml prompts section.
+        FileNotFoundError: If the prompt file doesn't exist.
+    """
+    if name in _prompt_cache:
+        return _prompt_cache[name]
+
+    config = get_config()
+    filename = config.prompts.get(name)
+    if filename is None:
+        raise KeyError(
+            f"Prompt '{name}' not found in app.yaml prompts section. "
+            f"Available: {list(config.prompts.keys())}"
+        )
+
+    path = find_project_root() / "config" / "prompts" / filename
+    if not path.exists():
+        raise FileNotFoundError(f"Prompt file not found: {path}")
+
+    _prompt_cache[name] = path.read_text()
+    return _prompt_cache[name]
 
 
 # ---------------------------------------------------------------------------

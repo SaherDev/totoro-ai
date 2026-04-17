@@ -11,22 +11,16 @@ import json
 import logging
 from typing import Any
 
-from totoro_ai.core.config import find_project_root
+from totoro_ai.core.config import get_prompt
 from totoro_ai.core.taste.aggregation import SignalCounts
 from totoro_ai.core.taste.schemas import Chip, SummaryLine, TasteArtifacts
 
 logger = logging.getLogger(__name__)
 
-_prompt_cache: str | None = None
-
 
 def load_regen_prompt_template() -> str:
-    """Load the system prompt from config/prompts/taste_regen.txt. Cached."""
-    global _prompt_cache
-    if _prompt_cache is None:
-        path = find_project_root() / "config" / "prompts" / "taste_regen.txt"
-        _prompt_cache = path.read_text()
-    return _prompt_cache
+    """Load the taste_regen prompt via ADR-059 config-driven loader."""
+    return get_prompt("taste_regen")
 
 
 def build_regen_messages(

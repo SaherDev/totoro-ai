@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-059: Prompt templates in config/prompts/ with logical names in app.yaml
+
+**Date:** 2026-04-17\
+**Status:** accepted\
+**Context:** System prompts are hardcoded as Python string constants across multiple modules (intent_router, intent_parser, chat_assistant, extraction enrichers). Changing a prompt requires a code change and redeployment. The taste_regen prompt already lives in `config/prompts/taste_regen.txt` (feature 021), but the pattern is not formalized. Prompts should be config — tunable without code changes, versioned in git, and reviewable alongside model assignments.\
+**Decision:** All system prompts live in `config/prompts/` as plain text files. `config/app.yaml` gains a `prompts:` section mapping logical names to file paths (relative to `config/prompts/`). Code loads prompts via `get_config().prompts["taste_regen"]` which resolves to the file path, read once and cached. Existing hardcoded prompts migrate to files incrementally — each migration is a standalone commit, not a blocker. The `taste_regen` prompt is the first to use this pattern.\
+**Consequences:** Prompt changes are config-only — no Python edits, no redeployment for prompt tuning. Prompt files are committed and code-reviewable. The provider abstraction (ADR-020) handles model selection; this ADR handles prompt selection. Together they make the full LLM call config-driven. Existing hardcoded prompts continue to work until migrated — no breaking change.
+
+---
+
 ## ADR-058: Replace numeric RankingService with agent-driven ranking
 
 **Date:** 2026-04-17\

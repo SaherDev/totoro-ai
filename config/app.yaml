@@ -204,6 +204,15 @@ embeddings:
     - country
 
 # ---------------------------------------------------------------------------
+# Prompt Templates (ADR-059)
+# Logical name → file path relative to config/prompts/
+# Code loads via get_config().prompts["name"], cached on first read.
+# Migrate hardcoded prompts here incrementally.
+# ---------------------------------------------------------------------------
+prompts:
+  taste_regen: taste_regen.txt
+
+# ---------------------------------------------------------------------------
 # Taste Model Configuration
 # Signal-counts aggregation + LLM-generated taste_profile_summary + chips
 # ADR-058: RankingService deleted, agent-driven ranking deferred
