@@ -31,9 +31,9 @@ from totoro_ai.core.taste.regen import format_summary_for_agent
 from totoro_ai.core.taste.schemas import SummaryLine
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.core.utils.geo import haversine_m
-from totoro_ai.db.repositories.consult_log_repository import (
-    ConsultLogRepository,
-    NullConsultLogRepository,
+from totoro_ai.db.repositories.recommendation_repository import (
+    NullRecommendationRepository,
+    RecommendationRepository,
 )
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ class ConsultService:
         places_service: PlacesService,
         memory_service: UserMemoryService,
         taste_service: TasteModelService,
-        consult_log_repo: ConsultLogRepository | None = None,
+        recommendation_repo: RecommendationRepository | None = None,
     ) -> None:
         self._intent_parser = intent_parser
         self._recall_service = recall_service
@@ -61,10 +61,10 @@ class ConsultService:
         self._places_service = places_service
         self._memory = memory_service
         self._taste_service = taste_service
-        self._consult_log_repo: ConsultLogRepository = (
-            consult_log_repo
-            if consult_log_repo is not None
-            else NullConsultLogRepository()
+        self._recommendation_repo: RecommendationRepository = (
+            recommendation_repo
+            if recommendation_repo is not None
+            else NullRecommendationRepository()
         )
 
     async def consult(
@@ -284,39 +284,48 @@ class ConsultService:
             )
         )
 
+        recommendation_id = await self._persist_recommendation(
+            user_id, query, reasoning_steps, results
+        )
+
         response = ConsultResponse(
+            recommendation_id=recommendation_id,
             results=results,
             reasoning_steps=reasoning_steps,
         )
 
-        await self._persist_consult_log(user_id, query, response)
         return response
 
-    async def _persist_consult_log(
+    async def _persist_recommendation(
         self,
         user_id: str,
         query: str,
-        response: ConsultResponse,
-    ) -> None:
+        reasoning_steps: list[ReasoningStep],
+        results: list[ConsultResult],
+    ) -> str | None:
         try:
-            from totoro_ai.db.models import ConsultLog
+            from totoro_ai.db.models import Recommendation
 
-            # `mode="json"` serializes every field to a primitive JSON
-            # type — datetimes become ISO strings, enums become their
-            # values, etc. — so the dict is safe to hand to SQLAlchemy's
-            # JSONB column. The previous default `model_dump()` worked
-            # when the response held only strings, but the new shape
-            # carries full PlaceObject rows with `created_at: datetime`.
-            log = ConsultLog(
+            # Build the response dict for JSONB storage. `mode="json"`
+            # serializes datetimes to ISO strings and enums to values.
+            response_data = ConsultResponse(
+                recommendation_id=None,
+                results=results,
+                reasoning_steps=reasoning_steps,
+            ).model_dump(mode="json")
+
+            rec = Recommendation(
                 user_id=user_id,
                 query=query,
-                response=response.model_dump(mode="json"),
+                response=response_data,
             )
-            await self._consult_log_repo.save(log)
+            await self._recommendation_repo.save(rec)
+            return str(rec.id)
         except Exception as exc:
             logger.warning(
-                "Failed to persist consult log for user %s: %s", user_id, exc
+                "Failed to persist recommendation for user %s: %s", user_id, exc
             )
+            return None
 
 
 

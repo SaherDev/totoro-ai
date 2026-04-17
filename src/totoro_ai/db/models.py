@@ -158,22 +158,21 @@ class Interaction(Base):
         ),
         nullable=False,
     )
-    place_id: Mapped[str] = mapped_column(
-        String, ForeignKey("places.id"), nullable=False
+    place_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
 
-class ConsultLog(Base):
-    """Append-only record of AI consult recommendations (ADR-053).
+class Recommendation(Base):
+    """Append-only record of AI consult recommendations (ADR-060).
 
-    Table owned by this repo (Alembic). Distinct from the NestJS 'recommendations'
-    table — see ADR-053 for write-ownership split.
+    Table owned by this repo (Alembic). Renamed from consult_logs — see ADR-060.
     """
 
-    __tablename__ = "consult_logs"
+    __tablename__ = "recommendations"
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid4

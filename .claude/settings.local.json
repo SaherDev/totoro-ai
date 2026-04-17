@@ -34,7 +34,16 @@
       "Bash(git checkout:*)",
       "Bash(awk -F: '{print $1}')",
       "Bash(git rm:*)",
-      "WebFetch(domain:developers.google.com)"
+      "WebFetch(domain:developers.google.com)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh *)",
+      "Bash(python *)",
+      "Bash(git merge *)",
+      "Bash(poetry run *)",
+      "Read(//tmp/**)",
+      "Bash(lsof -ti:8000)",
+      "Bash(xargs kill *)",
+      "Bash(curl -s -w '\\\\nHTTP %{http_code}' -X POST http://localhost:8000/v1/signal -H 'Content-Type: application/json' -d '{\"signal_type\":\"recommendation_accepted\",\"user_id\":\"user_3AhqBhtLzKKlbKrjVNGTHro1o76\",\"recommendation_id\":\"0ed6e7a1-3350-4dcd-b522-e41c862c6cfc\",\"place_id\":\"google:ChIJoTEcYnaZ4jAReNxhREi58U0\"}')",
+      "Bash(curl -s -w '\\\\nHTTP %{http_code}' -X POST http://localhost:8000/v1/signal -H 'Content-Type: application/json' -d '{\"signal_type\":\"recommendation_rejected\",\"user_id\":\"user_3AhqBhtLzKKlbKrjVNGTHro1o76\",\"recommendation_id\":\"0ed6e7a1-3350-4dcd-b522-e41c862c6cfc\",\"place_id\":\"google:ChIJoTEcYnaZ4jAReNxhREi58U0\"}')"
     ]
   }
 }

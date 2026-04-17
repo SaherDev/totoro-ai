@@ -6,7 +6,7 @@ attributes it needs without a second fetch. The ranker's normalized score
 is surfaced as `confidence` on each item.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from totoro_ai.core.places.models import PlaceObject
 
@@ -56,5 +56,9 @@ class ConsultResponse(BaseModel):
     for the UI.
     """
 
+    recommendation_id: str | None = Field(
+        default=None,
+        description="UUID from recommendations table. Null if persist failed.",
+    )
     results: list[ConsultResult]
     reasoning_steps: list[ReasoningStep]

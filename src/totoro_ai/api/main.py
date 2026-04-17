@@ -10,7 +10,8 @@ from sqlalchemy import text
 
 from totoro_ai.api.errors import register_error_handlers
 from totoro_ai.api.routes.chat import router as chat_router
-from totoro_ai.api.routes.feedback import router as feedback_router
+from totoro_ai.api.routes.signal import router as signal_router
+from totoro_ai.api.routes.user_context import router as user_context_router
 from totoro_ai.core.config import get_config
 from totoro_ai.db.session import _get_session_factory
 
@@ -103,9 +104,10 @@ async def health() -> dict[str, str]:
     }
 
 
-# Include routers (ADR-052: only /v1/chat handles conversational traffic)
+# Include routers (ADR-052: /v1/chat handles conversational traffic)
 router.include_router(chat_router, prefix="")
-router.include_router(feedback_router, prefix="")
+router.include_router(signal_router, prefix="")
+router.include_router(user_context_router, prefix="")
 app.include_router(router)
 
 # Register error handlers
