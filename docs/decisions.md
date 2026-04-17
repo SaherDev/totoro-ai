@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-060: Rename consult_logs to recommendations, add user/context and signal endpoints
+
+**Date:** 2026-04-17\
+**Status:** accepted (supersedes ADR-053)\
+**Context:** ADR-053 created a `consult_logs` table to avoid write-ownership conflict with the product repo's `recommendations` table. The product repo no longer owns a `recommendations` table (Prisma removed from stack). The name `consult_logs` is misleading — these rows are recommendations the user can act on, not audit logs. Additionally, the feedback loop requires two new endpoints: `GET /v1/user/context` (taste chips + saved count for the product UI) and `POST /v1/signal` (replacing `POST /v1/feedback` with recommendation_id validation).\
+**Decision:** Rename `consult_logs` → `recommendations` via `ALTER TABLE RENAME` (metadata-only, instant). Schema unchanged: `id` (UUID PK), `user_id`, `query`, `response` (JSONB), `created_at`. `ConsultService` returns the database-generated `recommendation_id` in `ConsultResponse`. Add `GET /v1/user/context` — reads `TasteModelService.get_taste_profile()`, returns `saved_places_count` and `chips`. Add `POST /v1/signal` — validates `recommendation_id` exists, dispatches `RecommendationAccepted`/`RecommendationRejected` event via `EventDispatcher`, returns 202. Delete `POST /v1/feedback` (replaced by `/v1/signal`).\
+**Consequences:** ADR-053 is superseded. This repo writes to `recommendations` instead of `consult_logs`. ORM model renamed `ConsultLog` → `Recommendation`. Repository renamed `ConsultLogRepository` → `RecommendationRepository`. Constitution sections VI and VIII updated. Product repo must migrate from `/v1/feedback` to `/v1/signal`.
+
+---
+
 ## ADR-059: Prompt templates in config/prompts/ with logical names in app.yaml
 
 **Date:** 2026-04-17\

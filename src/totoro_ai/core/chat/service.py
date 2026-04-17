@@ -32,8 +32,8 @@ class ChatService:
         recall_service: Handles recall intent (find saved places).
         assistant_service: Handles general food/dining questions.
 
-    ConsultService is responsible for persisting consult log records before returning.
-    ChatService does not hold a ConsultLogRepository reference.
+    ConsultService is responsible for persisting recommendation records before returning.
+    ChatService does not hold a RecommendationRepository reference.
     """
 
     def __init__(

@@ -25,17 +25,17 @@
 ## What This Repo Does NOT Own
 
 - UI, frontend, auth, user management, CRUD operations
-- Product data writes — users, settings, recommendations belong to NestJS
-- Database migrations for product tables — NestJS (TypeORM) in the product repo manages users and user_settings. Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log.
+- Product data writes — users, settings belong to NestJS
+- Database migrations for product tables — NestJS (TypeORM) in the product repo manages users and user_settings. Alembic in this repo owns places, embeddings, taste_model, recommendations, user_memories, interaction_log.
 - Payment, notifications, or any product feature logic
 
 ## Database Access
 
 - Write ownership split by domain: FastAPI writes AI data, NestJS writes product data
-- FastAPI writes: places, embeddings, taste_model, consult_logs, user_memories, interaction_log
+- FastAPI writes: places, embeddings, taste_model, recommendations, user_memories, interaction_log
 - FastAPI reads: all tables as needed
 - NestJS writes: users, user_settings (product data, via TypeORM)
-- Migration ownership split by domain: Alembic in this repo owns places, embeddings, taste_model, consult_logs, user_memories, interaction_log. TypeORM in the product repo manages users and user_settings. NestJS never touches AI tables.
+- Migration ownership split by domain: Alembic in this repo owns places, embeddings, taste_model, recommendations, user_memories, interaction_log. TypeORM in the product repo manages users and user_settings. NestJS never touches AI tables.
 - Database client: SQLAlchemy async + asyncpg
 - Redis is owned exclusively by this repo. NestJS does not connect to Redis.
 

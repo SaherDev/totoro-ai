@@ -98,7 +98,76 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 - `location` is only forwarded to `ConsultService.consult()` — all other intents ignore it.
 - Confidence threshold for intent classification is 0.7. Messages below threshold return `type="clarification"`.
 - All downstream exceptions are caught and returned as `type="error"` with HTTP 200 (not 5xx).
-- Consult results are persisted to the `consult_logs` table after a successful response (ADR-053). Write failures are logged but do not fail the caller response.
+- Consult results are persisted to the `recommendations` table after a successful response (ADR-060). The response includes a `recommendation_id` (UUID) referencing the persisted row. Write failures are logged but do not fail the caller response — `recommendation_id` will be `null` in that case.
+
+---
+
+## GET /v1/user/context
+
+Returns taste profile context for the product UI (ADR-060).
+
+**Request:**
+
+```
+GET /v1/user/context?user_id=user_3AhqBhtLzKKlbKrjVNGTHro1o76
+```
+
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `user_id` | `string` | Yes | Query parameter |
+
+**Response (200):**
+
+```json
+{
+  "saved_places_count": 12,
+  "chips": [
+    { "label": "Japanese", "source_field": "subcategory", "source_value": "japanese", "signal_count": 5 }
+  ]
+}
+```
+
+**Notes:**
+
+- Cold start (no taste profile): returns `saved_places_count: 0`, `chips: []`.
+- `saved_places_count` is read from the precomputed taste model, not a direct DB count.
+- Missing `user_id` returns 422 (FastAPI auto-validation).
+
+---
+
+## POST /v1/signal
+
+Behavioral signal endpoint for recommendation feedback (ADR-060). Replaces `POST /v1/feedback`.
+
+**Request:**
+
+```json
+{
+  "signal_type": "recommendation_accepted",
+  "user_id": "user_3AhqBhtLzKKlbKrjVNGTHro1o76",
+  "recommendation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "place_id": "google:ChIJN1t_tDeuEmsRUsoyG83frY4"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `signal_type` | `string` | Yes | `"recommendation_accepted"` or `"recommendation_rejected"` |
+| `user_id` | `string` | Yes | Clerk-issued user ID |
+| `recommendation_id` | `string` | Yes | Must exist in recommendations table |
+| `place_id` | `string` | Yes | Trusted, not validated against places table |
+
+**Response (202):** `{ "status": "accepted" }`
+
+**Response (404):** `recommendation_id` not found in recommendations table.
+
+**Response (422):** Unknown `signal_type`.
+
+**Notes:**
+
+- Handler runs as background task after HTTP 202 response (ADR-043).
+- Append-only — duplicate signals for the same recommendation are accepted.
+- `place_id` is not validated against the places table.
 
 ---
 
@@ -113,6 +182,8 @@ Health check endpoint. Returns service status and database connectivity.
 | Endpoint | Purpose | NestJS Sends | totoro-ai Returns |
 | --- | --- | --- | --- |
 | POST /v1/chat | Unified conversational entry point | user_id, message, optional location | type, message, optional data payload |
+| GET /v1/user/context | User taste context for product UI | user_id (query param) | saved_places_count, chips |
+| POST /v1/signal | Recommendation feedback signal | signal_type, user_id, recommendation_id, place_id | status (202) |
 | GET /v1/health | Service health check | — | status, db connectivity |
 
 ---
@@ -148,7 +219,7 @@ These values must stay in sync between both repos. A mismatch breaks the system.
 - places
 - embeddings
 - taste_model
-- consult_logs (ADR-053 — AI recommendation history, distinct from NestJS recommendations table)
+- recommendations (ADR-060 — AI recommendation history, renamed from consult_logs)
 - user_memories (personal facts extracted from chat messages)
 - interaction_log (append-only behavioral signal log)
 
@@ -159,7 +230,7 @@ Alembic in totoro-ai owns migrations for these tables. NestJS never touches them
 ## General Notes
 
 - All requests include `user_id` so FastAPI can load user-specific taste models and saved places.
-- FastAPI writes AI-generated data (places, embeddings, taste model, consult_logs) directly to PostgreSQL.
-- NestJS writes product data (users, settings, recommendations) to PostgreSQL.
+- FastAPI writes AI-generated data (places, embeddings, taste model, recommendations) directly to PostgreSQL.
+- NestJS writes product data (users, settings) to PostgreSQL.
 - Neither service writes to the other's tables.
 - The product repo is responsible for auth and validating `user_id` before calling these endpoints.

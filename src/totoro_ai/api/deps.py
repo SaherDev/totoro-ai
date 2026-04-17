@@ -23,15 +23,16 @@ from totoro_ai.core.places import GooglePlacesClient, PlacesService
 from totoro_ai.core.places.cache import PlacesCache
 from totoro_ai.core.places.repository import PlacesRepository
 from totoro_ai.core.recall.service import RecallService
+from totoro_ai.core.signal.service import SignalService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
     EmbeddingRepository,
     SQLAlchemyEmbeddingRepository,
     SQLAlchemyRecallRepository,
 )
-from totoro_ai.db.repositories.consult_log_repository import (
-    ConsultLogRepository,
-    SQLAlchemyConsultLogRepository,
+from totoro_ai.db.repositories.recommendation_repository import (
+    RecommendationRepository,
+    SQLAlchemyRecommendationRepository,
 )
 from totoro_ai.db.session import _get_session_factory, get_session
 from totoro_ai.providers import get_instructor_client
@@ -40,6 +41,14 @@ from totoro_ai.providers.embeddings import EmbedderProtocol, get_embedder
 from totoro_ai.providers.groq_client import GroqWhisperClient
 from totoro_ai.providers.llm import get_vision_extractor
 from totoro_ai.providers.redis_cache import RedisCacheBackend
+
+
+def get_taste_service() -> TasteModelService:
+    """FastAPI dependency providing TasteModelService.
+
+    Uses session_factory so each repo method opens its own session.
+    """
+    return TasteModelService(session_factory=_get_session_factory())
 
 
 def get_cache_backend() -> CacheBackend:
@@ -333,24 +342,38 @@ async def get_recall_service(
     )
 
 
-def get_consult_log_repo(
+def get_recommendation_repo(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> ConsultLogRepository:
-    """FastAPI dependency providing a fully wired ConsultLogRepository (ADR-053)."""
-    return SQLAlchemyConsultLogRepository(db_session)
+) -> RecommendationRepository:
+    """FastAPI dependency providing a fully wired RecommendationRepository (ADR-060)."""
+    return SQLAlchemyRecommendationRepository(db_session)
+
+
+def get_signal_service(
+    event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
+) -> SignalService:
+    """FastAPI dependency providing SignalService (ADR-060).
+
+    SignalService owns the RecommendationRepository internally via
+    session_factory — the API layer never touches the repo directly.
+    """
+    return SignalService(
+        session_factory=_get_session_factory(),
+        event_dispatcher=event_dispatcher,
+    )
 
 
 async def get_consult_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
     config: AppConfig = Depends(get_config),  # noqa: B008
-    consult_log_repo: ConsultLogRepository = Depends(get_consult_log_repo),  # noqa: B008
+    recommendation_repo: RecommendationRepository = Depends(get_recommendation_repo),  # noqa: B008
     memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
 ) -> ConsultService:
     """FastAPI dependency providing a fully wired ConsultService.
 
     Wires the 6-step pipeline dependencies: intent parser, recall service,
     places client, taste model service, and ranking service.
-    Also injects ConsultLogRepository for persistence (FR-010) and
+    Also injects RecommendationRepository for persistence (ADR-060) and
     UserMemoryService for context injection (ADR-010, ADR-038).
     """
     places_service = PlacesService(
@@ -370,7 +393,7 @@ async def get_consult_service(
         places_service=places_service,
         memory_service=memory_service,
         taste_service=TasteModelService(session_factory=_get_session_factory()),
-        consult_log_repo=consult_log_repo,
+        recommendation_repo=recommendation_repo,
     )
 
 
