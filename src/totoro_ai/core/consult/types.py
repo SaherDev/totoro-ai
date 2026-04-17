@@ -13,7 +13,6 @@ shape end-to-end.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -90,22 +89,7 @@ def _google_types_to_place_type(types: list[str]) -> PlaceType:
 
 
 class NoMatchesError(Exception):
-    """Raised by ConsultService when no candidates survive ranking."""
-
-
-@dataclass
-class ScoredPlace:
-    """A place with ranking metadata attached for one consult call.
-
-    `distance_m` is the great-circle distance from the search location, in
-    metres, or 0.0 if no location was available. `score` is the final
-    ranking score (0.0 – 1.0 after the source-boost clamp).
-    """
-
-    place: PlaceObject
-    score: float
-    distance_m: float
-    source: str  # "saved" | "discovered"
+    """Raised by ConsultService when no candidates survive the pipeline."""
 
 
 def map_google_place_to_place_object(google_result: dict[str, Any]) -> PlaceObject:

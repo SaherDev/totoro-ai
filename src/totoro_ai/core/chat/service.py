@@ -72,6 +72,12 @@ class ChatService:
         """
         try:
             classification = await classify_intent(request.message)
+            logger.info(
+                "Intent classification for user %s: intent=%s, facts=%s",
+                request.user_id,
+                classification.intent,
+                [f.text for f in classification.personal_facts],
+            )
 
             # Fire PersonalFactsExtracted event to persist facts asynchronously
             await self._dispatcher.dispatch(

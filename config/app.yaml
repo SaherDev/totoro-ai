@@ -66,6 +66,12 @@ models:
     max_tokens: 1024
     temperature: 0.9
 
+  taste_regen:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 512
+    temperature: 0.3
+
   intent_router:
     provider: groq
     model: llama-3.1-8b-instant
@@ -199,77 +205,14 @@ embeddings:
 
 # ---------------------------------------------------------------------------
 # Taste Model Configuration
-# ADR-043: EMA-based taste modeling with gain-weighted dimension updates
+# Signal-counts aggregation + LLM-generated taste_profile_summary + chips
+# ADR-058: RankingService deleted, agent-driven ranking deferred
 # ---------------------------------------------------------------------------
 taste_model:
-  ema:
-    price_comfort: 0.03
-    dietary_alignment: 0.03
-    cuisine_frequency: 0.07
-    ambiance_preference: 0.07
-    crowd_tolerance: 0.10
-    cuisine_adventurousness: 0.10
-    time_of_day_preference: 0.15
-    distance_tolerance: 0.15
-  signals:
-    save: 1.0
-    accepted: 2.0
-    rejected: -1.5
-    onboarding_explicit_positive: 1.2
-    onboarding_explicit_negative: -0.8
-    ignored: -0.5
-    repeat_visit: 3.0
-    search_accepted: 1.5
-  observations:
-    # Lookup table: place metadata → v_observation per dimension
-    price_comfort:
-      low: 1.0
-      mid: 0.5
-      high: 0.0
-    dietary_alignment:
-      vegan: 1.0
-      vegetarian: 0.75
-      pescatarian: 0.5
-      omnivore: 0.25
-    cuisine_frequency:
-      rare: 0.0
-      occasional: 0.33
-      frequent: 0.66
-      very_frequent: 1.0
-    ambiance_preference:
-      casual: 0.25
-      moderate: 0.5
-      upscale: 1.0
-    crowd_tolerance:
-      quiet: 0.0
-      moderate: 0.5
-      busy: 1.0
-    cuisine_adventurousness:
-      familiar: 0.0
-      exploration: 0.5
-      experimental: 1.0
-    time_of_day_preference:
-      breakfast: 0.0
-      lunch: 0.33
-      dinner: 0.66
-      late_night: 1.0
-    distance_tolerance:
-      very_close: 1.0
-      nearby: 0.66
-      moderate: 0.33
-      far: 0.0
-
-# ---------------------------------------------------------------------------
-# Ranking Configuration
-# ADR-043: Multi-factor ranking with taste-driven personalization
-# ---------------------------------------------------------------------------
-ranking:
-  weights:
-    taste_similarity: 0.40
-    distance: 0.25
-    price_fit: 0.20
-    popularity: 0.15
-    source_boost: 0.15
+  debounce_window_seconds: 30
+  regen:
+    min_signals: 3
+    early_signal_threshold: 10
 
 # ---------------------------------------------------------------------------
 # User Memory Configuration

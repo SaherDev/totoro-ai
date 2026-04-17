@@ -5,7 +5,6 @@ from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import (
-    Boolean,
     DateTime,
     Enum,
     Float,
@@ -107,60 +106,61 @@ class Embedding(Base):
     place: Mapped["Place"] = relationship("Place", back_populates="embeddings")
 
 
-class SignalType(PyEnum):
-    """Behavioral signal types for taste model updates"""
+class InteractionType(PyEnum):
+    """Interaction types for taste model signal tracking (ADR-058)."""
 
     SAVE = "save"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
-    IGNORED = "ignored"
-    REPEAT_VISIT = "repeat_visit"
-    SEARCH_ACCEPTED = "search_accepted"
-    ONBOARDING_EXPLICIT = "onboarding_explicit"
+    ONBOARDING_CONFIRM = "onboarding_confirm"
+    ONBOARDING_DISMISS = "onboarding_dismiss"
 
 
 class TasteModel(Base):
+    """Per-user taste profile: signal_counts + LLM summary + chips (ADR-058)."""
+
     __tablename__ = "taste_model"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(
-        String, nullable=False, unique=True, index=True
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    taste_profile_summary: Mapped[list] = mapped_column(  # type: ignore[type-arg]
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-    model_version: Mapped[str] = mapped_column(String, nullable=False)
-    parameters: Mapped[dict] = mapped_column(JSONB, nullable=False)  # type: ignore[type-arg]
-    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    interaction_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    eval_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+    signal_counts: Mapped[dict] = mapped_column(  # type: ignore[type-arg]
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    chips: Mapped[list] = mapped_column(  # type: ignore[type-arg]
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    generated_from_log_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
     )
 
 
-class InteractionLog(Base):
-    """Append-only log of behavioral signals for taste model updates"""
+class Interaction(Base):
+    """Append-only interaction log for taste model signals (ADR-058)."""
 
-    __tablename__ = "interaction_log"
-
-    id: Mapped[str] = mapped_column(
-        PGUUID, primary_key=True, default=lambda: str(UUID(int=0))
+    __tablename__ = "interactions"
+    __table_args__ = (
+        Index("ix_interactions_user_type", "user_id", "type"),
+        Index("ix_interactions_user_created", "user_id", "created_at"),
     )
-    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    signal_type: Mapped[SignalType] = mapped_column(
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    type: Mapped[InteractionType] = mapped_column(
         Enum(
-            SignalType,
+            InteractionType,
             native_enum=True,
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,
     )
-    place_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("places.id", ondelete="SET NULL"), nullable=True
+    place_id: Mapped[str] = mapped_column(
+        String, ForeignKey("places.id"), nullable=False
     )
-    gain: Mapped[float] = mapped_column(Float, nullable=False)
-    context: Mapped[dict] = mapped_column(JSONB, nullable=False)  # type: ignore[type-arg]
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -181,9 +181,6 @@ class ConsultLog(Base):
     user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     query: Mapped[str] = mapped_column(Text, nullable=False)
     response: Mapped[dict] = mapped_column(JSONB, nullable=False)  # type: ignore[type-arg]
-    intent: Mapped[str] = mapped_column(String, nullable=False)
-    accepted: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    selected_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

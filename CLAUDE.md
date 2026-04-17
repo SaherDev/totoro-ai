@@ -82,6 +82,7 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 021-taste-profile-memory: Replaced EMA taste model with signal_counts + LLM summary + chips (ADR-058). Deleted RankingService. Simplified interactions table (InteractionType enum, append-only, no gain/context). Debounced regen via asyncio. Unified `on_taste_signal` handler. ConsultService returns candidates unranked (agent-driven ranking deferred).
 - 019-places-service: Unified `PlaceObject` shape end-to-end (ADR-054/055/056). Three-tier storage (Postgres Tier 1, Redis Tier 2 geo, Redis Tier 3 enrichment). Strict-create with `DuplicatePlaceError`. Nested `ParsedIntent` (place + search). Recall two-mode search (filter + hybrid with RRF). Consult full-enrichment path with dedupe + fetch cap. `search_vector` generated tsvector column coupled to `embeddings.description_fields` with startup validator.
 - 018-user-memory-layer: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, Langfuse, Instructor (for IntentParser)
 

@@ -99,7 +99,10 @@ class IntentParser:
         self._client = get_instructor_client("intent_parser")
 
     async def parse(
-        self, query: str, user_memories: list[str] | None = None
+        self,
+        query: str,
+        user_memories: str | None = None,
+        taste_summary: str | None = None,
     ) -> ParsedIntent:
         """Extract structured intent from a raw natural language query.
 
@@ -314,9 +317,13 @@ class IntentParser:
             """
         )
 
+        context_parts: list[str] = []
         if user_memories:
-            memories_text = ", ".join(f'"{m}"' for m in user_memories)
-            user_content = f"User preferences: [{memories_text}]\n\nQuery: {query}"
+            context_parts.append(f"User preferences:\n{user_memories}")
+        if taste_summary:
+            context_parts.append(f"Taste profile:\n{taste_summary}")
+        if context_parts:
+            user_content = "\n\n".join(context_parts) + f"\n\nQuery: {query}"
         else:
             user_content = query
 
