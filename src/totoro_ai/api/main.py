@@ -63,20 +63,11 @@ except PackageNotFoundError:
     _version = "0.1.0"
 
 
-def _preload_prompts() -> None:
-    """Load all prompts at startup — fail fast if any file is missing (ADR-059)."""
-    from totoro_ai.core.config import get_prompt
-
-    config = get_config()
-    for name in config.prompts:
-        get_prompt(name)
-    logger.info("Loaded %d prompt templates", len(config.prompts))
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _validate_embedding_fts_alignment()
-    _preload_prompts()
+    # ADR-059: prompts are already loaded during get_config() at module scope
+    logger.info("Loaded %d prompt templates", len(get_config().prompts))
     yield
     # ADR-058: cancel in-flight taste regen debounce tasks on shutdown
     from totoro_ai.core.taste.debounce import regen_debouncer

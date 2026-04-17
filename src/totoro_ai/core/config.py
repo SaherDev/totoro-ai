@@ -283,6 +283,18 @@ class PlacesConfig(BaseModel):
     max_enrichment_batch: int = 10
 
 
+class PromptConfig(BaseModel):
+    """A loaded prompt template (ADR-059).
+
+    YAML declares `name: filename`. On config load, the file is read
+    and the content is stored here. Access via get_config().prompts["name"].content.
+    """
+
+    name: str
+    file: str
+    content: str
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -296,54 +308,57 @@ class AppConfig(BaseModel):
     taste_model: TasteModelConfig = TasteModelConfig()
     memory: MemoryConfig = MemoryConfig()
     places: PlacesConfig = PlacesConfig()
-    prompts: dict[str, str] = {}
+    prompts: dict[str, PromptConfig] = {}
+
+
+def _load_prompts(raw: dict[str, str]) -> dict[str, PromptConfig]:
+    """Read prompt files from disk and return loaded PromptConfig objects."""
+    prompts_dir = find_project_root() / "config" / "prompts"
+    loaded: dict[str, PromptConfig] = {}
+    for name, filename in raw.items():
+        path = prompts_dir / filename
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Prompt '{name}' file not found: {path}"
+            )
+        loaded[name] = PromptConfig(
+            name=name,
+            file=filename,
+            content=path.read_text(),
+        )
+    return loaded
 
 
 _config: AppConfig | None = None
 
 
 def get_config() -> AppConfig:
-    """Return the AppConfig singleton, loading app.yaml on first call."""
+    """Return the AppConfig singleton, loading app.yaml on first call.
+
+    Prompt files are read from disk during this call (ADR-059).
+    """
     global _config
     if _config is None:
-        _config = AppConfig(**load_yaml_config("app.yaml"))
+        raw = load_yaml_config("app.yaml")
+        raw["prompts"] = _load_prompts(raw.get("prompts") or {})
+        _config = AppConfig(**raw)
     return _config
 
 
-# ---------------------------------------------------------------------------
-# Prompt loader (ADR-059) — cached, reads from config/prompts/
-# ---------------------------------------------------------------------------
-
-_prompt_cache: dict[str, str] = {}
-
-
 def get_prompt(name: str) -> str:
-    """Load a prompt template by logical name (ADR-059).
-
-    Resolves name → file path via app.yaml `prompts:` section,
-    reads from config/prompts/<filename>, caches on first call.
+    """Get a loaded prompt's content by logical name (ADR-059).
 
     Raises:
         KeyError: If name not found in app.yaml prompts section.
-        FileNotFoundError: If the prompt file doesn't exist.
     """
-    if name in _prompt_cache:
-        return _prompt_cache[name]
-
     config = get_config()
-    filename = config.prompts.get(name)
-    if filename is None:
+    prompt = config.prompts.get(name)
+    if prompt is None:
         raise KeyError(
             f"Prompt '{name}' not found in app.yaml prompts section. "
             f"Available: {list(config.prompts.keys())}"
         )
-
-    path = find_project_root() / "config" / "prompts" / filename
-    if not path.exists():
-        raise FileNotFoundError(f"Prompt file not found: {path}")
-
-    _prompt_cache[name] = path.read_text()
-    return _prompt_cache[name]
+    return prompt.content
 
 
 # ---------------------------------------------------------------------------
