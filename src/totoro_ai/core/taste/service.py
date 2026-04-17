@@ -1,246 +1,151 @@
+"""TasteModelService — signal_counts + LLM summary + chips (ADR-058).
+
+Replaces the former EMA-based taste model. All EMA logic is deleted.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from totoro_ai.core.config import get_config
-from totoro_ai.core.places import PlaceObject, PlacesService
-from totoro_ai.core.places.repository import PlacesRepository
-from totoro_ai.db.models import SignalType
-from totoro_ai.db.repositories import SQLAlchemyTasteModelRepository
+from totoro_ai.core.taste.aggregation import aggregate_signal_counts
+from totoro_ai.core.taste.regen import (
+    build_regen_messages,
+    validate_grounded,
+)
+from totoro_ai.core.taste.schemas import TasteArtifacts, TasteProfile
+from totoro_ai.db.models import InteractionType
+from totoro_ai.db.repositories.taste_model_repository import (
+    SQLAlchemyTasteModelRepository,
+)
+from totoro_ai.providers.llm import get_llm
 
-TASTE_DIMENSIONS = [
-    "price_comfort",
-    "dietary_alignment",
-    "cuisine_frequency",
-    "ambiance_preference",
-    "crowd_tolerance",
-    "cuisine_adventurousness",
-    "time_of_day_preference",
-    "distance_tolerance",
-]
-
-DEFAULT_VECTOR = {dim: 0.5 for dim in TASTE_DIMENSIONS}
+logger = logging.getLogger(__name__)
 
 
 class TasteModelService:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-        self.repository = SQLAlchemyTasteModelRepository(session)
-        self.places_service = PlacesService(
-            repo=PlacesRepository(session), cache=None, client=None
-        )
-        self.config = get_config()
+    def __init__(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        self._repo = SQLAlchemyTasteModelRepository(session_factory)
+        self._config = get_config()
 
-    async def handle_place_saved(
+    async def handle_signal(
         self,
         user_id: str,
-        place_ids: list[str],
-        place_metadata: dict[str, Any],
+        signal_type: InteractionType,
+        place_id: str,
     ) -> None:
-        gain = self.config.taste_model.signals.save
-        for place_id in place_ids:
-            await self.repository.log_interaction(
-                user_id=user_id,
-                signal_type=SignalType.SAVE,
-                place_id=place_id,
-                gain=gain,
-                context={
-                    "location": place_metadata.get("location"),
-                    "time_of_day": place_metadata.get("time_of_day"),
-                    "session_id": None,
-                    "recommendation_id": None,
-                },
+        """Write interaction row, schedule debounced regen."""
+        await self._repo.log_interaction(user_id, signal_type, place_id)
+
+        # Import here to avoid circular dependency at module level
+        from totoro_ai.core.taste.debounce import regen_debouncer
+
+        regen_debouncer.schedule(
+            user_id=user_id,
+            coro_factory=lambda uid=user_id: self._run_regen(uid),
+            delay_seconds=self._config.taste_model.debounce_window_seconds,
+        )
+
+    async def get_taste_profile(self, user_id: str) -> TasteProfile | None:
+        """Read taste_model row. No LLM call."""
+        taste_model = await self._repo.get_by_user_id(user_id)
+        if taste_model is None:
+            return None
+        return TasteProfile(
+            taste_profile_summary=taste_model.taste_profile_summary,
+            signal_counts=taste_model.signal_counts,
+            chips=taste_model.chips,
+        )
+
+    async def _run_regen(self, user_id: str) -> None:
+        """Read interactions -> aggregate -> LLM artifacts -> validate -> write."""
+        rows = await self._repo.get_interactions_with_places(user_id)
+
+        # Min-signals guard
+        if len(rows) < self._config.taste_model.regen.min_signals:
+            return
+
+        signal_counts = aggregate_signal_counts(rows)
+
+        # Stale guard: skip if no new signals since last regen
+        taste_model = await self._repo.get_by_user_id(user_id)
+        if taste_model and taste_model.generated_from_log_count == len(rows):
+            return
+
+        # Build prompt and call LLM
+        messages = build_regen_messages(
+            signal_counts,
+            self._config.taste_model.regen.early_signal_threshold,
+        )
+        artifacts = await self._call_llm_with_retry(messages)
+        if artifacts is None:
+            logger.warning(
+                "Regen skipped for user %s: LLM parse failure", user_id
             )
-        await self._apply_taste_update(user_id, place_metadata, gain, is_positive=True)
+            return
 
-    async def handle_recommendation_accepted(
-        self,
-        user_id: str,
-        place_id: str,
-    ) -> None:
-        gain = self.config.taste_model.signals.accepted
-        await self.repository.log_interaction(
-            user_id=user_id,
-            signal_type=SignalType.ACCEPTED,
-            place_id=place_id,
-            gain=gain,
-            context={
-                "location": None,
-                "time_of_day": None,
-                "session_id": None,
-                "recommendation_id": None,
-            },
-        )
-        place = await self.places_service.get(place_id)
-        await self._apply_taste_update(
-            user_id, self._place_to_metadata(place), gain, is_positive=True
-        )
+        # Validate grounding
+        artifacts, dropped = validate_grounded(artifacts, signal_counts)
 
-    async def handle_recommendation_rejected(
-        self,
-        user_id: str,
-        place_id: str,
-    ) -> None:
-        gain = self.config.taste_model.signals.rejected
-        await self.repository.log_interaction(
-            user_id=user_id,
-            signal_type=SignalType.REJECTED,
-            place_id=place_id,
-            gain=gain,
-            context={
-                "location": None,
-                "time_of_day": None,
-                "session_id": None,
-                "recommendation_id": None,
-            },
-        )
-        place = await self.places_service.get(place_id)
-        await self._apply_taste_update(
-            user_id, self._place_to_metadata(place), gain, is_positive=False
-        )
-
-    async def handle_onboarding_signal(
-        self,
-        user_id: str,
-        place_id: str,
-        confirmed: bool,
-    ) -> None:
-        gain = (
-            self.config.taste_model.signals.onboarding_explicit_positive
-            if confirmed
-            else self.config.taste_model.signals.onboarding_explicit_negative
-        )
-        await self.repository.log_interaction(
-            user_id=user_id,
-            signal_type=SignalType.ONBOARDING_EXPLICIT,
-            place_id=place_id,
-            gain=gain,
-            context={
-                "location": None,
-                "time_of_day": None,
-                "session_id": None,
-                "recommendation_id": None,
-                "confirmed": confirmed,
-            },
-        )
-        place = await self.places_service.get(place_id)
-        await self._apply_taste_update(
-            user_id, self._place_to_metadata(place), gain, is_positive=confirmed
-        )
-
-    async def get_taste_vector(self, user_id: str) -> dict[str, float]:
-        taste_model = await self.repository.get_by_user_id(user_id)
-
-        if taste_model is None or taste_model.interaction_count == 0:
-            return DEFAULT_VECTOR
-
-        if taste_model.interaction_count < 10:
-            return self._blend_vectors(
-                personal=taste_model.parameters,
-                defaults=DEFAULT_VECTOR,
-                personal_weight=0.40,
-            )
-
-        return taste_model.parameters
-
-    async def _apply_taste_update(
-        self,
-        user_id: str,
-        place_metadata: dict[str, Any],
-        gain: float,
-        is_positive: bool,
-    ) -> None:
-        taste_model = await self.repository.get_by_user_id(user_id)
-        current_vector = (
-            taste_model.parameters.copy()
-            if taste_model is not None
-            else DEFAULT_VECTOR.copy()
-        )
-
-        new_vector = {}
-        for dim in TASTE_DIMENSIONS:
-            alpha = getattr(self.config.taste_model.ema, dim)
-            v_current = current_vector.get(dim, 0.5)
-            v_observation = self._get_observation_value(dim, place_metadata)
-
-            if is_positive:
-                alpha_gain = alpha * abs(gain)
-                v_new = alpha_gain * v_observation + (1 - alpha_gain) * v_current
-            else:
-                alpha_gain = alpha * abs(gain)
-                v_new = v_current - alpha_gain * (v_observation - v_current)
-
-            new_vector[dim] = max(0.0, min(1.0, v_new))
-
-        await self.repository.upsert(user_id=user_id, parameters=new_vector)
-        await self.session.commit()
-
-    def _place_to_metadata(self, place: PlaceObject | None) -> dict[str, Any]:
-        if place is None:
-            return {}
-        metadata: dict[str, Any] = {}
-        if place.created_at is not None:
-            hour = place.created_at.hour
-            if 5 <= hour <= 10:
-                time_of_day = "breakfast"
-            elif 11 <= hour <= 14:
-                time_of_day = "lunch"
-            elif 15 <= hour <= 20:
-                time_of_day = "dinner"
-            else:
-                time_of_day = "late_night"
-            metadata["time_of_day"] = time_of_day
-        if place.attributes.price_hint is not None:
-            metadata["price_range"] = place.attributes.price_hint
-        if place.attributes.ambiance is not None:
-            metadata["ambiance"] = place.attributes.ambiance
-        return metadata
-
-    def _get_observation_value(
-        self, dimension: str, place_metadata: dict[str, Any]
-    ) -> float:
-        observations = self.config.taste_model.observations
-        dimension_obs = getattr(observations, dimension, None)
-
-        if dimension_obs is None:
-            return 0.5
-
-        if dimension == "price_comfort":
-            value = place_metadata.get("price_range")
-        elif dimension == "dietary_alignment":
-            value = place_metadata.get("dietary_pref")
-        elif dimension == "cuisine_frequency":
-            value = place_metadata.get("cuisine_frequency")
-        elif dimension == "ambiance_preference":
-            value = place_metadata.get("ambiance")
-        elif dimension == "crowd_tolerance":
-            value = place_metadata.get("crowd_level")
-        elif dimension == "cuisine_adventurousness":
-            value = place_metadata.get("cuisine_adventurousness")
-        elif dimension == "time_of_day_preference":
-            value = place_metadata.get("time_of_day")
-        elif dimension == "distance_tolerance":
-            value = place_metadata.get("distance")
-        else:
-            value = None
-
-        if value is None:
-            return 0.5
-
-        mapped_value = (
-            dimension_obs.get(value) if isinstance(dimension_obs, dict) else None
-        )
-        return mapped_value if mapped_value is not None else 0.5
-
-    def _blend_vectors(
-        self,
-        personal: dict[str, float],
-        defaults: dict[str, float],
-        personal_weight: float,
-    ) -> dict[str, float]:
-        default_weight = 1 - personal_weight
-        return {
-            dim: personal.get(dim, 0.5) * personal_weight
-            + defaults.get(dim, 0.5) * default_weight
-            for dim in TASTE_DIMENSIONS
+        # Langfuse trace metadata
+        metadata: dict[str, Any] = {
+            "user_id": user_id,
+            "log_row_count": len(rows),
+            "prior_log_count": (
+                taste_model.generated_from_log_count if taste_model else 0
+            ),
+            "debounce_window_ms": (
+                self._config.taste_model.debounce_window_seconds * 1000
+            ),
         }
+        if dropped:
+            metadata["dropped_item_count"] = len(dropped)
+            metadata["dropped_items"] = dropped
+
+        logger.info(
+            "Regen completed for user %s: "
+            "%d summary lines, %d chips, %d dropped",
+            user_id,
+            len(artifacts.summary),
+            len(artifacts.chips),
+            len(dropped),
+        )
+
+        # Persist — repo commits internally
+        await self._repo.upsert_regen(
+            user_id=user_id,
+            signal_counts=signal_counts.model_dump(exclude_defaults=False),
+            summary=[line.model_dump() for line in artifacts.summary],
+            chips=[chip.model_dump() for chip in artifacts.chips],
+            log_count=len(rows),
+        )
+
+    async def _call_llm_with_retry(
+        self, messages: list[dict[str, str]]
+    ) -> TasteArtifacts | None:
+        """Call LLM and parse into TasteArtifacts. Retry once on failure."""
+        llm = get_llm("taste_regen")
+
+        for attempt in range(2):
+            try:
+                raw = await llm.complete(messages)
+                parsed = json.loads(raw)
+                return TasteArtifacts.model_validate(parsed)
+            except (json.JSONDecodeError, ValidationError) as exc:
+                if attempt == 0:
+                    logger.warning(
+                        "LLM parse attempt 1 failed, retrying: %s", exc
+                    )
+                else:
+                    logger.error(
+                        "LLM parse attempt 2 failed, skipping: %s", exc
+                    )
+                    return None
+        return None

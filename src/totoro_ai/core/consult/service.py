@@ -1,12 +1,11 @@
-"""Consult service — 6-step place recommendation pipeline (feature 019).
+"""Consult service — place recommendation pipeline (feature 019, ADR-058).
 
 Every "place" flowing between pipeline nodes is a `PlaceObject`. The pipeline
 dedupes by `provider_id` (preferred) or `place_id`, enriches the combined
-candidate set once via `PlacesService.enrich_batch(geo_only=False)`, ranks
-via `RankingService`, and builds the `ConsultResponse` from the top
-`ScoredPlace`s. No parallel-array joins over `get_batch`: ranking scores
-travel alongside the place in `ScoredPlace`, and the response builder
-reads from the single object.
+candidate set once via `PlacesService.enrich_batch(geo_only=False)`, and
+returns candidates in source order (saved first, discovered second).
+
+RankingService deleted per ADR-058 — agent-driven ranking is deferred.
 """
 
 from __future__ import annotations
@@ -22,14 +21,14 @@ from totoro_ai.api.schemas.consult import (
 )
 from totoro_ai.core.consult.types import (
     NoMatchesError,
-    ScoredPlace,
     map_google_place_to_place_object,
 )
 from totoro_ai.core.intent.intent_parser import IntentParser
 from totoro_ai.core.places import PlacesClient, PlacesService
 from totoro_ai.core.places.models import PlaceObject
-from totoro_ai.core.ranking.service import RankingService
 from totoro_ai.core.recall.service import RecallService
+from totoro_ai.core.taste.regen import format_summary_for_agent
+from totoro_ai.core.taste.schemas import SummaryLine
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.core.utils.geo import haversine_m
 from totoro_ai.db.repositories.consult_log_repository import (
@@ -52,18 +51,16 @@ class ConsultService:
         recall_service: RecallService,
         places_client: PlacesClient,
         places_service: PlacesService,
-        taste_service: TasteModelService,
-        ranking_service: RankingService,
         memory_service: UserMemoryService,
+        taste_service: TasteModelService,
         consult_log_repo: ConsultLogRepository | None = None,
     ) -> None:
         self._intent_parser = intent_parser
         self._recall_service = recall_service
         self._places_client = places_client
         self._places_service = places_service
-        self._taste_service = taste_service
-        self._ranking_service = ranking_service
         self._memory = memory_service
+        self._taste_service = taste_service
         self._consult_log_repo: ConsultLogRepository = (
             consult_log_repo
             if consult_log_repo is not None
@@ -76,10 +73,32 @@ class ConsultService:
         query: str,
         location: Location | None = None,
     ) -> ConsultResponse:
-        user_memories = await self._memory.load_memories(user_id)
-        logger.info("Loaded %d memories for user %s", len(user_memories), user_id)
+        memory_list = await self._memory.load_memories(user_id)
+        user_memories = "\n".join(memory_list) if memory_list else None
+        logger.info("Loaded %d memories for user %s", len(memory_list), user_id)
 
-        intent = await self._intent_parser.parse(query, user_memories=user_memories)
+        taste_profile = await self._taste_service.get_taste_profile(user_id)
+        taste_summary: str | None = None
+        if taste_profile and taste_profile.taste_profile_summary:
+            lines = [
+                SummaryLine.model_validate(item)
+                if isinstance(item, dict)
+                else item
+                for item in taste_profile.taste_profile_summary
+            ]
+            taste_summary = format_summary_for_agent(lines)
+            logger.info(
+                "Loaded taste profile for user %s: %d lines, %d chips",
+                user_id,
+                len(lines),
+                len(taste_profile.chips),
+            )
+
+        intent = await self._intent_parser.parse(
+            query,
+            user_memories=user_memories,
+            taste_summary=taste_summary,
+        )
         logger.info("Parsed intent for user %s: %s", user_id, intent.model_dump())
 
         if intent.search.search_location_name:
@@ -241,39 +260,27 @@ class ConsultService:
                 )
             )
 
-        # Step 6: Rank.
-        taste_vector = await self._taste_service.get_taste_vector(user_id)
-        ranked: list[ScoredPlace] = self._ranking_service.rank(
-            enriched_places,
-            taste_vector,
-            intent.search.search_location,
-            sources_by_place_id=sources_by_place_id,
-        )
-
-        reasoning_steps.append(
-            ReasoningStep(
-                step="ranking",
-                summary=f"Ranked {len(ranked)} candidates using taste model",
-            )
-        )
-
-        top = ranked[:3]
-        if not top:
+        # Step 6: Return in source order (saved first, discovered second).
+        # ADR-058: RankingService deleted. Agent-driven ranking is deferred.
+        if not enriched_places:
             raise NoMatchesError(query)
 
+        top = enriched_places[:3]
         results = [
             ConsultResult(
-                place=sp.place,
-                confidence=round(sp.score, 4),
-                source=sp.source,
+                place=place,
+                source=sources_by_place_id.get(place.place_id, "discovered"),
             )
-            for sp in top
+            for place in top
         ]
 
         reasoning_steps.append(
             ReasoningStep(
                 step="response",
-                summary=f"Selected {len(top)} final recommendations",
+                summary=(
+                    f"Returning {len(top)} candidates in source order "
+                    "(ranking deferred per ADR-058)"
+                ),
             )
         )
 
@@ -304,7 +311,6 @@ class ConsultService:
                 user_id=user_id,
                 query=query,
                 response=response.model_dump(mode="json"),
-                intent="consult",
             )
             await self._consult_log_repo.save(log)
         except Exception as exc:

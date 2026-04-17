@@ -1,0 +1,125 @@
+"""Prompt builder, artifact validation, and agent formatting (ADR-058).
+
+- build_regen_messages: construct system + user messages for LLM call.
+- validate_grounded: drop SummaryLine/Chip items not backed by signal_counts.
+- format_summary_for_agent: join structured summary to bullet-point text.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from totoro_ai.core.config import find_project_root
+from totoro_ai.core.taste.aggregation import SignalCounts
+from totoro_ai.core.taste.schemas import Chip, SummaryLine, TasteArtifacts
+
+logger = logging.getLogger(__name__)
+
+_prompt_cache: str | None = None
+
+
+def load_regen_prompt_template() -> str:
+    """Load the system prompt from config/prompts/taste_regen.txt. Cached."""
+    global _prompt_cache
+    if _prompt_cache is None:
+        path = find_project_root() / "config" / "prompts" / "taste_regen.txt"
+        _prompt_cache = path.read_text()
+    return _prompt_cache
+
+
+def build_regen_messages(
+    signal_counts: SignalCounts,
+    early_signal_threshold: int,
+) -> list[dict[str, str]]:
+    """Build system + user messages for taste artifact generation."""
+    template = load_regen_prompt_template()
+    system_prompt = template.replace(
+        "{early_signal_threshold}", str(early_signal_threshold)
+    )
+    user_message = json.dumps(
+        signal_counts.model_dump(exclude_defaults=False), ensure_ascii=False
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+
+
+def _resolve_path(data: dict[str, Any], path: str) -> Any:
+    """Walk a dotted path into a nested dict. Returns None if not found."""
+    parts = path.split(".")
+    current: Any = data
+    for part in parts:
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _is_grounded(
+    source_field: str,
+    source_value: str | None,
+    signal_counts_dict: dict[str, Any],
+) -> bool:
+    """Check if a source_field/source_value pair exists in signal_counts."""
+    resolved = _resolve_path(signal_counts_dict, source_field)
+    if resolved is None:
+        return False
+    if source_value is None:
+        return True
+    if isinstance(resolved, dict):
+        return source_value in resolved
+    return False
+
+
+def validate_grounded(
+    artifacts: TasteArtifacts,
+    signal_counts: SignalCounts,
+) -> tuple[TasteArtifacts, list[dict[str, Any]]]:
+    """Validate both summary lines and chips against signal_counts.
+
+    Returns a tuple of (validated artifacts, list of dropped items for logging).
+    """
+    sc_dict = signal_counts.model_dump(exclude_defaults=False)
+    dropped: list[dict[str, Any]] = []
+
+    valid_summary: list[SummaryLine] = []
+    for line in artifacts.summary:
+        if _is_grounded(line.source_field, line.source_value, sc_dict):
+            valid_summary.append(line)
+        else:
+            dropped.append({
+                "type": "summary",
+                "text": line.text,
+                "source_field": line.source_field,
+            })
+
+    valid_chips: list[Chip] = []
+    for chip in artifacts.chips:
+        if chip.signal_count < 3:
+            dropped.append(
+                {"type": "chip", "label": chip.label, "reason": "signal_count < 3"}
+            )
+        elif _is_grounded(chip.source_field, chip.source_value, sc_dict):
+            valid_chips.append(chip)
+        else:
+            dropped.append(
+                {"type": "chip", "label": chip.label, "source_field": chip.source_field}
+            )
+
+    if dropped:
+        logger.warning(
+            "Dropped %d ungrounded items during validation", len(dropped)
+        )
+
+    validated = TasteArtifacts(summary=valid_summary, chips=valid_chips)
+    return validated, dropped
+
+
+def format_summary_for_agent(lines: list[SummaryLine]) -> str:
+    """Join structured summary back to bullet-point text for agent prompt injection."""
+    return "\n".join(
+        f"- {line.text} [{line.signal_count} signals]" for line in lines
+    )

@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-058: Replace numeric RankingService with agent-driven ranking
+
+**Date:** 2026-04-17\
+**Status:** accepted\
+**Context:** The existing RankingService uses an 8-dimensional EMA taste vector for 40% of its scoring weight (weighted Euclidean distance). The EMA dimensions (price_comfort, dietary_alignment, etc.) are opaque — they don't map cleanly to user preferences and can't be inspected or explained. Replacing the taste model with signal_counts + taste_profile_summary makes the numeric taste_similarity score impossible to compute. Rather than invent a new numeric proxy from signal_counts, we move ranking to the agent LLM which can reason over the full taste profile in natural language.\
+**Decision:** Delete RankingService. The agent (not yet built) will handle selection directly from enriched candidates using taste_profile_summary, signal_counts, user_memories, and place data. Until the agent is built, ConsultService returns enriched candidates unranked (saved first, then discovered) — ranking is deferred, not solved. Revisit if first-recommendation acceptance rate shows agent-only selection is insufficient. The three-layer design (hard filters + scoring + agent) is the fallback — a lightweight numeric ranker can be reintroduced as a pre-filter without re-adding the EMA machinery. Cold start (no taste_profile_summary): agent sees only user_memories and candidate place data. No personalization signal, which is correct for a new user. LLM call ownership: the agent owns all runtime LLM calls (intent parsing, orchestration, ranking). The taste regen job is a background process triggered by domain events — it calls GPT-4o-mini to generate taste_profile_summary outside the agent's reasoning loop. This is not an agent call; it is a pre-computation step that populates a cache the agent reads at session start. Same pattern as embedding generation (Voyage call triggered by PlaceSaved, consumed by RecallService at query time).\
+**Consequences:** No deterministic ranking until the agent is built. Consult returns candidates in source order (saved first). The ranking config block in app.yaml is deleted. RankingWeightsConfig and RankingConfig are deleted from config.py.
+
+---
+
 ## ADR-057: Save tentative extractions above 0.30, surface low-confidence band to the user
 
 **Date:** 2026-04-15\

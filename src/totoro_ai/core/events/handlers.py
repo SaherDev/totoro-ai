@@ -1,8 +1,7 @@
-"""Event handlers for domain events
+"""Event handlers for domain events (ADR-058 simplified).
 
-Handlers wrap TasteModelService calls with error handling and Langfuse tracing.
-Per ADR-043, failures are logged and traced but never propagated to user-facing
-responses.
+One taste handler (`on_taste_signal`) covers all 4 taste event types.
+Per ADR-043, failures are logged and traced but never propagated.
 """
 
 import logging
@@ -11,12 +10,14 @@ from typing import TYPE_CHECKING
 from langfuse import Langfuse
 
 from totoro_ai.core.events.events import (
+    DomainEvent,
     OnboardingSignal,
     PersonalFactsExtracted,
     PlaceSaved,
     RecommendationAccepted,
     RecommendationRejected,
 )
+from totoro_ai.db.models import InteractionType
 
 if TYPE_CHECKING:
     from totoro_ai.core.memory.service import UserMemoryService
@@ -24,9 +25,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Map event_type → (InteractionType, how to get place_ids)
+_TASTE_EVENT_MAP: dict[str, InteractionType] = {
+    "recommendation_accepted": InteractionType.ACCEPTED,
+    "recommendation_rejected": InteractionType.REJECTED,
+}
+
 
 class EventHandlers:
-    """Container for event handler functions"""
+    """Container for event handler functions."""
 
     def __init__(
         self,
@@ -34,130 +41,56 @@ class EventHandlers:
         memory_service: "UserMemoryService",
         langfuse: Langfuse | None = None,
     ) -> None:
-        """Initialize handlers with dependencies
-
-        Args:
-            taste_service: TasteModelService instance
-            memory_service: UserMemoryService instance
-            langfuse: Optional Langfuse client for tracing
-        """
         self.taste_service = taste_service
         self.memory_service = memory_service
         self.langfuse = langfuse
 
-    async def on_place_saved(self, event: PlaceSaved) -> None:
-        """Handle place saved event - log and trace via Langfuse"""
-        try:
-            await self.taste_service.handle_place_saved(
-                user_id=event.user_id,
-                place_ids=event.place_ids,
-                place_metadata=event.place_metadata,
-            )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message="PlaceSaved event handled",
-                    level="info",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
-        except Exception as exc:
-            logger.error(
-                f"Failed to update taste model on place save: {exc}",
-                exc_info=True,
-                extra={"user_id": event.user_id, "place_ids": event.place_ids},
-            )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message=f"PlaceSaved handler error: {exc}",
-                    level="error",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
-                self.langfuse.flush()
+    async def on_taste_signal(self, event: DomainEvent) -> None:
+        """Unified handler for all taste-related events.
 
-    async def on_recommendation_accepted(self, event: RecommendationAccepted) -> None:
-        """Handle recommendation accepted event - log and trace via Langfuse"""
+        Dispatches to handle_signal with the correct InteractionType.
+        Handles PlaceSaved (multiple place_ids), RecommendationAccepted,
+        RecommendationRejected, and OnboardingSignal.
+        """
         try:
-            await self.taste_service.handle_recommendation_accepted(
-                user_id=event.user_id,
-                place_id=event.place_id,
-            )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message="RecommendationAccepted event handled",
-                    level="info",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
+            # Build (signal_type, place_id) pairs from the event shape
+            pairs: list[tuple[InteractionType, str]] = []
+            if isinstance(event, PlaceSaved):
+                pairs = [(InteractionType.SAVE, pid) for pid in event.place_ids]
+            elif isinstance(event, OnboardingSignal):
+                st = (
+                    InteractionType.ONBOARDING_CONFIRM
+                    if event.confirmed
+                    else InteractionType.ONBOARDING_DISMISS
                 )
-        except Exception as exc:
-            logger.error(
-                f"Failed to update taste model on recommendation accept: {exc}",
-                exc_info=True,
-                extra={"user_id": event.user_id, "place_id": event.place_id},
-            )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message=f"RecommendationAccepted handler error: {exc}",
-                    level="error",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
-                self.langfuse.flush()
+                pairs = [(st, event.place_id)]
+            elif isinstance(event, RecommendationAccepted | RecommendationRejected):
+                pairs = [(_TASTE_EVENT_MAP[event.event_type], event.place_id)]
 
-    async def on_recommendation_rejected(self, event: RecommendationRejected) -> None:
-        """Handle recommendation rejected event - log and trace via Langfuse"""
-        try:
-            await self.taste_service.handle_recommendation_rejected(
-                user_id=event.user_id,
-                place_id=event.place_id,
-            )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message="RecommendationRejected event handled",
-                    level="info",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
+            for signal_type, place_id in pairs:
+                await self.taste_service.handle_signal(
+                    user_id=event.user_id,
+                    signal_type=signal_type,
+                    place_id=place_id,
                 )
-        except Exception as exc:
-            logger.error(
-                f"Failed to update taste model on recommendation reject: {exc}",
-                exc_info=True,
-                extra={"user_id": event.user_id, "place_id": event.place_id},
-            )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message=f"RecommendationRejected handler error: {exc}",
-                    level="error",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
-                self.langfuse.flush()
 
-    async def on_onboarding_signal(self, event: OnboardingSignal) -> None:
-        """Handle onboarding signal event - log and trace via Langfuse"""
-        try:
-            await self.taste_service.handle_onboarding_signal(
-                user_id=event.user_id,
-                place_id=event.place_id,
-                confirmed=event.confirmed,
-            )
             if self.langfuse:
                 self.langfuse.capture_message(
-                    message="OnboardingSignal event handled",
+                    message=f"{event.event_type} handled",
                     level="info",
-                    metadata={
-                        "event_id": event.event_id,
-                        "user_id": event.user_id,
-                        "confirmed": event.confirmed,
-                    },
+                    metadata={"event_id": event.event_id, "user_id": event.user_id},
                 )
         except Exception as exc:
             logger.error(
-                f"Failed to update taste model on onboarding signal: {exc}",
+                "Failed to handle taste signal (%s): %s",
+                event.event_type,
+                exc,
                 exc_info=True,
-                extra={
-                    "user_id": event.user_id,
-                    "place_id": event.place_id,
-                    "confirmed": event.confirmed,
-                },
+                extra={"user_id": event.user_id, "event_type": event.event_type},
             )
             if self.langfuse:
                 self.langfuse.capture_message(
-                    message=f"OnboardingSignal handler error: {exc}",
+                    message=f"{event.event_type} handler error: {exc}",
                     level="error",
                     metadata={"event_id": event.event_id, "user_id": event.user_id},
                 )
@@ -194,7 +127,8 @@ class EventHandlers:
                 )
         except Exception as exc:
             logger.error(
-                f"Failed to save personal facts: {exc}",
+                "Failed to save personal facts: %s",
+                exc,
                 exc_info=True,
                 extra={
                     "user_id": event.user_id,

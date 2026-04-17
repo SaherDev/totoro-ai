@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
@@ -13,6 +14,8 @@ from totoro_ai.api.routes.feedback import router as feedback_router
 from totoro_ai.core.config import get_config
 from totoro_ai.db.session import _get_session_factory
 
+_log_level = os.environ.get("LOG_LEVEL", "WARNING").upper()
+logging.root.setLevel(getattr(logging, _log_level, logging.WARNING))
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -67,6 +70,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # check once at boot so drift is caught before any recall query runs.
     _validate_embedding_fts_alignment()
     yield
+    # ADR-058: cancel in-flight taste regen debounce tasks on shutdown
+    from totoro_ai.core.taste.debounce import regen_debouncer
+
+    await regen_debouncer.cancel_all()
 
 
 app = FastAPI(

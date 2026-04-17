@@ -37,14 +37,13 @@ class ConsultResult(BaseModel):
     """One recommendation in the consult response.
 
     `place` is the fully enriched `PlaceObject` (`enriched=True`, Tier 2
-    geo and Tier 3 details populated). `confidence` is `ScoredPlace.score`
-    — the ranker's weighted-and-clamped output, always in `[0, 1]`.
-    `source` is `"saved"` when the row came from the user's recall set
-    and `"discovered"` when it came from Google Places Nearby Search.
+    geo and Tier 3 details populated). `source` is `"saved"` when the row
+    came from the user's recall set and `"discovered"` when it came from
+    Google Places Nearby Search. No numeric score — ranking is deferred
+    to the agent (ADR-058).
     """
 
     place: PlaceObject
-    confidence: float
     source: str  # "saved" | "discovered"
 
 

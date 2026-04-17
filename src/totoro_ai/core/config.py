@@ -224,67 +224,18 @@ class RecallConfig(BaseModel):
     max_cosine_distance: float = 0.65
 
 
-class TasteModelEmaConfig(BaseModel):
-    """EMA decay rates per dimension"""
+class TasteRegenConfig(BaseModel):
+    """Regen thresholds for taste profile regeneration."""
 
-    price_comfort: float
-    dietary_alignment: float
-    cuisine_frequency: float
-    ambiance_preference: float
-    crowd_tolerance: float
-    cuisine_adventurousness: float
-    time_of_day_preference: float
-    distance_tolerance: float
-
-
-class TasteModelSignalsConfig(BaseModel):
-    """Signal gain values per interaction type"""
-
-    save: float
-    accepted: float
-    rejected: float
-    onboarding_explicit_positive: float
-    onboarding_explicit_negative: float
-    ignored: float
-    repeat_visit: float
-    search_accepted: float
-
-
-class TasteModelObservationsConfig(BaseModel):
-    """Observation value lookup tables per dimension"""
-
-    price_comfort: dict[str, float] = {}
-    dietary_alignment: dict[str, float] = {}
-    cuisine_frequency: dict[str, float] = {}
-    ambiance_preference: dict[str, float] = {}
-    crowd_tolerance: dict[str, float] = {}
-    cuisine_adventurousness: dict[str, float] = {}
-    time_of_day_preference: dict[str, float] = {}
-    distance_tolerance: dict[str, float] = {}
+    min_signals: int = 3
+    early_signal_threshold: int = 10
 
 
 class TasteModelConfig(BaseModel):
-    """Taste model configuration"""
+    """Taste model configuration (ADR-058: signal_counts + LLM summary + chips)."""
 
-    ema: TasteModelEmaConfig
-    signals: TasteModelSignalsConfig
-    observations: TasteModelObservationsConfig = TasteModelObservationsConfig()
-
-
-class RankingWeightsConfig(BaseModel):
-    """Ranking score weights"""
-
-    taste_similarity: float
-    distance: float
-    price_fit: float
-    popularity: float
-    source_boost: float = 0.15
-
-
-class RankingConfig(BaseModel):
-    """Ranking configuration"""
-
-    weights: RankingWeightsConfig
+    debounce_window_seconds: int = 30
+    regen: TasteRegenConfig = TasteRegenConfig()
 
 
 class MemoryConfidenceConfig(BaseModel):
@@ -342,8 +293,7 @@ class AppConfig(BaseModel):
     system_prompts: SystemPromptsConfig = SystemPromptsConfig()
     consult: ConsultConfig = ConsultConfig()
     recall: RecallConfig = RecallConfig()
-    taste_model: TasteModelConfig
-    ranking: RankingConfig
+    taste_model: TasteModelConfig = TasteModelConfig()
     memory: MemoryConfig = MemoryConfig()
     places: PlacesConfig = PlacesConfig()
 

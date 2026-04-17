@@ -63,7 +63,8 @@ class ChatAssistantService:
             LLMUnavailableError: If the LLM call fails or times out.
         """
         # Load user memories for context injection (ADR-010)
-        user_memories = await self._memory.load_memories(user_id)
+        memory_list = await self._memory.load_memories(user_id)
+        user_memories = "\n".join(memory_list) if memory_list else None
 
         lf = get_langfuse_client()
         generation = (
@@ -77,9 +78,11 @@ class ChatAssistantService:
 
         # Build user message with memories injected (ADR-010, ADR-044)
         # Memories go in the user message for consistent behavior across models.
+        context_parts: list[str] = []
         if user_memories:
-            memories_text = ", ".join(f'"{m}"' for m in user_memories)
-            user_content = f"User preferences: [{memories_text}]\n\nQuestion: {message}"
+            context_parts.append(f"User preferences:\n{user_memories}")
+        if context_parts:
+            user_content = "\n\n".join(context_parts) + f"\n\nQuestion: {message}"
         else:
             user_content = message
 

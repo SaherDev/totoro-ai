@@ -22,7 +22,6 @@ from totoro_ai.core.memory.service import UserMemoryService
 from totoro_ai.core.places import GooglePlacesClient, PlacesService
 from totoro_ai.core.places.cache import PlacesCache
 from totoro_ai.core.places.repository import PlacesRepository
-from totoro_ai.core.ranking.service import RankingService
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.db.repositories import (
@@ -34,7 +33,7 @@ from totoro_ai.db.repositories.consult_log_repository import (
     ConsultLogRepository,
     SQLAlchemyConsultLogRepository,
 )
-from totoro_ai.db.session import get_session
+from totoro_ai.db.session import _get_session_factory, get_session
 from totoro_ai.providers import get_instructor_client
 from totoro_ai.providers.cache import CacheBackend
 from totoro_ai.providers.embeddings import EmbedderProtocol, get_embedder
@@ -91,15 +90,15 @@ def get_embedding_repo(
     return SQLAlchemyEmbeddingRepository(db_session)
 
 
-def get_user_memory_service(
-    db_session: AsyncSession = Depends(get_session),  # noqa: B008
-) -> UserMemoryService:
+def get_user_memory_service() -> UserMemoryService:
     """FastAPI dependency providing UserMemoryService.
 
     CRITICAL (ADR-038): SQLAlchemyUserMemoryRepository is constructed ONLY here.
-    No other dependency function or module instantiates the repository implementation.
+    Repo uses session_factory — each method opens its own session.
     """
-    return UserMemoryService(repo=SQLAlchemyUserMemoryRepository(db_session))
+    return UserMemoryService(
+        repo=SQLAlchemyUserMemoryRepository(_get_session_factory())
+    )
 
 
 def get_chat_assistant_service(
@@ -127,15 +126,21 @@ def get_embedder_dep() -> EmbedderProtocol:
 async def get_event_dispatcher(
     background_tasks: BackgroundTasks,
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
-    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
 ) -> EventDispatcher:
     """FastAPI dependency providing a fully wired EventDispatcher (ADR-043).
 
     ExtractionPersistenceService is constructed inline here (not via
     Depends(get_extraction_persistence)) to avoid a circular dependency:
     get_event_dispatcher <- get_extraction_persistence <- get_event_dispatcher.
+
+    Taste and memory services use session_factory — each repo method opens
+    its own session, so background tasks don't depend on request session.
     """
-    taste_service = TasteModelService(session=db_session)
+    sf = _get_session_factory()
+    taste_service = TasteModelService(session_factory=sf)
+    memory_service = UserMemoryService(
+        repo=SQLAlchemyUserMemoryRepository(sf)
+    )
     handlers = EventHandlers(
         taste_service=taste_service,
         memory_service=memory_service,
@@ -143,19 +148,13 @@ async def get_event_dispatcher(
     )
 
     dispatcher = EventDispatcher(background_tasks=background_tasks)
-    dispatcher.register_handler("place_saved", handlers.on_place_saved)  # type: ignore[arg-type]
-    dispatcher.register_handler(
+    for event_type in (
+        "place_saved",
         "recommendation_accepted",
-        handlers.on_recommendation_accepted,  # type: ignore[arg-type]
-    )
-    dispatcher.register_handler(
         "recommendation_rejected",
-        handlers.on_recommendation_rejected,  # type: ignore[arg-type]
-    )
-    dispatcher.register_handler(
         "onboarding_signal",
-        handlers.on_onboarding_signal,  # type: ignore[arg-type]
-    )
+    ):
+        dispatcher.register_handler(event_type, handlers.on_taste_signal)  # type: ignore[arg-type]
     dispatcher.register_handler(
         "personal_facts_extracted",
         handlers.on_personal_facts_extracted,  # type: ignore[arg-type]
@@ -369,9 +368,8 @@ async def get_consult_service(
         ),
         places_client=GooglePlacesClient(),
         places_service=places_service,
-        taste_service=TasteModelService(session=db_session),
-        ranking_service=RankingService(),
         memory_service=memory_service,
+        taste_service=TasteModelService(session_factory=_get_session_factory()),
         consult_log_repo=consult_log_repo,
     )
 
