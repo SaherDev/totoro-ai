@@ -46,9 +46,7 @@ class SQLAlchemyUserMemoryRepository:
     Takes session_factory — each method opens/commits/closes its own session.
     """
 
-    def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def save(

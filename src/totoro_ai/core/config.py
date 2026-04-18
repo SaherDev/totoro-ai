@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -214,6 +214,7 @@ class ConsultConfig(BaseModel):
     default_radius_m: int = 1500
     nearby_radius_m: int = 500
     walking_radius_m: int = 1000
+    total_cap: int = 3
 
 
 class RecallConfig(BaseModel):
@@ -231,11 +232,37 @@ class TasteRegenConfig(BaseModel):
     early_signal_threshold: int = 10
 
 
+class WarmingBlendConfig(BaseModel):
+    """Warming-tier candidate-count ratio (feature 023).
+
+    Applied in `ConsultService.consult` when the user's signal_tier is
+    "warming". Values must sum to 1.0 — enforced below.
+    """
+
+    discovered: float = 0.8
+    saved: float = 0.2
+
+    @model_validator(mode="after")
+    def _sum_to_one(self) -> "WarmingBlendConfig":
+        if abs((self.discovered + self.saved) - 1.0) > 1e-6:
+            raise ValueError(
+                f"warming_blend weights must sum to 1.0 "
+                f"(got discovered={self.discovered}, saved={self.saved})"
+            )
+        return self
+
+
 class TasteModelConfig(BaseModel):
     """Taste model configuration (ADR-058: signal_counts + LLM summary + chips)."""
 
     debounce_window_seconds: int = 30
     regen: TasteRegenConfig = TasteRegenConfig()
+    chip_threshold: int = 2
+    chip_max_count: int = 8
+    chip_selection_stages: dict[str, int] = Field(
+        default_factory=lambda: {"round_1": 5, "round_2": 20, "round_3": 50}
+    )
+    warming_blend: WarmingBlendConfig = WarmingBlendConfig()
 
 
 class MemoryConfidenceConfig(BaseModel):
@@ -318,9 +345,7 @@ def _load_prompts(raw: dict[str, str]) -> dict[str, PromptConfig]:
     for name, filename in raw.items():
         path = prompts_dir / filename
         if not path.exists():
-            raise FileNotFoundError(
-                f"Prompt '{name}' file not found: {path}"
-            )
+            raise FileNotFoundError(f"Prompt '{name}' file not found: {path}")
         loaded[name] = PromptConfig(
             name=name,
             file=filename,

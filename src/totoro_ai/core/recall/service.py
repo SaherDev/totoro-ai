@@ -143,15 +143,15 @@ class RecallService:
         response_results = [
             RecallResult(
                 place=place,
-                match_reason=metadata_by_id.get(
-                    place.place_id, ("filter", None, None)
-                )[0],
+                match_reason=metadata_by_id.get(place.place_id, ("filter", None, None))[
+                    0
+                ],
                 relevance_score=metadata_by_id.get(
                     place.place_id, ("filter", None, None)
                 )[1],
-                score_type=metadata_by_id.get(
-                    place.place_id, ("filter", None, None)
-                )[2],
+                score_type=metadata_by_id.get(place.place_id, ("filter", None, None))[
+                    2
+                ],
             )
             for place in final_places
         ]

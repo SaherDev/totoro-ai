@@ -130,7 +130,7 @@ def _recall_response() -> RecallResponse:
 async def test_run_consult_intent(mock_classify: MagicMock) -> None:
     """ChatService routes 'consult' intent to ConsultService and pipes
     the full ConsultResponse through as `data`. Each result carries a
-    full enriched PlaceObject and a confidence float in [0, 1]."""
+    full enriched PlaceObject and a source tag (ADR-058: no score)."""
     mock_classify.return_value = IntentClassification(
         intent="consult", confidence=0.95, clarification_needed=False
     )
@@ -154,8 +154,6 @@ async def test_run_consult_intent(mock_classify: MagicMock) -> None:
     first = results_payload[0]
     assert first["place"]["place_name"] == "Nara Eatery"
     assert first["place"]["enriched"] is True
-    assert isinstance(first["confidence"], float)
-    assert 0.0 <= first["confidence"] <= 1.0
     assert first["source"] in ("saved", "discovered")
 
 
@@ -375,9 +373,7 @@ async def test_run_recall_meta_query_dispatches_filter_mode(
     result = await service.run(request)
 
     assert result.type == "recall"
-    parser_mock.parse.assert_awaited_once_with(
-        "Can you pull all restaurants I saved?"
-    )
+    parser_mock.parse.assert_awaited_once_with("Can you pull all restaurants I saved?")
     recall_mock.run.assert_awaited_once()
     call = recall_mock.run.await_args
     assert call.kwargs["query"] is None  # filter mode
@@ -403,9 +399,7 @@ async def test_run_recall_place_description_keeps_enriched_query(
             place=ParsedIntentPlace(
                 place_type=PlaceType.food_and_drink,
                 subcategory="restaurant",
-                attributes=PlaceAttributes(
-                    cuisine="japanese", ambiance="cozy"
-                ),
+                attributes=PlaceAttributes(cuisine="japanese", ambiance="cozy"),
             ),
             search=ParsedIntentSearch(
                 enriched_query="cozy japanese ramen restaurant nearby",
@@ -446,9 +440,7 @@ async def test_run_recall_projects_location_context_onto_filters(
                 place_type=PlaceType.food_and_drink,
                 subcategory="restaurant",
                 attributes=PlaceAttributes(
-                    location_context=LocationContext(
-                        city="Bangkok", country="Thailand"
-                    )
+                    location_context=LocationContext(city="Bangkok", country="Thailand")
                 ),
             ),
             search=ParsedIntentSearch(enriched_query=None),

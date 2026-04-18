@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from totoro_ai.core.config import AppConfig, load_yaml_config
+from totoro_ai.core.config import AppConfig, _load_prompts, load_yaml_config
 from totoro_ai.providers.llm import (
     InstructorClient,
     OpenAILLMClient,
@@ -11,9 +11,20 @@ from totoro_ai.providers.llm import (
 )
 
 
+def _prepare_raw_config() -> dict:
+    """Load app.yaml and resolve prompt filenames to PromptConfig objects.
+
+    Mirrors what ``get_config()`` does on first call (ADR-059) so test
+    fixtures can construct ``AppConfig`` directly from the yaml dict.
+    """
+    data = load_yaml_config("app.yaml")
+    data["prompts"] = _load_prompts(data.get("prompts") or {})
+    return data
+
+
 def _config_with_ollama() -> AppConfig:
     """Load real app.yaml and overlay ollama provider."""
-    data = load_yaml_config("app.yaml")
+    data = _prepare_raw_config()
     data.setdefault("providers", {})["ollama"] = {
         "base_url": "http://localhost:11434/v1"
     }
@@ -22,7 +33,7 @@ def _config_with_ollama() -> AppConfig:
 
 def _mock_config(provider: str, model: str) -> AppConfig:
     """Build a minimal AppConfig with intent_parser pointing at the given provider."""
-    data = load_yaml_config("app.yaml")
+    data = _prepare_raw_config()
     data["models"]["intent_parser"] = {
         "provider": provider,
         "model": model,

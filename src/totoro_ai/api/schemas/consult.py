@@ -6,6 +6,8 @@ attributes it needs without a second fetch. The ranker's normalized score
 is surfaced as `confidence` on each item.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from totoro_ai.core.places.models import PlaceObject
@@ -24,6 +26,13 @@ class ConsultRequest(BaseModel):
     user_id: str
     query: str
     location: Location | None = None
+    signal_tier: Literal["cold", "warming", "chip_selection", "active"] | None = Field(
+        default=None,
+        description=(
+            "Optional tier hint (feature 023). Forwarded by the product repo "
+            "from GET /v1/user/context. When null, consult defaults to 'active'."
+        ),
+    )
 
 
 class ReasoningStep(BaseModel):

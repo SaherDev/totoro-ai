@@ -305,4 +305,3 @@ class PlacesRepository:
             provider_id=row.provider_id,
             created_at=row.created_at,
         )
-

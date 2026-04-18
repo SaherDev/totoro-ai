@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from langfuse import Langfuse
 
 from totoro_ai.core.events.events import (
+    ChipConfirmed,
     DomainEvent,
     OnboardingSignal,
     PersonalFactsExtracted,
@@ -91,6 +92,43 @@ class EventHandlers:
             if self.langfuse:
                 self.langfuse.capture_message(
                     message=f"{event.event_type} handler error: {exc}",
+                    level="error",
+                    metadata={"event_id": event.event_id, "user_id": event.user_id},
+                )
+                self.langfuse.flush()
+
+    async def on_chip_confirmed(self, event: DomainEvent) -> None:
+        """Handle ChipConfirmed — force an immediate taste-profile rewrite.
+
+        Chip confirmation is an explicit user action; debouncing would make
+        the summary rewrite feel disconnected from the action. Bypasses the
+        debouncer via run_regen_now. Failures are logged via Langfuse per
+        ADR-025 but never re-raised (ADR-043).
+        """
+        if not isinstance(event, ChipConfirmed):
+            return
+        try:
+            await self.taste_service.run_regen_now(event.user_id)
+            if self.langfuse:
+                self.langfuse.capture_message(
+                    message="chip_confirmed_regen handled",
+                    level="info",
+                    metadata={
+                        "event_id": event.event_id,
+                        "user_id": event.user_id,
+                    },
+                )
+        except Exception as exc:
+            logger.error(
+                "Failed chip_confirmed_regen for user %s: %s",
+                event.user_id,
+                exc,
+                exc_info=True,
+                extra={"user_id": event.user_id, "event_type": event.event_type},
+            )
+            if self.langfuse:
+                self.langfuse.capture_message(
+                    message=f"chip_confirmed_regen error: {exc}",
                     level="error",
                     metadata={"event_id": event.event_id, "user_id": event.user_id},
                 )

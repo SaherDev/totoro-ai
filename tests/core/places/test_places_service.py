@@ -538,9 +538,7 @@ async def test_enrich_batch_full_priority_provider_ids_survive_cap() -> None:
         repo = MagicMock()
         cache = MagicMock()
         cache.get_geo_batch = AsyncMock(return_value={pid: None for pid in pids})
-        cache.get_enrichment_batch = AsyncMock(
-            return_value={pid: None for pid in pids}
-        )
+        cache.get_enrichment_batch = AsyncMock(return_value={pid: None for pid in pids})
         cache.set_geo_batch = AsyncMock()
         cache.set_enrichment_batch = AsyncMock()
         client = MagicMock()
@@ -561,9 +559,7 @@ async def test_enrich_batch_full_priority_provider_ids_survive_cap() -> None:
         }
         # Note: get_place_details receives the stripped external_id, so
         # strip the "google:" prefix when asserting.
-        assert "zzz" in fetched_ids, (
-            f"Priority id not fetched; got {fetched_ids!r}"
-        )
+        assert "zzz" in fetched_ids, f"Priority id not fetched; got {fetched_ids!r}"
         # The other slot is filled by the alphabetically-first non-priority:
         assert "aaa" in fetched_ids, (
             f"Expected alphabetically-first non-priority; got {fetched_ids!r}"
@@ -592,9 +588,7 @@ async def test_enrich_batch_full_priority_default_none_preserves_old_behavior() 
         repo = MagicMock()
         cache = MagicMock()
         cache.get_geo_batch = AsyncMock(return_value={pid: None for pid in pids})
-        cache.get_enrichment_batch = AsyncMock(
-            return_value={pid: None for pid in pids}
-        )
+        cache.get_enrichment_batch = AsyncMock(return_value={pid: None for pid in pids})
         cache.set_geo_batch = AsyncMock()
         cache.set_enrichment_batch = AsyncMock()
         client = MagicMock()

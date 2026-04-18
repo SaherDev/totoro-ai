@@ -147,9 +147,7 @@ async def get_event_dispatcher(
     """
     sf = _get_session_factory()
     taste_service = TasteModelService(session_factory=sf)
-    memory_service = UserMemoryService(
-        repo=SQLAlchemyUserMemoryRepository(sf)
-    )
+    memory_service = UserMemoryService(repo=SQLAlchemyUserMemoryRepository(sf))
     handlers = EventHandlers(
         taste_service=taste_service,
         memory_service=memory_service,
@@ -167,6 +165,10 @@ async def get_event_dispatcher(
     dispatcher.register_handler(
         "personal_facts_extracted",
         handlers.on_personal_facts_extracted,  # type: ignore[arg-type]
+    )
+    dispatcher.register_handler(
+        "chip_confirmed",
+        handlers.on_chip_confirmed,
     )
 
     # Register ExtractionPendingHandler (Run 3 — inline construction, no circular dep)
@@ -351,15 +353,18 @@ def get_recommendation_repo(
 
 def get_signal_service(
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
+    taste_service: TasteModelService = Depends(get_taste_service),  # noqa: B008
 ) -> SignalService:
-    """FastAPI dependency providing SignalService (ADR-060).
+    """FastAPI dependency providing SignalService (ADR-060 + feature 023).
 
     SignalService owns the RecommendationRepository internally via
-    session_factory — the API layer never touches the repo directly.
+    session_factory. It also delegates chip_confirm handling to the
+    TasteModelService (for chip read and merge persistence).
     """
     return SignalService(
         session_factory=_get_session_factory(),
         event_dispatcher=event_dispatcher,
+        taste_service=taste_service,
     )
 
 

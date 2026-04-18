@@ -111,9 +111,7 @@ class ExtractionPersistenceService:
             return await self._places_service.create_batch(stamped)
         except DuplicatePlaceError as exc:
             # Retry non-conflicting rows one by one, resolve conflicts
-            conflict_map = {
-                c.provider_id: c.existing_place_id for c in exc.conflicts
-            }
+            conflict_map = {c.provider_id: c.existing_place_id for c in exc.conflicts}
             results: list[PlaceObject] = []
             for item in stamped:
                 pid = build_provider_id(item.provider, item.external_id)
@@ -187,9 +185,7 @@ class ExtractionPersistenceService:
         # Both "saved" and "needs_review" rows are Tier 1 writes, emit
         # PlaceSaved events, and get embedded so recall can surface them.
         saved_outcomes = [
-            o
-            for o in outcomes
-            if o.status in ("saved", "needs_review") and o.place
+            o for o in outcomes if o.status in ("saved", "needs_review") and o.place
         ]
         if not saved_outcomes:
             return outcomes
@@ -322,9 +318,7 @@ class ExtractionPersistenceService:
                 )
         return outcomes
 
-    def _status_for(
-        self, vc: ValidatedCandidate, tentative_pids: set[str]
-    ) -> str:
+    def _status_for(self, vc: ValidatedCandidate, tentative_pids: set[str]) -> str:
         """Return "needs_review" if the candidate is in the tentative band."""
         pid = self._format_provider_id(vc.place)
         if pid is not None and pid in tentative_pids:
@@ -364,9 +358,7 @@ class ExtractionPersistenceService:
     def _format_provider_id(place: PlaceCreate) -> str | None:
         return build_provider_id(place.provider, place.external_id)
 
-    async def _write_geo_cache(
-        self, saved_outcomes: list[PlaceSaveOutcome]
-    ) -> None:
+    async def _write_geo_cache(self, saved_outcomes: list[PlaceSaveOutcome]) -> None:
         """Write Tier 2 geo cache for newly saved rows whose validator
         carried full lat/lng/address. Duplicates are skipped — the cache
         already has an entry (or the next enrichment call will fill it).
@@ -381,11 +373,7 @@ class ExtractionPersistenceService:
             if place is None or place.provider_id is None:
                 continue
             vc = outcome.metadata
-            if (
-                vc.match_lat is None
-                or vc.match_lng is None
-                or vc.match_address is None
-            ):
+            if vc.match_lat is None or vc.match_lng is None or vc.match_address is None:
                 continue
             geo_items[place.provider_id] = GeoData(
                 lat=vc.match_lat,

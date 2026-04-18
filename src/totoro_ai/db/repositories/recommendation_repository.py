@@ -58,8 +58,6 @@ class SQLAlchemyRecommendationRepository:
 
         from totoro_ai.db.models import Recommendation
 
-        stmt = select(literal(1)).where(
-            Recommendation.id == recommendation_id
-        ).limit(1)
+        stmt = select(literal(1)).where(Recommendation.id == recommendation_id).limit(1)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None

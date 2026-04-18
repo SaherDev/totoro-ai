@@ -38,22 +38,32 @@ class TestSQLAlchemyUserMemoryRepository:
 
     @pytest.fixture
     def mock_session(self) -> MagicMock:
-        """Create a mock AsyncSession."""
-        return MagicMock()
+        """Create a mock AsyncSession with execute/commit as AsyncMocks."""
+        session = MagicMock()
+        session.execute = AsyncMock()
+        session.commit = AsyncMock()
+        return session
 
     @pytest.fixture
-    def repo(self, mock_session: MagicMock) -> SQLAlchemyUserMemoryRepository:
-        """Create repository instance with mocked session."""
-        return SQLAlchemyUserMemoryRepository(mock_session)
+    def mock_session_factory(self, mock_session: MagicMock) -> MagicMock:
+        """Mimic async_sessionmaker: calling it returns an async context manager
+        that yields ``mock_session``."""
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        ctx.__aexit__ = AsyncMock(return_value=None)
+        factory = MagicMock(return_value=ctx)
+        return factory
+
+    @pytest.fixture
+    def repo(self, mock_session_factory: MagicMock) -> SQLAlchemyUserMemoryRepository:
+        """Create repository instance with mocked session factory."""
+        return SQLAlchemyUserMemoryRepository(mock_session_factory)
 
     @pytest.mark.asyncio
     async def test_save_calls_execute(
         self, repo: SQLAlchemyUserMemoryRepository, mock_session: MagicMock
     ) -> None:
-        """save() calls session.execute() and flush() with insert statement."""
-        mock_session.execute = AsyncMock()
-        mock_session.flush = AsyncMock()
-
+        """save() calls session.execute() and commit() with insert statement."""
         await repo.save(
             user_id="user-1",
             memory="I use a wheelchair",
@@ -62,7 +72,7 @@ class TestSQLAlchemyUserMemoryRepository:
         )
 
         mock_session.execute.assert_called_once()
-        mock_session.flush.assert_called_once()
+        mock_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_load_success(

@@ -114,6 +114,7 @@ class InteractionType(PyEnum):
     REJECTED = "rejected"
     ONBOARDING_CONFIRM = "onboarding_confirm"
     ONBOARDING_DISMISS = "onboarding_dismiss"
+    CHIP_CONFIRM = "chip_confirm"
 
 
 class TasteModel(Base):
@@ -158,8 +159,9 @@ class Interaction(Base):
         ),
         nullable=False,
     )
-    place_id: Mapped[str | None] = mapped_column(
-        String, nullable=True
+    place_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_: Mapped[dict | None] = mapped_column(  # type: ignore[type-arg]
+        "metadata", JSONB, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

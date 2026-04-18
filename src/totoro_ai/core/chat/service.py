@@ -124,17 +124,13 @@ class ChatService:
                 for r in extract_result.results
                 if r.status == "needs_review" and r.place is not None
             ]
-            duplicates = [
-                r for r in extract_result.results if r.status == "duplicate"
-            ]
+            duplicates = [r for r in extract_result.results if r.status == "duplicate"]
             parts: list[str] = []
             if saved:
                 names = ", ".join(r.place.place_name for r in saved if r.place)
                 parts.append(f"Saved: {names}")
             if needs_review:
-                names = ", ".join(
-                    r.place.place_name for r in needs_review if r.place
-                )
+                names = ", ".join(r.place.place_name for r in needs_review if r.place)
                 parts.append(f"Low confidence — please confirm: {names}")
             if parts:
                 message = " ".join(parts)

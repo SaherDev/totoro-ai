@@ -6,6 +6,7 @@ import pytest
 
 from totoro_ai.core.config import MemoryConfidenceConfig
 from totoro_ai.core.events.events import (
+    ChipConfirmed,
     OnboardingSignal,
     PersonalFactsExtracted,
     PlaceSaved,
@@ -168,3 +169,46 @@ class TestOnPersonalFactsExtracted:
             personal_facts=[PersonalFact(text="I'm vegetarian", source="stated")],
         )
         await handlers.on_personal_facts_extracted(event)
+
+
+class TestOnChipConfirmed:
+    """Tests for the chip_confirmed handler (feature 023)."""
+
+    @pytest.fixture
+    def mock_taste_service(self) -> MagicMock:
+        svc = MagicMock()
+        svc.run_regen_now = AsyncMock()
+        svc.handle_signal = AsyncMock()
+        return svc
+
+    @pytest.fixture
+    def handlers(self, mock_taste_service: MagicMock) -> EventHandlers:
+        return EventHandlers(
+            taste_service=mock_taste_service,
+            memory_service=MagicMock(),
+            langfuse=None,
+        )
+
+    async def test_invokes_run_regen_now_once(
+        self, handlers: EventHandlers, mock_taste_service: MagicMock
+    ) -> None:
+        event = ChipConfirmed(user_id="user-1")
+        await handlers.on_chip_confirmed(event)
+        mock_taste_service.run_regen_now.assert_awaited_once_with("user-1")
+
+    async def test_ignores_non_chip_confirmed_events(
+        self, handlers: EventHandlers, mock_taste_service: MagicMock
+    ) -> None:
+        event = PersonalFactsExtracted(user_id="user-1", personal_facts=[])
+        await handlers.on_chip_confirmed(event)
+        mock_taste_service.run_regen_now.assert_not_awaited()
+
+    async def test_catches_exceptions(
+        self, handlers: EventHandlers, mock_taste_service: MagicMock
+    ) -> None:
+        mock_taste_service.run_regen_now = AsyncMock(
+            side_effect=RuntimeError("LLM blew up")
+        )
+        event = ChipConfirmed(user_id="user-1")
+        # Must not raise — ADR-043 requires background handlers to swallow.
+        await handlers.on_chip_confirmed(event)
