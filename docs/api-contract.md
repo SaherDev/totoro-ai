@@ -15,6 +15,81 @@ All requests come from NestJS after auth verification. totoro-ai never receives 
 
 ---
 
+## Shared Types
+
+### `PlaceObject`
+
+Unified place shape returned by every read and write path (ADR-054, feat 019). Tier 1 fields come from PostgreSQL and are always present; Tier 2 (Redis geo) and Tier 3 (Redis enrichment) populate only when `enrich_batch` ran.
+
+```json
+{
+  "place_id": "pl_01HZ...",
+  "place_name": "Nara Eatery",
+  "place_type": "food_and_drink",
+  "subcategory": "restaurant",
+  "tags": ["ramen", "late_night"],
+  "attributes": {
+    "cuisine": "japanese",
+    "price_hint": "$$",
+    "ambiance": "casual",
+    "dietary": ["vegetarian"],
+    "good_for": ["date_night"],
+    "location_context": { "neighborhood": "Ari", "city": "Bangkok", "country": "TH" }
+  },
+  "source_url": "https://tiktok.com/@user/video/123",
+  "source": "tiktok",
+  "provider_id": "google:ChIJN1t_tDeuEmsRUsoyG83frY4",
+  "created_at": "2026-04-12T10:15:00Z",
+
+  "lat": 13.7780,
+  "lng": 100.5410,
+  "address": "123 Ari Soi 4, Bangkok 10400",
+  "geo_fresh": true,
+
+  "hours": { "monday": "11:00-22:00", "timezone": "Asia/Bangkok" },
+  "rating": 4.6,
+  "phone": "+66 2 123 4567",
+  "photo_url": "https://places.googleapis.com/...",
+  "popularity": 0.82,
+  "enriched": true
+}
+```
+
+| Tier | Field | Type | Notes |
+|---|---|---|---|
+| 1 | `place_id` | `string` | Internal UUID/ULID; always present |
+| 1 | `place_name` | `string` | Always present |
+| 1 | `place_type` | `"food_and_drink" \| "things_to_do" \| "shopping" \| "services" \| "accommodation"` | Enum |
+| 1 | `subcategory` | `string \| null` | Validated against the per-type vocabulary (e.g. `"restaurant"`, `"cafe"`, `"museum"`) |
+| 1 | `tags` | `string[]` | Free-form labels |
+| 1 | `attributes` | `PlaceAttributes` | Structured JSONB; shape below |
+| 1 | `source_url` | `string \| null` | Original URL the place was extracted from |
+| 1 | `source` | `"tiktok" \| "instagram" \| "youtube" \| "manual" \| "link" \| "consult" \| null` | Acquisition channel |
+| 1 | `provider_id` | `string \| null` | Namespaced external ID (e.g. `"google:ChIJ…"`); constructed only by the repository |
+| 1 | `created_at` | `ISO-8601 string \| null` | From ORM row; `null` for freshly-built, unsaved objects |
+| 2 | `lat` / `lng` | `float \| null` | Populated when geo cache is hydrated |
+| 2 | `address` | `string \| null` | Formatted address |
+| 2 | `geo_fresh` | `bool` | `true` when Tier 2 fields come from a live cache hit |
+| 3 | `hours` | `object \| null` | Keys: `sunday`–`saturday` (string or null) + `timezone` (IANA) |
+| 3 | `rating` | `float \| null` | Provider rating |
+| 3 | `phone` | `string \| null` | E.164 preferred |
+| 3 | `photo_url` | `string \| null` | Hotlinkable image URL |
+| 3 | `popularity` | `float \| null` | Normalized 0–1 |
+| 3 | `enriched` | `bool` | `true` when Tier 3 fields are populated. Recall-mode responses never set this `true` |
+
+`PlaceAttributes` shape:
+
+| Field | Type | Notes |
+|---|---|---|
+| `cuisine` | `string \| null` | e.g. `"japanese"` |
+| `price_hint` | `string \| null` | e.g. `"$"`, `"$$"`, `"$$$"` |
+| `ambiance` | `string \| null` | e.g. `"casual"`, `"upscale"` |
+| `dietary` | `string[]` | e.g. `["vegetarian", "gluten_free"]` |
+| `good_for` | `string[]` | e.g. `["date_night", "groups"]` |
+| `location_context` | `{ neighborhood, city, country } \| null` | All string or null |
+
+---
+
 ## POST /v1/chat
 
 Unified conversational entry point (ADR-052). Replaces all four former individual endpoints.
@@ -56,34 +131,150 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 **Response Types by Intent:**
 
 ### `extract-place`
+
 ```json
-{ "type": "extract-place", "message": "Saved: Nara Eatery, Bangkok", "data": { /* ExtractPlaceResponse */ } }
+{
+  "type": "extract-place",
+  "message": "Saved: Nara Eatery, Bangkok",
+  "data": {
+    "results": [
+      {
+        "place": { /* PlaceObject — see Shared Types */ },
+        "confidence": 0.87,
+        "status": "saved"
+      }
+    ],
+    "source_url": "https://tiktok.com/@user/video/123",
+    "request_id": "req_01HZ..."
+  }
+}
 ```
+
+`data` (`ExtractPlaceResponse`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `results` | `ExtractPlaceItem[]` | One entry per extracted place; see below |
+| `source_url` | `string \| null` | URL the extraction came from (if any) |
+| `request_id` | `string \| null` | Polling handle when any item has `status="pending"` |
+
+`ExtractPlaceItem` shape:
+
+| Field | Type | Notes |
+|---|---|---|
+| `place` | `PlaceObject \| null` | Present for `"saved"`, `"needs_review"`, `"duplicate"`; `null` for `"pending"`/`"failed"` |
+| `confidence` | `float \| null` | Extraction confidence score (0–1); `null` if the cascade did not reach validation |
+| `status` | `"saved" \| "needs_review" \| "duplicate" \| "pending" \| "failed"` | See the extract-place schema docstring; `"needs_review"` means confidence landed in the tentative band between `save_threshold` and `confident_threshold` (ADR-057) |
 
 ### `consult`
+
 ```json
-{ "type": "consult", "message": "Here's my top pick for dinner nearby", "data": { /* ConsultResponse */ } }
+{
+  "type": "consult",
+  "message": "Here's my top pick for dinner nearby",
+  "data": {
+    "recommendation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "results": [
+      {
+        "place": { /* PlaceObject — fully enriched (enriched=true) */ },
+        "source": "saved"
+      }
+    ],
+    "reasoning_steps": [
+      { "step": "parse_intent", "summary": "Detected: dinner, nearby, cheap" },
+      { "step": "retrieve_candidates", "summary": "12 saved + 8 discovered within 2km" }
+    ]
+  }
+}
 ```
+
+`data` (`ConsultResponse`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `recommendation_id` | `string \| null` | UUID of the persisted row in `recommendations`. `null` if the background persist failed (ADR-060) |
+| `results` | `ConsultResult[]` | Up to 3 items. Agent-driven ranking; order is not score-derived (ADR-058) |
+| `reasoning_steps` | `ReasoningStep[]` | Flat trace for eval/debug; UI does not need to render |
+
+`ConsultResult` shape:
+
+| Field | Type | Notes |
+|---|---|---|
+| `place` | `PlaceObject` | Always fully enriched (`enriched=true`, Tier 2 + Tier 3 populated) |
+| `source` | `"saved" \| "discovered"` | `"saved"` = from user's recall set; `"discovered"` = from Google Places Nearby Search |
+
+`ReasoningStep` shape:
+
+| Field | Type | Notes |
+|---|---|---|
+| `step` | `string` | Pipeline step identifier |
+| `summary` | `string` | Human-readable summary of what the step decided |
 
 ### `recall`
+
 ```json
-{ "type": "recall", "message": "Found 3 places matching your search", "data": { /* RecallResponse */ } }
+{
+  "type": "recall",
+  "message": "Found 3 places matching your search",
+  "data": {
+    "results": [
+      {
+        "place": { /* PlaceObject — Tier 2 may be present; enriched=false */ },
+        "match_reason": "semantic + keyword",
+        "relevance_score": 0.0187,
+        "score_type": "rrf"
+      }
+    ],
+    "total_count": 3,
+    "empty_state": false
+  }
+}
 ```
 
+`data` (`RecallResponse`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `results` | `RecallResult[]` | Ordered by relevance when a query is present; by recency in filter-only mode |
+| `total_count` | `integer` | Pre-`LIMIT` match count. Post-distance-filter this is best-effort |
+| `empty_state` | `bool` | `true` only when the user has zero saved places |
+
+`RecallResult` shape:
+
+| Field | Type | Notes |
+|---|---|---|
+| `place` | `PlaceObject` | Recall never enriches Tier 3 — `enriched` is always `false` |
+| `match_reason` | `"filter" \| "semantic" \| "keyword" \| "semantic + keyword"` | Which retrieval path surfaced the row |
+| `relevance_score` | `float \| null` | Populated only in hybrid mode. Scale depends on `score_type` |
+| `score_type` | `"rrf" \| "ts_rank" \| null` | `rrf` scores are ~0.01–0.03; `ts_rank` scores are 0–1. Never compare across types |
+
 ### `assistant`
+
 ```json
 { "type": "assistant", "message": "Tipping is not expected in Japan…", "data": null }
 ```
 
+`data` is always `null` — the LLM response lives in `message`.
+
 ### `clarification`
+
 ```json
 { "type": "clarification", "message": "Are you looking for a place called Fuji you saved, or a recommendation near there?", "data": null }
 ```
 
+Returned when intent classification confidence is below 0.7. `data` is always `null`.
+
 ### `error`
+
 ```json
 { "type": "error", "message": "Something went wrong, try again", "data": { "detail": "..." } }
 ```
+
+| Field | Type | Notes |
+|---|---|---|
+| `data.detail` | `string` | Internal detail string for logs; safe to ignore in the UI |
+
+All downstream exceptions are caught and surfaced as `type="error"` with HTTP 200 (not 5xx).
 
 **HTTP Status Codes:**
 
@@ -258,6 +449,28 @@ The frontend just echoes each chip back with an updated `status`. No outer `roun
 ## GET /v1/health
 
 Health check endpoint. Returns service status and database connectivity.
+
+**Request:** No parameters, no body.
+
+**Response (200):**
+
+```json
+{
+  "status": "ok",
+  "name": "totoro-ai",
+  "version": "0.1.0",
+  "db": "connected"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `status` | `string` | Always `"ok"` when the service is up and this handler is reachable |
+| `name` | `string` | App name from `config/app.yaml` (`app.name`) |
+| `version` | `string` | Package version from installed metadata; falls back to `"0.1.0"` if unresolved |
+| `db` | `"connected" \| "disconnected"` | Result of a `SELECT 1` probe against the primary PostgreSQL connection |
+
+Always HTTP 200 — DB outages surface via `db: "disconnected"`, not a non-2xx status.
 
 ---
 
