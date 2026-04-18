@@ -99,7 +99,7 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 
 ```json
 {
-  "user_id": "user_3AhqBhtLzKKlbKrjVNGTHro1o76",
+  "user_id": "<user_id>",
   "message": "cheap dinner nearby",
   "location": { "lat": 13.7563, "lng": 100.5018 }
 }
@@ -373,7 +373,7 @@ Behavioral signal endpoint (ADR-060, ADR-061). Replaces `POST /v1/feedback`. Dis
 ```json
 {
   "signal_type": "recommendation_accepted",
-  "user_id": "user_3AhqBhtLzKKlbKrjVNGTHro1o76",
+  "user_id": "<user_id>",
   "recommendation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "place_id": "google:ChIJN1t_tDeuEmsRUsoyG83frY4"
 }
@@ -395,7 +395,7 @@ Behavioral signal endpoint (ADR-060, ADR-061). Replaces `POST /v1/feedback`. Dis
 ```json
 {
   "signal_type": "chip_confirm",
-  "user_id": "user_3AhqBhtLzKKlbKrjVNGTHro1o76",
+  "user_id": "<user_id>",
   "metadata": {
     "chips": [
       {
