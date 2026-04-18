@@ -113,7 +113,6 @@ class TasteModelService:
 
         if profile is None:
             return UserContext(
-                user_id=user_id,
                 saved_places_count=0,
                 signal_tier=derive_signal_tier(0, [], stages, chip_threshold),
                 chips=[],
@@ -153,7 +152,6 @@ class TasteModelService:
         ]
 
         return UserContext(
-            user_id=user_id,
             saved_places_count=saved_count,
             signal_tier=signal_tier,
             chips=chips,

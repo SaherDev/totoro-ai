@@ -106,7 +106,6 @@ class UserContext(BaseModel):
     handler just returns it unchanged (facade per ADR-034).
     """
 
-    user_id: str = Field(..., description="Echoed user identifier")
     saved_places_count: int = Field(
         ..., description="Total number of places the user has saved"
     )

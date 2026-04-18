@@ -301,18 +301,17 @@ Returns taste profile context for the product UI (ADR-060).
 **Request:**
 
 ```
-GET /v1/user/context?user_id=user_3AhqBhtLzKKlbKrjVNGTHro1o76
+GET /v1/user/context?user_id=<user_id>
 ```
 
 | Param | Type | Required | Notes |
 |---|---|---|---|
-| `user_id` | `string` | Yes | Query parameter |
+| `user_id` | `string` | Yes | Query parameter. Used only to load the user's taste model; not echoed in the response |
 
 **Response (200):**
 
 ```json
 {
-  "user_id": "user_3AhqBhtLzKKlbKrjVNGTHro1o76",
   "saved_places_count": 5,
   "signal_tier": "chip_selection",
   "chips": [
@@ -340,7 +339,6 @@ Note: `selection_round` is always a string in `chip_selection` tier — the serv
 
 | Field | Type | Notes |
 |---|---|---|
-| `user_id` | `string` | Echoed from the request |
 | `saved_places_count` | `integer` | Total number of saves; read from precomputed taste_model (not a live DB count) |
 | `signal_tier` | `"cold" \| "warming" \| "chip_selection" \| "active"` | Derived by `derive_signal_tier` (ADR-061). Config-driven — adding a new stage to `chip_selection_stages` works without code changes |
 | `chips` | `ChipView[]` | Full structured chips; see shape below |
@@ -479,7 +477,7 @@ Always HTTP 200 — DB outages surface via `db: "disconnected"`, not a non-2xx s
 | Endpoint | Purpose | NestJS Sends | totoro-ai Returns |
 | --- | --- | --- | --- |
 | POST /v1/chat | Unified conversational entry point | user_id, message, optional location | type, message, optional data payload |
-| GET /v1/user/context | User taste context for product UI | user_id (query param) | user_id, saved_places_count, signal_tier, chips (each with status + selection_round) |
+| GET /v1/user/context | User taste context for product UI | user_id (query param) | saved_places_count, signal_tier, chips (each with status + selection_round) |
 | POST /v1/signal | Recommendation feedback OR chip_confirm | Discriminated on `signal_type` — recommendation variant (recommendation_id + place_id) OR chip_confirm variant (metadata.chips[] with per-chip selection_round) | status (202) |
 | GET /v1/health | Service health check | — | status, db connectivity |
 

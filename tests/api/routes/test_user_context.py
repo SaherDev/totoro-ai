@@ -48,7 +48,6 @@ def _stub_service(
         p = await svc.get_taste_profile(uid)
         if p is None:
             return UserContext(
-                user_id=uid,
                 saved_places_count=0,
                 signal_tier=derive_signal_tier(0, [], stages, chip_threshold),
                 chips=[],
@@ -78,7 +77,6 @@ def _stub_service(
             for c in p.chips
         ]
         return UserContext(
-            user_id=uid,
             saved_places_count=saved_count,
             signal_tier=signal_tier,
             chips=chips,
@@ -97,7 +95,6 @@ def test_cold_user_returns_cold_tier() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body == {
-        "user_id": "new_user",
         "saved_places_count": 0,
         "signal_tier": "cold",
         "chips": [],
