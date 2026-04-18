@@ -130,7 +130,7 @@ def _recall_response() -> RecallResponse:
 async def test_run_consult_intent(mock_classify: MagicMock) -> None:
     """ChatService routes 'consult' intent to ConsultService and pipes
     the full ConsultResponse through as `data`. Each result carries a
-    full enriched PlaceObject and a confidence float in [0, 1]."""
+    full enriched PlaceObject and a source tag (ADR-058: no score)."""
     mock_classify.return_value = IntentClassification(
         intent="consult", confidence=0.95, clarification_needed=False
     )
@@ -154,8 +154,6 @@ async def test_run_consult_intent(mock_classify: MagicMock) -> None:
     first = results_payload[0]
     assert first["place"]["place_name"] == "Nara Eatery"
     assert first["place"]["enriched"] is True
-    assert isinstance(first["confidence"], float)
-    assert 0.0 <= first["confidence"] <= 1.0
     assert first["source"] in ("saved", "discovered")
 
 

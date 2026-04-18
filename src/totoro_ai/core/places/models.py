@@ -214,6 +214,36 @@ class PlaceObject(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    def copy_with(
+        self,
+        *,
+        geo_fresh: bool = True,
+        enriched: bool = True,
+    ) -> PlaceObject:
+        """Return a copy, stripping tiers whose flag is False.
+
+        `geo_fresh=False` clears Tier 2 (lat, lng, address) and sets geo_fresh=False.
+        `enriched=False` clears Tier 3 (hours, rating, phone, photo_url, popularity)
+        and sets enriched=False. Defaults preserve both tiers (identity copy).
+        """
+        updates: dict[str, object] = {}
+        if not geo_fresh:
+            updates.update(
+                {"lat": None, "lng": None, "address": None, "geo_fresh": False}
+            )
+        if not enriched:
+            updates.update(
+                {
+                    "hours": None,
+                    "rating": None,
+                    "phone": None,
+                    "photo_url": None,
+                    "popularity": None,
+                    "enriched": False,
+                }
+            )
+        return self.model_copy(update=updates)
+
 
 # ---------------------------------------------------------------------------
 # Write-side input

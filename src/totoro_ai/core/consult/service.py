@@ -306,11 +306,22 @@ class ConsultService:
         try:
             from totoro_ai.db.models import Recommendation
 
+            # Persist only Tier 1 place fields — Tier 2 (geo) and Tier 3
+            # (enrichment) live in Redis and are re-fetched on demand, so
+            # storing them here would duplicate mutable cache state.
+            tier1_results = [
+                ConsultResult(
+                    place=result.place.to_tier1(),
+                    source=result.source,
+                )
+                for result in results
+            ]
+
             # Build the response dict for JSONB storage. `mode="json"`
             # serializes datetimes to ISO strings and enums to values.
             response_data = ConsultResponse(
                 recommendation_id=None,
-                results=results,
+                results=tier1_results,
                 reasoning_steps=reasoning_steps,
             ).model_dump(mode="json")
 
