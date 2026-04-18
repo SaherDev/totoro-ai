@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from totoro_ai.api.schemas.consult import Location
+
+SignalTierHint = Literal["cold", "warming", "chip_selection", "active"]
 
 
 class ChatRequest(BaseModel):
@@ -15,6 +17,15 @@ class ChatRequest(BaseModel):
     user_id: str
     message: str
     location: Location | None = None
+    signal_tier: SignalTierHint | None = Field(
+        default=None,
+        description=(
+            "Optional tier hint from the product repo (feature 023). Product "
+            "reads GET /v1/user/context and forwards the tier so consult can "
+            "apply tier-aware behavior (e.g. warming candidate-count blend) "
+            "without a second DB read. When null, consult defaults to 'active'."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):

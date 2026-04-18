@@ -82,10 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 023-onboarding-signal-tier: Signal tier (cold/warming/chip_selection/active) derived from config-driven `chip_selection_stages` (ADR-061). `GET /v1/user/context` returns `signal_tier` + chips with `status`/`selection_round`. Product repo gates tier routing — it reads `/v1/user/context` and forwards `signal_tier` on `/v1/chat` + `/v1/consult` requests; `ConsultResponse` is NOT extended with an envelope. New `chip_confirm` variant on `POST /v1/signal` writes a CHIP_CONFIRM interaction row with metadata, merges chip statuses (confirmed immutable; rejected may resurface when signal grows), and dispatches `ChipConfirmed` which forces an immediate taste-profile rewrite. Warming tier applies a config-driven 80/20 discovered/saved candidate-count blend.
 - 022-recommendations-context-signals: Renamed `consult_logs` → `recommendations` (ADR-060). ConsultService returns `recommendation_id`. New `GET /v1/user/context` (taste chips + saved count). Replaced `POST /v1/feedback` with `POST /v1/signal` (recommendation_id validation, discriminated union).
 - 021-taste-profile-memory: Replaced EMA taste model with signal_counts + LLM summary + chips (ADR-058). Deleted RankingService. Simplified interactions table (InteractionType enum, append-only, no gain/context). Debounced regen via asyncio. Unified `on_taste_signal` handler. ConsultService returns candidates unranked (agent-driven ranking deferred).
-- 019-places-service: Unified `PlaceObject` shape end-to-end (ADR-054/055/056). Three-tier storage (Postgres Tier 1, Redis Tier 2 geo, Redis Tier 3 enrichment). Strict-create with `DuplicatePlaceError`. Nested `ParsedIntent` (place + search). Recall two-mode search (filter + hybrid with RRF). Consult full-enrichment path with dedupe + fetch cap. `search_vector` generated tsvector column coupled to `embeddings.description_fields` with startup validator.
 
 
 ## Active Technologies
+- Python 3.11, FastAPI, SQLAlchemy async + asyncpg, Pydantic 2, Instructor, pgvector, Redis, Langfuse, Alembic. Voyage embeddings; Claude Opus orchestrator; GPT-4o-mini for taste regen + chat assistant.
+- PostgreSQL on Railway (this repo writes `places`, `embeddings`, `taste_model`, `interactions`, `recommendations`, `user_memories`). TypeORM in the product repo owns `users`, `user_settings`.
 

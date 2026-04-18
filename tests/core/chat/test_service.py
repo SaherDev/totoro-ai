@@ -373,9 +373,7 @@ async def test_run_recall_meta_query_dispatches_filter_mode(
     result = await service.run(request)
 
     assert result.type == "recall"
-    parser_mock.parse.assert_awaited_once_with(
-        "Can you pull all restaurants I saved?"
-    )
+    parser_mock.parse.assert_awaited_once_with("Can you pull all restaurants I saved?")
     recall_mock.run.assert_awaited_once()
     call = recall_mock.run.await_args
     assert call.kwargs["query"] is None  # filter mode
@@ -401,9 +399,7 @@ async def test_run_recall_place_description_keeps_enriched_query(
             place=ParsedIntentPlace(
                 place_type=PlaceType.food_and_drink,
                 subcategory="restaurant",
-                attributes=PlaceAttributes(
-                    cuisine="japanese", ambiance="cozy"
-                ),
+                attributes=PlaceAttributes(cuisine="japanese", ambiance="cozy"),
             ),
             search=ParsedIntentSearch(
                 enriched_query="cozy japanese ramen restaurant nearby",
@@ -444,9 +440,7 @@ async def test_run_recall_projects_location_context_onto_filters(
                 place_type=PlaceType.food_and_drink,
                 subcategory="restaurant",
                 attributes=PlaceAttributes(
-                    location_context=LocationContext(
-                        city="Bangkok", country="Thailand"
-                    )
+                    location_context=LocationContext(city="Bangkok", country="Thailand")
                 ),
             ),
             search=ParsedIntentSearch(enriched_query=None),

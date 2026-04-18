@@ -33,7 +33,8 @@ class TasteModelRepository(Protocol):
         self,
         user_id: str,
         interaction_type: InteractionType,
-        place_id: str,
+        place_id: str | None,
+        metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
     async def get_interactions_with_places(
@@ -42,11 +43,15 @@ class TasteModelRepository(Protocol):
 
     async def count_interactions(self, user_id: str) -> int: ...
 
+    async def merge_chip_statuses(
+        self,
+        user_id: str,
+        updated_chips: list[dict[str, Any]],
+    ) -> None: ...
+
 
 class SQLAlchemyTasteModelRepository:
-    def __init__(
-        self, session_factory: async_sessionmaker[AsyncSession]
-    ) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def get_by_user_id(self, user_id: str) -> TasteModel | None:
@@ -92,20 +97,20 @@ class SQLAlchemyTasteModelRepository:
         self,
         user_id: str,
         interaction_type: InteractionType,
-        place_id: str,
+        place_id: str | None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         async with self._session_factory() as session:
             interaction = Interaction(
                 user_id=user_id,
                 type=interaction_type,
                 place_id=place_id,
+                metadata_=metadata,
             )
             session.add(interaction)
             await session.commit()
 
-    async def get_interactions_with_places(
-        self, user_id: str
-    ) -> list[InteractionRow]:
+    async def get_interactions_with_places(self, user_id: str) -> list[InteractionRow]:
         async with self._session_factory() as session:
             stmt = (
                 select(
@@ -127,9 +132,7 @@ class SQLAlchemyTasteModelRepository:
                 rows.append(
                     InteractionRow(
                         type=(
-                            row.type.value
-                            if hasattr(row.type, "value")
-                            else row.type
+                            row.type.value if hasattr(row.type, "value") else row.type
                         ),
                         place_type=row.place_type,
                         subcategory=row.subcategory,
@@ -149,3 +152,32 @@ class SQLAlchemyTasteModelRepository:
             )
             result = await session.execute(stmt)
             return result.scalar_one()
+
+    async def merge_chip_statuses(
+        self,
+        user_id: str,
+        updated_chips: list[dict[str, Any]],
+    ) -> None:
+        """Replace the stored chips JSONB array for a user in one transaction.
+
+        Caller is responsible for having already merged status/selection_round
+        into the chip dicts (see core.taste.chip_merge.merge_chip_statuses).
+        No-op if no taste_model row exists yet (cold user).
+        """
+        async with self._session_factory() as session:
+            stmt = (
+                pg_insert(TasteModel)
+                .values(
+                    user_id=user_id,
+                    chips=updated_chips,
+                    taste_profile_summary=[],
+                    signal_counts={},
+                    generated_from_log_count=0,
+                )
+                .on_conflict_do_update(
+                    index_elements=["user_id"],
+                    set_={"chips": updated_chips},
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()

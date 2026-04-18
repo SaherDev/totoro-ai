@@ -8,11 +8,22 @@ TasteProfile — read model returned by TasteModelService.get_taste_profile.
 
 from __future__ import annotations
 
-from typing import Any
+from enum import Enum
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from totoro_ai.core.places.models import PlaceAttributes
+
+SignalTier = Literal["cold", "warming", "chip_selection", "active"]
+
+
+class ChipStatus(str, Enum):
+    """Lifecycle status of a taste chip (feature 023)."""
+
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
 
 
 class InteractionRow(BaseModel):
@@ -40,12 +51,19 @@ class SummaryLine(BaseModel):
 
 
 class Chip(BaseModel):
-    """Short UI label grounded in signal_counts."""
+    """Short UI label grounded in signal_counts.
+
+    status and selection_round are service-owned lifecycle fields added in
+    feature 023. The regen LLM never emits them — defaults apply to legacy
+    JSONB rows written before the feature shipped.
+    """
 
     label: str = Field(min_length=1, max_length=30)
     source_field: str
     source_value: str
     signal_count: int
+    status: ChipStatus = ChipStatus.PENDING
+    selection_round: str | None = None
 
 
 class TasteArtifacts(BaseModel):
@@ -61,3 +79,49 @@ class TasteProfile(BaseModel):
     taste_profile_summary: list[SummaryLine] = Field(default_factory=list)
     signal_counts: dict[str, Any] = Field(default_factory=dict)
     chips: list[Chip] = Field(default_factory=list)
+    generated_from_log_count: int = 0
+
+
+class ChipView(BaseModel):
+    """User-facing chip shape returned by GET /v1/user/context (feature 023)."""
+
+    label: str = Field(..., description="Short display label (e.g. 'Japanese')")
+    source_field: str = Field(..., description="Field the chip was derived from")
+    source_value: str = Field(..., description="Value of source_field")
+    signal_count: int = Field(..., description="Number of signals for this chip")
+    status: ChipStatus = Field(
+        default=ChipStatus.PENDING,
+        description="Lifecycle status: pending | confirmed | rejected",
+    )
+    selection_round: str | None = Field(
+        default=None,
+        description="Round name in which status was set, or null for pending chips.",
+    )
+
+
+class UserContext(BaseModel):
+    """Response shape for GET /v1/user/context (feature 023).
+
+    Produced end-to-end by TasteModelService.get_user_context — the route
+    handler just returns it unchanged (facade per ADR-034).
+    """
+
+    user_id: str = Field(..., description="Echoed user identifier")
+    saved_places_count: int = Field(
+        ..., description="Total number of places the user has saved"
+    )
+    signal_tier: SignalTier = Field(
+        ...,
+        description="Derived tier: cold | warming | chip_selection | active",
+    )
+    chips: list[ChipView] = Field(
+        default_factory=list,
+        description=(
+            "Precomputed taste chips. Each chip's `selection_round` carries "
+            "either the round the chip was decided in (confirmed/rejected) "
+            "or — for still-pending chips — the round the user should submit "
+            "the chip under (stamped server-side from the highest crossed "
+            "stage). Null only at cold/warming tiers where no stage has been "
+            "crossed yet."
+        ),
+    )

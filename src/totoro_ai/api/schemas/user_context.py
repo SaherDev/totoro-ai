@@ -1,23 +1,19 @@
-"""Request/response schemas for GET /v1/user/context endpoint."""
+"""Response schemas for GET /v1/user/context.
 
-from pydantic import BaseModel, Field
+The actual shapes live in core/taste/schemas.py — this module re-exports
+them so external references (OpenAPI discovery, product-side type
+generation) can keep importing from the api.schemas path.
+"""
 
+from totoro_ai.core.taste.schemas import ChipView, UserContext
 
-class ChipResponse(BaseModel):
-    """Taste chip for display in the product UI."""
+# Backward-compat aliases for existing imports.
+ChipResponse = ChipView
+UserContextResponse = UserContext
 
-    label: str = Field(..., description="Short display label (e.g. 'Japanese')")
-    source_field: str = Field(..., description="Field the chip was derived from")
-    source_value: str = Field(..., description="Value of source_field")
-    signal_count: int = Field(..., description="Number of signals for this chip")
-
-
-class UserContextResponse(BaseModel):
-    """Response body for GET /v1/user/context."""
-
-    saved_places_count: int = Field(
-        ..., description="Total number of places the user has saved"
-    )
-    chips: list[ChipResponse] = Field(
-        default_factory=list, description="Precomputed taste chips"
-    )
+__all__ = [
+    "ChipResponse",
+    "ChipView",
+    "UserContext",
+    "UserContextResponse",
+]

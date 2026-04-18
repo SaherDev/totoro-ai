@@ -1,9 +1,21 @@
-"""POST /v1/signal — behavioral signal endpoint (replaces /v1/feedback)."""
+"""POST /v1/signal — behavioral signal endpoint (replaces /v1/feedback).
 
-from fastapi import APIRouter, Depends, HTTPException, status
+Accepts a discriminated union on `signal_type`:
+- recommendation_accepted / recommendation_rejected (feature 022, ADR-060)
+- chip_confirm (feature 023)
+
+Route is a thin facade (ADR-034) — all dispatch lives in SignalService.
+"""
+
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from totoro_ai.api.deps import get_signal_service
-from totoro_ai.api.schemas.signal import SignalRequest, SignalResponse
+from totoro_ai.api.schemas.signal import (
+    ChipConfirmSignalRequest,
+    RecommendationSignalRequest,
+    SignalRequest,
+    SignalResponse,
+)
 from totoro_ai.core.signal.service import RecommendationNotFoundError, SignalService
 
 router = APIRouter()
@@ -13,22 +25,29 @@ router = APIRouter()
     "/signal", response_model=SignalResponse, status_code=status.HTTP_202_ACCEPTED
 )
 async def post_signal(
-    request: SignalRequest,
+    request: SignalRequest = Body(..., discriminator="signal_type"),  # noqa: B008
     signal_service: SignalService = Depends(get_signal_service),  # noqa: B008
 ) -> SignalResponse:
-    """Handle recommendation acceptance/rejection signals.
+    """Handle behavioral signals — recommendation accept/reject or chip_confirm.
 
-    Validates recommendation_id exists, dispatches event, returns 202.
-    Handler runs as background task after HTTP response (ADR-043).
-    Pydantic Literal type enforces signal_type — unknown types get 422.
+    Pydantic handles discriminator-based variant dispatch; unknown values
+    produce 422 automatically. The route dispatches to SignalService with
+    the variant's load-bearing fields.
     """
     try:
-        await signal_service.handle_signal(
-            signal_type=request.signal_type,
-            user_id=request.user_id,
-            recommendation_id=request.recommendation_id,
-            place_id=request.place_id,
-        )
+        if isinstance(request, ChipConfirmSignalRequest):
+            await signal_service.handle_signal(
+                signal_type=request.signal_type,
+                user_id=request.user_id,
+                chip_metadata=request.metadata,
+            )
+        elif isinstance(request, RecommendationSignalRequest):
+            await signal_service.handle_signal(
+                signal_type=request.signal_type,
+                user_id=request.user_id,
+                recommendation_id=request.recommendation_id,
+                place_id=request.place_id,
+            )
     except RecommendationNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

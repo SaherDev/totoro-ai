@@ -2,8 +2,7 @@
 
 from unittest.mock import patch
 
-from totoro_ai.core.config import AppConfig, load_yaml_config
-from totoro_ai.core.config import _load_prompts
+from totoro_ai.core.config import AppConfig, _load_prompts, load_yaml_config
 from totoro_ai.providers.llm import (
     InstructorClient,
     OpenAILLMClient,

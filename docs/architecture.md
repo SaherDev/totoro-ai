@@ -417,7 +417,13 @@ with explicit rollback and structured error logging.
 
 ### Taste Model
 
-The taste model builds a per-user 8-dimensional preference vector from behavioral signals (save, accept, reject, onboarding). Each signal updates the vector via EMA with config-driven learning rates and gain modulation. The vector feeds into RankingService for personalized scoring. Full architecture: [docs/taste-model-architecture.md](taste-model-architecture.md).
+The taste model builds a per-user preference profile from behavioral signals (save, accept, reject, onboarding). Signals aggregate into `signal_counts`; an LLM regen job produces a natural-language `taste_profile_summary` and a structured `chips` array (ADR-058). Chips have a lifecycle — `pending` → `confirmed` / `rejected` via `POST /v1/signal` with `signal_type=chip_confirm` (ADR-061). Confirmed chips are immutable; rejected chips may resurface as pending when the underlying signal count grows. RankingService was deleted — ConsultService returns candidates unranked and an agent (not yet built) will do selection. Full architecture: [docs/taste-model-architecture.md](taste-model-architecture.md).
+
+### Signal Tier (feature 023)
+
+`derive_signal_tier(signal_count, chips, stages, chip_threshold)` — pure function in `core/taste/tier.py` — computes one of `cold`, `warming`, `chip_selection`, `active` from the user's current state. Stages are config-driven (`config/app.yaml → taste_model.chip_selection_stages: dict[str,int]`); adding a new stage (e.g. `round_4: 200`) requires zero code changes because the function iterates `stages.values()` rather than referencing named keys.
+
+The tier is surfaced on `GET /v1/user/context` (plus the full chip array with `status` + `selection_round`). **The product repo gates tier routing** — it reads `/v1/user/context` and decides whether to call `/v1/consult`. At `cold` and `chip_selection` it renders its own UI and never calls consult. At `warming` and `active` it forwards `signal_tier` as a field on `/v1/chat` / `/v1/consult` requests so consult can apply tier-aware behavior (warming 80/20 discovered/saved candidate-count blend; active-tier rejected-chip filter + confirmed-signal reasoning step). `ConsultResponse` is not extended with any envelope — consult is consult.
 
 ## Key Boundaries
 

@@ -2,9 +2,15 @@
 
 aggregate_signal_counts() is a pure function — no I/O.
 
-Positive types (save, accepted, onboarding_confirm) feed the main tree.
-Negative types (rejected, onboarding_dismiss) feed the rejected branch.
+Positive types (save, accepted) feed the main tree.
+Negative types (rejected) feed the rejected branch.
 Source is counted for saves only.
+
+`chip_confirm` interactions are written with `place_id=NULL` and never
+appear in `get_interactions_with_places`, so they don't flow through
+this aggregator — their effect on the taste profile is captured via
+`taste_model.chips[].status` and passed to the regen prompt as
+`confirmed_chips` / `rejected_chips` arrays (feature 023).
 """
 
 from __future__ import annotations
@@ -22,8 +28,6 @@ class TotalCounts(BaseModel):
     saves: int = 0
     accepted: int = 0
     rejected: int = 0
-    onboarding_confirmed: int = 0
-    onboarding_dismissed: int = 0
 
 
 class LocationContextCounts(BaseModel):
@@ -62,8 +66,8 @@ class SignalCounts(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-_POSITIVE_TYPES = {"save", "accepted", "onboarding_confirm"}
-_NEGATIVE_TYPES = {"rejected", "onboarding_dismiss"}
+_POSITIVE_TYPES = {"save", "accepted"}
+_NEGATIVE_TYPES = {"rejected"}
 
 
 def _increment(d: dict[str, int], key: str | None) -> None:
@@ -117,10 +121,6 @@ def aggregate_signal_counts(rows: list[InteractionRow]) -> SignalCounts:
                 counts.totals.accepted += 1
             case "rejected":
                 counts.totals.rejected += 1
-            case "onboarding_confirm":
-                counts.totals.onboarding_confirmed += 1
-            case "onboarding_dismiss":
-                counts.totals.onboarding_dismissed += 1
 
         if row.type in _POSITIVE_TYPES:
             # Main tree

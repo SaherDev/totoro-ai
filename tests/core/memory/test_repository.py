@@ -55,9 +55,7 @@ class TestSQLAlchemyUserMemoryRepository:
         return factory
 
     @pytest.fixture
-    def repo(
-        self, mock_session_factory: MagicMock
-    ) -> SQLAlchemyUserMemoryRepository:
+    def repo(self, mock_session_factory: MagicMock) -> SQLAlchemyUserMemoryRepository:
         """Create repository instance with mocked session factory."""
         return SQLAlchemyUserMemoryRepository(mock_session_factory)
 

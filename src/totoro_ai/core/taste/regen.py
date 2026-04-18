@@ -23,18 +23,71 @@ def load_regen_prompt_template() -> str:
     return get_prompt("taste_regen")
 
 
+def _prune_path(body: dict[str, Any], source_field: str, source_value: str) -> None:
+    """Remove `source_value` from the nested leaf dict at `source_field`.
+
+    Walks the dotted path (e.g. "attributes.location_context.city") and
+    deletes the key at the final dict. No-op if any segment is missing or
+    the leaf isn't a dict. Used by `build_regen_messages` to scrub
+    confirmed/rejected chip entries out of the behavioral-counts tree so
+    the LLM doesn't see contradictory signals.
+    """
+    parts = source_field.split(".")
+    current: Any = body
+    for part in parts:
+        if not isinstance(current, dict) or part not in current:
+            return
+        current = current[part]
+    if isinstance(current, dict) and source_value in current:
+        del current[source_value]
+
+
 def build_regen_messages(
     signal_counts: SignalCounts,
     early_signal_threshold: int,
+    existing_chips: list[Chip] | None = None,
 ) -> list[dict[str, str]]:
-    """Build system + user messages for taste artifact generation."""
+    """Build system + user messages for taste artifact generation (feature 023).
+
+    If `existing_chips` contains any confirmed or rejected chips, they are
+    serialized into the user-message JSON as `confirmed_chips` and
+    `rejected_chips` arrays so the prompt can apply assertive/negative
+    language and annotation rules. Those same entries are simultaneously
+    pruned from the behavioral `signal_counts` tree so the LLM does not
+    see the same (source_field, source_value) pair as both a positive
+    behavioral signal AND an explicitly-decided preference — the
+    contradiction was causing the LLM to fall back to behavioral wording
+    even for rejected chips. Pending chips stay in `signal_counts`
+    unchanged (they haven't been decided yet, so the behavioral tree is
+    their only representation). When no chips are decided, both output
+    arrays are omitted and the body is byte-identical to the pre-feature
+    shape.
+    """
     template = load_regen_prompt_template()
     system_prompt = template.replace(
         "{early_signal_threshold}", str(early_signal_threshold)
     )
-    user_message = json.dumps(
-        signal_counts.model_dump(exclude_defaults=False), ensure_ascii=False
-    )
+    body: dict[str, Any] = signal_counts.model_dump(exclude_defaults=False)
+    if existing_chips:
+        confirmed = [
+            {"source_field": c.source_field, "source_value": c.source_value}
+            for c in existing_chips
+            if c.status.value == "confirmed"
+        ]
+        rejected = [
+            {"source_field": c.source_field, "source_value": c.source_value}
+            for c in existing_chips
+            if c.status.value == "rejected"
+        ]
+        # Prune decided chips from the behavioral counts so the LLM sees
+        # no overlap between signal_counts and the confirmed/rejected arrays.
+        for item in confirmed + rejected:
+            _prune_path(body, item["source_field"], item["source_value"])
+        if confirmed:
+            body["confirmed_chips"] = confirmed
+        if rejected:
+            body["rejected_chips"] = rejected
+    user_message = json.dumps(body, ensure_ascii=False)
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
@@ -84,11 +137,13 @@ def validate_grounded(
         if _is_grounded(line.source_field, line.source_value, sc_dict):
             valid_summary.append(line)
         else:
-            dropped.append({
-                "type": "summary",
-                "text": line.text,
-                "source_field": line.source_field,
-            })
+            dropped.append(
+                {
+                    "type": "summary",
+                    "text": line.text,
+                    "source_field": line.source_field,
+                }
+            )
 
     valid_chips: list[Chip] = []
     for chip in artifacts.chips:
@@ -104,9 +159,7 @@ def validate_grounded(
             )
 
     if dropped:
-        logger.warning(
-            "Dropped %d ungrounded items during validation", len(dropped)
-        )
+        logger.warning("Dropped %d ungrounded items during validation", len(dropped))
 
     validated = TasteArtifacts(summary=valid_summary, chips=valid_chips)
     return validated, dropped
@@ -114,6 +167,4 @@ def validate_grounded(
 
 def format_summary_for_agent(lines: list[SummaryLine]) -> str:
     """Join structured summary back to bullet-point text for agent prompt injection."""
-    return "\n".join(
-        f"- {line.text} [{line.signal_count} signals]" for line in lines
-    )
+    return "\n".join(f"- {line.text} [{line.signal_count} signals]" for line in lines)

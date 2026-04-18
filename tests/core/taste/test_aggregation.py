@@ -52,8 +52,6 @@ def test_empty_rows() -> None:
     assert counts.totals.saves == 0
     assert counts.totals.accepted == 0
     assert counts.totals.rejected == 0
-    assert counts.totals.onboarding_confirmed == 0
-    assert counts.totals.onboarding_dismissed == 0
     assert counts.place_type == {}
     assert counts.subcategory == {}
     assert counts.source == {}
@@ -123,17 +121,10 @@ def test_rejection_feeds_rejected_branch() -> None:
             cuisine="american",
             ambiance="casual",
         ),
-        _row(
-            type="onboarding_dismiss",
-            place_type="bar",
-            subcategory="sports_bar",
-            cuisine="pub_food",
-        ),
     ]
     counts = aggregate_signal_counts(rows)
 
     assert counts.totals.rejected == 1
-    assert counts.totals.onboarding_dismissed == 1
 
     # Main tree should be empty
     assert counts.place_type == {}
@@ -144,9 +135,8 @@ def test_rejection_feeds_rejected_branch() -> None:
     # Rejected branch populated
     assert counts.rejected.subcategory == {
         "restaurant": {"fast_food": 1},
-        "bar": {"sports_bar": 1},
     }
-    assert counts.rejected.attributes.cuisine == {"american": 1, "pub_food": 1}
+    assert counts.rejected.attributes.cuisine == {"american": 1}
     assert counts.rejected.attributes.ambiance == {"casual": 1}
 
 
@@ -154,14 +144,12 @@ def test_source_counted_only_for_saves() -> None:
     rows = [
         _row(type="save", source="google_maps"),
         _row(type="accepted", source="recommendation"),
-        _row(type="onboarding_confirm", source="onboarding_ui"),
     ]
     counts = aggregate_signal_counts(rows)
 
     # Only the save's source is counted
     assert counts.source == {"google_maps": 1}
     assert "recommendation" not in counts.source
-    assert "onboarding_ui" not in counts.source
 
 
 def test_multiple_tags() -> None:
@@ -175,9 +163,7 @@ def test_multiple_tags() -> None:
 
 
 def test_location_context() -> None:
-    loc = LocationContext(
-        neighborhood="Williamsburg", city="New York", country="US"
-    )
+    loc = LocationContext(neighborhood="Williamsburg", city="New York", country="US")
     rows = [
         _row(type="save", location_context=loc),
         _row(

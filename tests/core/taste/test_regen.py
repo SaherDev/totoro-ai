@@ -47,7 +47,8 @@ def test_build_regen_messages_replaces_threshold() -> None:
     counts = _make_signal_counts()
     threshold = 42
     messages = build_regen_messages(
-        signal_counts=counts, early_signal_threshold=threshold,
+        signal_counts=counts,
+        early_signal_threshold=threshold,
     )
     system_content = messages[0]["content"]
     assert "{early_signal_threshold}" not in system_content
