@@ -1,139 +1,151 @@
-"""Data types for the consult pipeline — candidates and mappers (ADR-049)."""
+"""Consult pipeline types — PlaceObject-based (ADR-054, feature 019).
 
-from typing import Any, Protocol
+Every "place" flowing between LangGraph nodes is a `PlaceObject`. The ranker
+wraps places in `ScoredPlace` for the short window where scores travel
+alongside the place; the consult service unwraps them back to `PlaceObject`
+before building the response.
 
-from pydantic import BaseModel, Field
+External provider results (Google Places Nearby Search) are mapped to
+`PlaceObject` via `map_google_place_to_place_object` so the pipeline has one
+shape end-to-end.
+"""
 
-from totoro_ai.api.schemas.recall import RecallResult
+from __future__ import annotations
+
+import logging
+from typing import Any
+from uuid import uuid4
+
+from totoro_ai.core.places.models import (
+    PlaceAttributes,
+    PlaceObject,
+    PlaceType,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# Google Places "types" array → PlaceType.
+# Longer per-category lists are preferred over one-off aliases so that any
+# near-equivalent string still routes to the right bucket. Checked in the
+# order below so a venue tagged both `restaurant` and `store` lands as
+# food_and_drink (the more specific food signal wins).
+_GOOGLE_TYPE_TO_PLACE_TYPE: dict[str, PlaceType] = {
+    # --- food_and_drink ---
+    "restaurant": PlaceType.food_and_drink,
+    "cafe": PlaceType.food_and_drink,
+    "bar": PlaceType.food_and_drink,
+    "bakery": PlaceType.food_and_drink,
+    "meal_takeaway": PlaceType.food_and_drink,
+    "meal_delivery": PlaceType.food_and_drink,
+    "food": PlaceType.food_and_drink,
+    "night_club": PlaceType.food_and_drink,
+    # --- things_to_do ---
+    "museum": PlaceType.things_to_do,
+    "park": PlaceType.things_to_do,
+    "tourist_attraction": PlaceType.things_to_do,
+    "aquarium": PlaceType.things_to_do,
+    "zoo": PlaceType.things_to_do,
+    "art_gallery": PlaceType.things_to_do,
+    "amusement_park": PlaceType.things_to_do,
+    "stadium": PlaceType.things_to_do,
+    "movie_theater": PlaceType.things_to_do,
+    # --- shopping ---
+    "store": PlaceType.shopping,
+    "shopping_mall": PlaceType.shopping,
+    "book_store": PlaceType.shopping,
+    "clothing_store": PlaceType.shopping,
+    "shoe_store": PlaceType.shopping,
+    "jewelry_store": PlaceType.shopping,
+    "department_store": PlaceType.shopping,
+    "supermarket": PlaceType.shopping,
+    # --- accommodation ---
+    "lodging": PlaceType.accommodation,
+    # --- services ---
+    "gym": PlaceType.services,
+    "spa": PlaceType.services,
+    "beauty_salon": PlaceType.services,
+    "hair_care": PlaceType.services,
+    "pharmacy": PlaceType.services,
+    "laundry": PlaceType.services,
+    "post_office": PlaceType.services,
+    "bank": PlaceType.services,
+}
+
+
+def _google_types_to_place_type(types: list[str]) -> PlaceType:
+    """Map a Google `types[]` array to a canonical `PlaceType`.
+
+    Scans the list in order — the first known type wins. Defaults to
+    `PlaceType.services` and emits a `google_place_type_unknown` log line
+    when no known type is present so we can spot coverage gaps.
+    """
+    for google_type in types:
+        mapped = _GOOGLE_TYPE_TO_PLACE_TYPE.get(google_type)
+        if mapped is not None:
+            return mapped
+    logger.info("google_place_type_unknown", extra={"types": list(types)})
+    return PlaceType.services
 
 
 class NoMatchesError(Exception):
-    """Raised by ConsultService when no candidates survive ranking."""
+    """Raised by ConsultService when no candidates survive the pipeline."""
 
 
-class Candidate(BaseModel):
-    """Internal unified representation of a place under evaluation.
+def map_google_place_to_place_object(google_result: dict[str, Any]) -> PlaceObject:
+    """Build a transient `PlaceObject` from a Google Places Nearby Search result.
 
-    Both saved and discovered places are normalized to this model before
-    ranking and response building.
+    These places are NOT persisted — they're consult-only candidates that
+    flow through ranking and the response. `place_id` is a synthetic UUID so
+    the object satisfies `PlaceObject` invariants; it is never written to
+    the DB in this code path.
     """
+    geometry = google_result.get("geometry") or {}
+    location = geometry.get("location") or {}
+    lat = location.get("lat")
+    lng = location.get("lng")
 
-    place_id: str
-    place_name: str
-    address: str
-    cuisine: str | None = None
-    price_range: str | None = None  # "low" | "mid" | "high" | None
-    lat: float | None = None
-    lng: float | None = None
-    external_id: str | None = None
-    source: str = Field(...)  # "saved" | "discovered"
-    popularity_score: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="Normalized rating 0.0–1.0"
+    price_level = google_result.get("price_level")
+    price_hint = _map_google_price_level(price_level)
+
+    rating = google_result.get("rating")
+    popularity = min(1.0, rating / 5.0) if isinstance(rating, int | float) else None
+
+    provider_id = (
+        f"google:{google_result['place_id']}" if google_result.get("place_id") else None
     )
-    # Taste signal dimensions — populated by ranking post-retrieval
-    ambiance: str | None = None
-    crowd_level: str | None = None
-    time_of_day: str | None = None
-    dietary_pref: str | None = None
-    cuisine_frequency: str | None = None
-    cuisine_adventurousness: str | None = None
-    # Distance from search location in metres (computed post-retrieval)
-    distance: float = 0.0
+
+    place_type = _google_types_to_place_type(google_result.get("types") or [])
+
+    return PlaceObject(
+        place_id=str(uuid4()),
+        place_name=google_result.get("name", ""),
+        place_type=place_type,
+        attributes=PlaceAttributes(price_hint=price_hint),
+        provider_id=provider_id,
+        lat=lat,
+        lng=lng,
+        address=google_result.get("vicinity"),
+        rating=rating if isinstance(rating, int | float) else None,
+        popularity=popularity,
+        geo_fresh=lat is not None and lng is not None,
+    )
 
 
-class CandidateMapper(Protocol):
-    """Protocol for converting source objects to Candidate."""
+def _map_google_price_level(price_level: int | None) -> str | None:
+    """Google Places price_level (0-4) → canonical price_hint.
 
-    def map(self, source_object: Any) -> Candidate:
-        """Convert source object to Candidate."""
-        ...
-
-
-class RecallResultToCandidateMapper:
-    """Converts RecallResult (saved place) to Candidate (source="saved")."""
-
-    def map(self, recall_result: RecallResult) -> Candidate:
-        """Convert RecallResult to Candidate with source="saved".
-
-        Distance is set to 0.0 at construction; ConsultService computes
-        actual distance post-retrieval based on search_location.
-        """
-        return Candidate(
-            place_id=recall_result.place_id,
-            place_name=recall_result.place_name,
-            address=recall_result.address,
-            cuisine=recall_result.cuisine,
-            price_range=recall_result.price_range,
-            lat=recall_result.lat,
-            lng=recall_result.lng,
-            external_id=recall_result.external_id,
-            source="saved",
-            popularity_score=0.5,  # Default for saved places without ratings
-            ambiance=None,
-            crowd_level=None,
-            time_of_day=None,
-            dietary_pref=None,
-            cuisine_frequency=None,
-            cuisine_adventurousness=None,
-            distance=0.0,
-        )
-
-
-class ExternalCandidateMapper:
-    """Converts Google Places Nearby Search result to Candidate (source="discovered")."""
-
-    @staticmethod
-    def _map_price_level(price_level: int | None) -> str | None:
-        """Map Google Places price_level (0-4) to canonical strings.
-
-        0 → None (free or no price info)
-        1, 2 → "low"
-        3 → "mid"
-        4 → "high"
-        """
-        if price_level is None:
-            return None
-        if price_level in (1, 2):
-            return "low"
-        if price_level == 3:
-            return "mid"
-        if price_level == 4:
-            return "high"
+    0          → None (free / unknown)
+    1, 2       → "cheap"   (equivalent to legacy "low")
+    3          → "moderate" (equivalent to legacy "mid")
+    4          → "expensive" (equivalent to legacy "high")
+    """
+    if price_level is None:
         return None
-
-    def map(self, google_result: dict[str, Any]) -> Candidate:
-        """Convert Google Places Nearby Search result to Candidate (source="discovered").
-
-        Args:
-            google_result: Result dict from Google Places API with keys:
-                place_id, name, vicinity, geometry, rating, price_level, types
-
-        Returns:
-            Candidate with source="discovered"
-        """
-        geometry = google_result.get("geometry", {})
-        location = geometry.get("location", {})
-
-        # Normalize rating (0.0–5.0) to 0.0–1.0
-        rating = google_result.get("rating", 0.0)
-        popularity_score = min(1.0, rating / 5.0) if rating else 0.5
-
-        return Candidate(
-            place_id=google_result["place_id"],
-            place_name=google_result.get("name", ""),
-            address=google_result.get("vicinity", ""),
-            cuisine=None,  # Google Places doesn't return cuisine in Nearby Search
-            price_range=self._map_price_level(google_result.get("price_level")),
-            lat=location.get("lat"),
-            lng=location.get("lng"),
-            external_id=google_result.get("place_id"),
-            source="discovered",
-            popularity_score=popularity_score,
-            ambiance=None,
-            crowd_level=None,
-            time_of_day=None,
-            dietary_pref=None,
-            cuisine_frequency=None,
-            cuisine_adventurousness=None,
-            distance=0.0,
-        )
+    if price_level in (1, 2):
+        return "cheap"
+    if price_level == 3:
+        return "moderate"
+    if price_level == 4:
+        return "expensive"
+    return None

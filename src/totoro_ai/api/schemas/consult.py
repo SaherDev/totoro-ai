@@ -1,6 +1,16 @@
-"""Request and response schemas for POST /v1/consult endpoint."""
+"""Request and response schemas for POST /v1/consult endpoint.
 
-from pydantic import BaseModel
+The response carries the full `PlaceObject` per result (Tier 1/2/3 fields)
+so the agent tool (see `agent-tool-design.md`) can project whichever
+attributes it needs without a second fetch. The ranker's normalized score
+is surfaced as `confidence` on each item.
+"""
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from totoro_ai.core.places.models import PlaceObject
 
 
 class Location(BaseModel):
@@ -16,23 +26,13 @@ class ConsultRequest(BaseModel):
     user_id: str
     query: str
     location: Location | None = None
-
-
-class PlacePhotos(BaseModel):
-    """Photo URLs for a recommended place."""
-
-    hero: str | None = None
-    square: str | None = None
-
-
-class PlaceResult(BaseModel):
-    """A recommended place in the response."""
-
-    place_name: str
-    address: str
-    reasoning: str
-    source: str  # "saved" | "discovered"
-    photos: PlacePhotos = PlacePhotos()
+    signal_tier: Literal["cold", "warming", "chip_selection", "active"] | None = Field(
+        default=None,
+        description=(
+            "Optional tier hint (feature 023). Forwarded by the product repo "
+            "from GET /v1/user/context. When null, consult defaults to 'active'."
+        ),
+    )
 
 
 class ReasoningStep(BaseModel):
@@ -42,9 +42,32 @@ class ReasoningStep(BaseModel):
     summary: str
 
 
-class ConsultResponse(BaseModel):
-    """Response body for POST /v1/consult."""
+class ConsultResult(BaseModel):
+    """One recommendation in the consult response.
 
-    primary: PlaceResult
-    alternatives: list[PlaceResult]
+    `place` is the fully enriched `PlaceObject` (`enriched=True`, Tier 2
+    geo and Tier 3 details populated). `source` is `"saved"` when the row
+    came from the user's recall set and `"discovered"` when it came from
+    Google Places Nearby Search. No numeric score — ranking is deferred
+    to the agent (ADR-058).
+    """
+
+    place: PlaceObject
+    source: str  # "saved" | "discovered"
+
+
+class ConsultResponse(BaseModel):
+    """Response body for POST /v1/consult.
+
+    `results` is ordered by `confidence` descending (the ranker sorts
+    internally) and capped at 3 entries. `reasoning_steps` is a flat
+    trace of the six-step pipeline — useful for eval/debug, not required
+    for the UI.
+    """
+
+    recommendation_id: str | None = Field(
+        default=None,
+        description="UUID from recommendations table. Null if persist failed.",
+    )
+    results: list[ConsultResult]
     reasoning_steps: list[ReasoningStep]

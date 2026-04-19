@@ -66,6 +66,12 @@ models:
     max_tokens: 1024
     temperature: 0.9
 
+  taste_regen:
+    provider: openai
+    model: gpt-4o-mini
+    max_tokens: 512
+    temperature: 0.3
+
   intent_router:
     provider: groq
     model: llama-3.1-8b-instant
@@ -102,7 +108,12 @@ extraction:
       vision_frames: 0.55
     corroboration_bonus: 0.10
     max_score: 0.97
-    save_threshold: 0.70
+    # ADR-057: two-band save gate.
+    #   confidence < save_threshold    → not written, surfaces as "failed".
+    #   save_threshold ≤ c < confident → written with status "needs_review".
+    #   confidence ≥ confident_threshold → written silently as "saved".
+    save_threshold: 0.30
+    confident_threshold: 0.70
   circuit_breaker_threshold: 5
   circuit_breaker_cooldown: 900
   vision:
@@ -167,10 +178,10 @@ consult:
   max_alternatives: 2
   placeholder_photo_url: "https://placehold.co/800x450.webp"
   response_timeout_seconds: 10
-  radius_defaults:
-    default: 2000
-    nearby: 1000
-    walking: 500
+  default_radius_m: 1500
+  nearby_radius_m: 500
+  walking_radius_m: 1000
+  total_cap: 3
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration
@@ -178,81 +189,49 @@ consult:
 # ---------------------------------------------------------------------------
 embeddings:
   dimensions: 1024
-  description_separator: ", "
+  description_separator: " | "
+  description_fields:
+    - place_name
+    - subcategory
+    - place_type
+    - cuisine
+    - ambiance
+    - price_hint
+    - tags
+    - good_for
+    - dietary
+    - neighborhood
+    - city
+    - country
+
+# ---------------------------------------------------------------------------
+# Prompt Templates (ADR-059)
+# Logical name → file path relative to config/prompts/
+# Code loads via get_config().prompts["name"], cached on first read.
+# Migrate hardcoded prompts here incrementally.
+# ---------------------------------------------------------------------------
+prompts:
+  taste_regen: taste_regen.txt
 
 # ---------------------------------------------------------------------------
 # Taste Model Configuration
-# ADR-043: EMA-based taste modeling with gain-weighted dimension updates
+# Signal-counts aggregation + LLM-generated taste_profile_summary + chips
+# ADR-058: RankingService deleted, agent-driven ranking deferred
 # ---------------------------------------------------------------------------
 taste_model:
-  ema:
-    price_comfort: 0.03
-    dietary_alignment: 0.03
-    cuisine_frequency: 0.07
-    ambiance_preference: 0.07
-    crowd_tolerance: 0.10
-    cuisine_adventurousness: 0.10
-    time_of_day_preference: 0.15
-    distance_tolerance: 0.15
-  signals:
-    save: 1.0
-    accepted: 2.0
-    rejected: -1.5
-    onboarding_explicit_positive: 1.2
-    onboarding_explicit_negative: -0.8
-    ignored: -0.5
-    repeat_visit: 3.0
-    search_accepted: 1.5
-  observations:
-    # Lookup table: place metadata → v_observation per dimension
-    price_comfort:
-      low: 1.0
-      mid: 0.5
-      high: 0.0
-    dietary_alignment:
-      vegan: 1.0
-      vegetarian: 0.75
-      pescatarian: 0.5
-      omnivore: 0.25
-    cuisine_frequency:
-      rare: 0.0
-      occasional: 0.33
-      frequent: 0.66
-      very_frequent: 1.0
-    ambiance_preference:
-      casual: 0.25
-      moderate: 0.5
-      upscale: 1.0
-    crowd_tolerance:
-      quiet: 0.0
-      moderate: 0.5
-      busy: 1.0
-    cuisine_adventurousness:
-      familiar: 0.0
-      exploration: 0.5
-      experimental: 1.0
-    time_of_day_preference:
-      breakfast: 0.0
-      lunch: 0.33
-      dinner: 0.66
-      late_night: 1.0
-    distance_tolerance:
-      very_close: 1.0
-      nearby: 0.66
-      moderate: 0.33
-      far: 0.0
-
-# ---------------------------------------------------------------------------
-# Ranking Configuration
-# ADR-043: Multi-factor ranking with taste-driven personalization
-# ---------------------------------------------------------------------------
-ranking:
-  weights:
-    taste_similarity: 0.40
-    distance: 0.25
-    price_fit: 0.20
-    popularity: 0.15
-    source_boost: 0.15
+  debounce_window_seconds: 30
+  regen:
+    min_signals: 3
+    early_signal_threshold: 10
+  chip_threshold: 2
+  chip_max_count: 8
+  chip_selection_stages:
+    round_1: 5
+    round_2: 20
+    round_3: 50
+  warming_blend:
+    discovered: 0.8
+    saved: 0.2
 
 # ---------------------------------------------------------------------------
 # User Memory Configuration
@@ -262,3 +241,20 @@ memory:
   confidence:
     stated: 0.9
     inferred: 0.6
+
+# ---------------------------------------------------------------------------
+# PlacesService Configuration (ADR-054, feature 019)
+# Single TTL for both the geo cache (Tier 2) and the enrichment cache
+# (Tier 3), plus the per-request cap on external provider fetches in
+# enrich_batch(geo_only=False).
+# ---------------------------------------------------------------------------
+places:
+  cache_ttl_days: 30
+  # Per-consult fetch cap. Raised from 10 to 20 after the initial cap hit
+  # on real Bangkok queries (1 saved + 19 discovered). Combined with the
+  # saved-pid priority in `_fetch_and_split_misses`, saved places are
+  # guaranteed to be fetched and discovered places get the remaining
+  # budget up to this cap. Each fetch is a single Places API (New) Pro-
+  # tier call, cached for `cache_ttl_days`, so the amortized cost is
+  # dominated by the first consult for each place_id.
+  max_enrichment_batch: 20

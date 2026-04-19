@@ -1,13 +1,39 @@
-"""Tests for new cascade types in types.py."""
+"""Tests for extraction-cascade types."""
 
 from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionContext,
     ExtractionLevel,
     ExtractionPending,
-    ExtractionResult,
     ProvisionalResponse,
+    ValidatedCandidate,
 )
+from totoro_ai.core.places import (
+    LocationContext,
+    PlaceAttributes,
+    PlaceCreate,
+    PlaceProvider,
+    PlaceType,
+)
+
+
+def _place(
+    name: str = "Fuji Ramen",
+    provider: PlaceProvider | None = None,
+    external_id: str | None = None,
+) -> PlaceCreate:
+    return PlaceCreate(
+        user_id="u1",
+        place_name=name,
+        place_type=PlaceType.food_and_drink,
+        subcategory="restaurant",
+        attributes=PlaceAttributes(
+            cuisine="ramen",
+            location_context=LocationContext(city="Bangkok"),
+        ),
+        provider=provider,
+        external_id=external_id,
+    )
 
 
 class TestExtractionLevel:
@@ -23,34 +49,23 @@ class TestExtractionLevel:
 
 
 class TestCandidatePlace:
-    def test_instantiation(self) -> None:
-        c = CandidatePlace(
-            name="Fuji Ramen",
-            city="Bangkok",
-            cuisine="ramen",
-            source=ExtractionLevel.EMOJI_REGEX,
-        )
-        assert c.name == "Fuji Ramen"
-        assert c.city == "Bangkok"
-        assert c.cuisine == "ramen"
+    def test_wraps_place_create(self) -> None:
+        c = CandidatePlace(place=_place(), source=ExtractionLevel.EMOJI_REGEX)
+        assert c.place.place_name == "Fuji Ramen"
+        assert c.place.attributes.cuisine == "ramen"
         assert c.source == ExtractionLevel.EMOJI_REGEX
         assert c.corroborated is False
-
-    def test_corroborated_default_false(self) -> None:
-        c = CandidatePlace(
-            name="X", city=None, cuisine=None, source=ExtractionLevel.LLM_NER
-        )
-        assert c.corroborated is False
+        assert c.signals == []
 
     def test_corroborated_can_be_set(self) -> None:
         c = CandidatePlace(
-            name="X",
-            city=None,
-            cuisine=None,
+            place=_place(),
             source=ExtractionLevel.LLM_NER,
             corroborated=True,
+            signals=["caption"],
         )
         assert c.corroborated is True
+        assert c.signals == ["caption"]
 
 
 class TestExtractionContext:
@@ -64,39 +79,35 @@ class TestExtractionContext:
         assert ctx.candidates == []
         assert ctx.pending_levels == []
 
-    def test_instantiation_plain_text(self) -> None:
-        ctx = ExtractionContext(
-            url=None, user_id="u2", supplementary_text="ramen in Tokyo"
-        )
-        assert ctx.url is None
-        assert ctx.supplementary_text == "ramen in Tokyo"
-
     def test_candidates_are_independent_instances(self) -> None:
         ctx1 = ExtractionContext(url=None, user_id="u1")
         ctx2 = ExtractionContext(url=None, user_id="u2")
         ctx1.candidates.append(
-            CandidatePlace(
-                name="A", city=None, cuisine=None, source=ExtractionLevel.LLM_NER
-            )
+            CandidatePlace(place=_place(name="A"), source=ExtractionLevel.LLM_NER)
         )
         assert ctx2.candidates == []
 
 
-class TestExtractionResult:
-    def test_instantiation(self) -> None:
-        r = ExtractionResult(
-            place_name="Fuji Ramen",
-            address="123 Sukhumvit, Bangkok",
-            city="Bangkok",
-            cuisine="ramen",
+class TestValidatedCandidate:
+    def test_instantiation_with_place_create(self) -> None:
+        vc = ValidatedCandidate(
+            place=_place(
+                name="Fuji Ramen",
+                provider=PlaceProvider.google,
+                external_id="ChIJ123",
+            ),
             confidence=0.95,
             resolved_by=ExtractionLevel.EMOJI_REGEX,
             corroborated=False,
-            external_provider="google",
-            external_id="ChIJ123",
         )
-        assert r.confidence == 0.95
-        assert r.resolved_by == ExtractionLevel.EMOJI_REGEX
+        assert vc.confidence == 0.95
+        assert vc.resolved_by == ExtractionLevel.EMOJI_REGEX
+        assert vc.place.provider == PlaceProvider.google
+        assert vc.place.external_id == "ChIJ123"
+        assert vc.place.attributes.cuisine == "ramen"
+        # City lives on attributes.location_context, not on the wrapper.
+        assert vc.place.attributes.location_context is not None
+        assert vc.place.attributes.location_context.city == "Bangkok"
 
 
 class TestProvisionalResponse:

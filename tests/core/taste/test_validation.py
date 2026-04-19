@@ -1,0 +1,197 @@
+"""Tests for validate_grounded and format_summary_for_agent (regen module)."""
+
+from __future__ import annotations
+
+import pytest
+
+from totoro_ai.core.taste.aggregation import (
+    AttributeCounts,
+    SignalCounts,
+    TotalCounts,
+)
+from totoro_ai.core.taste.regen import format_summary_for_agent, validate_grounded
+from totoro_ai.core.taste.schemas import Chip, SummaryLine, TasteArtifacts
+
+
+@pytest.fixture()
+def signal_counts() -> SignalCounts:
+    return SignalCounts(
+        totals=TotalCounts(saves=10),
+        attributes=AttributeCounts(
+            cuisine={"japanese": 8, "italian": 5},
+        ),
+        subcategory={"food_and_drink": {"restaurant": 6, "cafe": 4}},
+        source={"tiktok": 7},
+    )
+
+
+# ---------------------------------------------------------------------------
+# validate_grounded — summary lines
+# ---------------------------------------------------------------------------
+
+
+def test_valid_summary_line_passes(signal_counts: SignalCounts) -> None:
+    line = SummaryLine(
+        text="Loves Japanese food",
+        signal_count=8,
+        source_field="attributes.cuisine",
+        source_value="japanese",
+    )
+    artifacts = TasteArtifacts(summary=[line], chips=[])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert len(validated.summary) == 1
+    assert validated.summary[0].text == "Loves Japanese food"
+    assert dropped == []
+
+
+def test_bad_source_field_drops_summary(signal_counts: SignalCounts) -> None:
+    line = SummaryLine(
+        text="Loves Mexican food",
+        signal_count=3,
+        source_field="attributes.nonexistent",
+        source_value="mexican",
+    )
+    artifacts = TasteArtifacts(summary=[line], chips=[])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert len(validated.summary) == 0
+    assert len(dropped) == 1
+    assert dropped[0]["type"] == "summary"
+    assert dropped[0]["source_field"] == "attributes.nonexistent"
+
+
+def test_null_source_value_for_aggregate_passes(signal_counts: SignalCounts) -> None:
+    """SummaryLine with source_value=None passes if the path exists."""
+    line = SummaryLine(
+        text="Saves lots of restaurants",
+        signal_count=10,
+        source_field="totals",
+        source_value=None,
+    )
+    artifacts = TasteArtifacts(summary=[line], chips=[])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert len(validated.summary) == 1
+    assert dropped == []
+
+
+# ---------------------------------------------------------------------------
+# validate_grounded — chips
+# ---------------------------------------------------------------------------
+
+
+def test_valid_chip_passes(signal_counts: SignalCounts) -> None:
+    chip = Chip(
+        label="Japanese",
+        source_field="attributes.cuisine",
+        source_value="japanese",
+        signal_count=8,
+    )
+    artifacts = TasteArtifacts(summary=[], chips=[chip])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert len(validated.chips) == 1
+    assert validated.chips[0].label == "Japanese"
+    assert dropped == []
+
+
+def test_bad_source_field_drops_chip(signal_counts: SignalCounts) -> None:
+    chip = Chip(
+        label="Thai",
+        source_field="attributes.nonexistent",
+        source_value="thai",
+        signal_count=5,
+    )
+    artifacts = TasteArtifacts(summary=[], chips=[chip])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert len(validated.chips) == 0
+    assert len(dropped) == 1
+    assert dropped[0]["type"] == "chip"
+    assert dropped[0]["source_field"] == "attributes.nonexistent"
+
+
+def test_mismatched_source_value_drops(signal_counts: SignalCounts) -> None:
+    """Chip with a value not present at the valid path is dropped."""
+    chip = Chip(
+        label="Thai",
+        source_field="attributes.cuisine",
+        source_value="thai",
+        signal_count=5,
+    )
+    artifacts = TasteArtifacts(summary=[], chips=[chip])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert len(validated.chips) == 0
+    assert len(dropped) == 1
+    assert dropped[0]["type"] == "chip"
+
+
+def test_chip_below_min_signal_count_drops(signal_counts: SignalCounts) -> None:
+    """Chips with signal_count < 3 are dropped regardless of grounding."""
+    chip = Chip(
+        label="Italian",
+        source_field="attributes.cuisine",
+        source_value="italian",
+        signal_count=2,
+    )
+    artifacts = TasteArtifacts(summary=[], chips=[chip])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert len(validated.chips) == 0
+    assert len(dropped) == 1
+    assert dropped[0]["reason"] == "signal_count < 3"
+
+
+def test_all_items_dropped_returns_empty(signal_counts: SignalCounts) -> None:
+    """When every item fails validation, returns empty lists and logs warning."""
+    line = SummaryLine(
+        text="Bad line",
+        signal_count=3,
+        source_field="nonexistent.path",
+        source_value="x",
+    )
+    chip = Chip(
+        label="Bad chip",
+        source_field="nonexistent.path",
+        source_value="y",
+        signal_count=5,
+    )
+    artifacts = TasteArtifacts(summary=[line], chips=[chip])
+    validated, dropped = validate_grounded(artifacts, signal_counts)
+
+    assert validated.summary == []
+    assert validated.chips == []
+    assert len(dropped) == 2
+
+
+# ---------------------------------------------------------------------------
+# format_summary_for_agent
+# ---------------------------------------------------------------------------
+
+
+def test_format_summary_for_agent_joins_lines() -> None:
+    lines = [
+        SummaryLine(
+            text="Loves Japanese food",
+            signal_count=8,
+            source_field="attributes.cuisine",
+            source_value="japanese",
+        ),
+        SummaryLine(
+            text="Frequent restaurant-goer",
+            signal_count=6,
+            source_field="subcategory.food_and_drink",
+            source_value="restaurant",
+        ),
+    ]
+    result = format_summary_for_agent(lines)
+
+    assert result == (
+        "- Loves Japanese food [8 signals]\n- Frequent restaurant-goer [6 signals]"
+    )
+
+
+def test_format_summary_for_agent_empty() -> None:
+    assert format_summary_for_agent([]) == ""

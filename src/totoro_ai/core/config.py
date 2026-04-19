@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
@@ -74,10 +74,15 @@ class ConfidenceWeights(BaseModel):
 
 
 class ConfidenceConfig(BaseModel):
-    """Per-level confidence scoring config (ADR-029).
+    """Per-level confidence scoring config (ADR-029, ADR-057).
 
     base_scores keys are ExtractionLevel.value strings (e.g. "emoji_regex").
     max_score caps the output — no extraction path earns 1.0.
+
+    Two-band save gate (ADR-057):
+      confidence <  save_threshold      → not written, surfaces as "failed".
+      save_threshold ≤ c < confident    → written with status "needs_review".
+      confidence ≥  confident_threshold → written silently as "saved".
     """
 
     base_scores: dict[str, float] = {
@@ -95,7 +100,8 @@ class ConfidenceConfig(BaseModel):
     }
     corroboration_bonus: float = 0.10
     max_score: float = 0.97
-    save_threshold: float = 0.70
+    save_threshold: float = 0.30
+    confident_threshold: float = 0.70
 
 
 class ExtractionThresholds(BaseModel):
@@ -167,8 +173,31 @@ class ExternalServicesConfig(BaseModel):
 
 
 class EmbeddingsConfig(BaseModel):
+    """Embedding configuration (ADR-054).
+
+    `description_fields` drives the order and inclusion of `PlaceObject`
+    Tier 1 fields in the embedding input. The persistence layer walks this
+    list and emits each available value separated by
+    `description_separator`. Retrieval evals can re-tune field order and
+    inclusion by editing the config and re-embedding — no code change.
+    """
+
     dimensions: int = 1024
-    description_separator: str = ", "
+    description_separator: str = " | "
+    description_fields: list[str] = [
+        "place_name",
+        "subcategory",
+        "place_type",
+        "cuisine",
+        "ambiance",
+        "price_hint",
+        "tags",
+        "good_for",
+        "dietary",
+        "neighborhood",
+        "city",
+        "country",
+    ]
 
 
 class SystemPromptsConfig(BaseModel):
@@ -178,21 +207,14 @@ class SystemPromptsConfig(BaseModel):
     )
 
 
-class RadiusDefaultsConfig(BaseModel):
-    """Default radius values for intent parsing (in metres)."""
-
-    default: int
-    nearby: int
-    walking: int
-
-
 class ConsultConfig(BaseModel):
     max_alternatives: int = 2
     placeholder_photo_url: str = "https://placehold.co/800x450.webp"
     response_timeout_seconds: int = 10
-    radius_defaults: RadiusDefaultsConfig = RadiusDefaultsConfig(
-        default=2000, nearby=1000, walking=500
-    )
+    default_radius_m: int = 1500
+    nearby_radius_m: int = 500
+    walking_radius_m: int = 1000
+    total_cap: int = 3
 
 
 class RecallConfig(BaseModel):
@@ -203,67 +225,44 @@ class RecallConfig(BaseModel):
     max_cosine_distance: float = 0.65
 
 
-class TasteModelEmaConfig(BaseModel):
-    """EMA decay rates per dimension"""
+class TasteRegenConfig(BaseModel):
+    """Regen thresholds for taste profile regeneration."""
 
-    price_comfort: float
-    dietary_alignment: float
-    cuisine_frequency: float
-    ambiance_preference: float
-    crowd_tolerance: float
-    cuisine_adventurousness: float
-    time_of_day_preference: float
-    distance_tolerance: float
+    min_signals: int = 3
+    early_signal_threshold: int = 10
 
 
-class TasteModelSignalsConfig(BaseModel):
-    """Signal gain values per interaction type"""
+class WarmingBlendConfig(BaseModel):
+    """Warming-tier candidate-count ratio (feature 023).
 
-    save: float
-    accepted: float
-    rejected: float
-    onboarding_explicit_positive: float
-    onboarding_explicit_negative: float
-    ignored: float
-    repeat_visit: float
-    search_accepted: float
+    Applied in `ConsultService.consult` when the user's signal_tier is
+    "warming". Values must sum to 1.0 — enforced below.
+    """
 
+    discovered: float = 0.8
+    saved: float = 0.2
 
-class TasteModelObservationsConfig(BaseModel):
-    """Observation value lookup tables per dimension"""
-
-    price_comfort: dict[str, float] = {}
-    dietary_alignment: dict[str, float] = {}
-    cuisine_frequency: dict[str, float] = {}
-    ambiance_preference: dict[str, float] = {}
-    crowd_tolerance: dict[str, float] = {}
-    cuisine_adventurousness: dict[str, float] = {}
-    time_of_day_preference: dict[str, float] = {}
-    distance_tolerance: dict[str, float] = {}
+    @model_validator(mode="after")
+    def _sum_to_one(self) -> "WarmingBlendConfig":
+        if abs((self.discovered + self.saved) - 1.0) > 1e-6:
+            raise ValueError(
+                f"warming_blend weights must sum to 1.0 "
+                f"(got discovered={self.discovered}, saved={self.saved})"
+            )
+        return self
 
 
 class TasteModelConfig(BaseModel):
-    """Taste model configuration"""
+    """Taste model configuration (ADR-058: signal_counts + LLM summary + chips)."""
 
-    ema: TasteModelEmaConfig
-    signals: TasteModelSignalsConfig
-    observations: TasteModelObservationsConfig = TasteModelObservationsConfig()
-
-
-class RankingWeightsConfig(BaseModel):
-    """Ranking score weights"""
-
-    taste_similarity: float
-    distance: float
-    price_fit: float
-    popularity: float
-    source_boost: float = 0.15
-
-
-class RankingConfig(BaseModel):
-    """Ranking configuration"""
-
-    weights: RankingWeightsConfig
+    debounce_window_seconds: int = 30
+    regen: TasteRegenConfig = TasteRegenConfig()
+    chip_threshold: int = 2
+    chip_max_count: int = 8
+    chip_selection_stages: dict[str, int] = Field(
+        default_factory=lambda: {"round_1": 5, "round_2": 20, "round_3": 50}
+    )
+    warming_blend: WarmingBlendConfig = WarmingBlendConfig()
 
 
 class MemoryConfidenceConfig(BaseModel):
@@ -296,6 +295,33 @@ class AppProvidersConfig(BaseModel):
     )
 
 
+class PlacesConfig(BaseModel):
+    """PlacesService cache TTL and per-request fetch cap (ADR-054, feature 019).
+
+    - cache_ttl_days: single lifetime for both the Tier 2 geo cache and the
+      Tier 3 enrichment cache. Both set_batch methods in PlacesCache use
+      `cache_ttl_days * 86400` seconds. Default 30 days.
+    - max_enrichment_batch: per-request cap on external provider fetches
+      in PlacesService.enrich_batch(geo_only=False). Counts unique provider_id,
+      not input positions.
+    """
+
+    cache_ttl_days: int = 30
+    max_enrichment_batch: int = 10
+
+
+class PromptConfig(BaseModel):
+    """A loaded prompt template (ADR-059).
+
+    YAML declares `name: filename`. On config load, the file is read
+    and the content is stored here. Access via get_config().prompts["name"].content.
+    """
+
+    name: str
+    file: str
+    content: str
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -306,20 +332,58 @@ class AppConfig(BaseModel):
     system_prompts: SystemPromptsConfig = SystemPromptsConfig()
     consult: ConsultConfig = ConsultConfig()
     recall: RecallConfig = RecallConfig()
-    taste_model: TasteModelConfig
-    ranking: RankingConfig
+    taste_model: TasteModelConfig = TasteModelConfig()
     memory: MemoryConfig = MemoryConfig()
+    places: PlacesConfig = PlacesConfig()
+    prompts: dict[str, PromptConfig] = {}
+
+
+def _load_prompts(raw: dict[str, str]) -> dict[str, PromptConfig]:
+    """Read prompt files from disk and return loaded PromptConfig objects."""
+    prompts_dir = find_project_root() / "config" / "prompts"
+    loaded: dict[str, PromptConfig] = {}
+    for name, filename in raw.items():
+        path = prompts_dir / filename
+        if not path.exists():
+            raise FileNotFoundError(f"Prompt '{name}' file not found: {path}")
+        loaded[name] = PromptConfig(
+            name=name,
+            file=filename,
+            content=path.read_text(),
+        )
+    return loaded
 
 
 _config: AppConfig | None = None
 
 
 def get_config() -> AppConfig:
-    """Return the AppConfig singleton, loading app.yaml on first call."""
+    """Return the AppConfig singleton, loading app.yaml on first call.
+
+    Prompt files are read from disk during this call (ADR-059).
+    """
     global _config
     if _config is None:
-        _config = AppConfig(**load_yaml_config("app.yaml"))
+        raw = load_yaml_config("app.yaml")
+        raw["prompts"] = _load_prompts(raw.get("prompts") or {})
+        _config = AppConfig(**raw)
     return _config
+
+
+def get_prompt(name: str) -> str:
+    """Get a loaded prompt's content by logical name (ADR-059).
+
+    Raises:
+        KeyError: If name not found in app.yaml prompts section.
+    """
+    config = get_config()
+    prompt = config.prompts.get(name)
+    if prompt is None:
+        raise KeyError(
+            f"Prompt '{name}' not found in app.yaml prompts section. "
+            f"Available: {list(config.prompts.keys())}"
+        )
+    return prompt.content
 
 
 # ---------------------------------------------------------------------------

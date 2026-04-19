@@ -76,18 +76,18 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **Task-driven workflow.** Each task arrives scoped — execute it. No phase gates.
 - **Git comment char is `;`** not `#`. Configured in this repo's git config. Commit messages and interactive rebase use `;` for comments.
 - **Secrets in `.env`**: Root `.env` (gitignored symlink). Non-secret config (app metadata, models, extraction weights) lives in `config/app.yaml` (committed). If a command fails with missing API key, check `totoro-config/secrets/ai.env.local`.
-- **Database write split**: Shared PostgreSQL instance on Railway. This repo writes AI data (places, embeddings, taste_model, consult_logs, user_memories, interaction_log) and owns their migrations via Alembic. NestJS writes product data (users, user_settings) via TypeORM with `synchronize: true`. Never cross ownership boundaries.
+- **Database write split**: Shared PostgreSQL instance on Railway. This repo writes AI data (places, embeddings, taste_model, recommendations, user_memories, interaction_log) and owns their migrations via Alembic. NestJS writes product data (users, user_settings) via TypeORM with `synchronize: true`. Never cross ownership boundaries.
 - **Redis caching**: LLM responses are cached in Redis. When changing prompt templates or model config, consider cache invalidation.
 - **Langfuse tracing**: All LLM calls should be traced via Langfuse. Missing traces usually means the Langfuse callback handler wasn't attached.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
-- 018-user-memory-layer: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, Langfuse, Instructor (for IntentParser)
-- 017-unified-chat-router: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, OpenAI SDK, Langfuse
-- 016-chat-assistant-service: Added Python 3.11 + FastAPI 0.115, Pydantic 2.10, OpenAI SDK, Langfuse
+- 023-onboarding-signal-tier: Signal tier (cold/warming/chip_selection/active) derived from config-driven `chip_selection_stages` (ADR-061). `GET /v1/user/context` returns `signal_tier` + chips with `status`/`selection_round`. Product repo gates tier routing — it reads `/v1/user/context` and forwards `signal_tier` on `/v1/chat` + `/v1/consult` requests; `ConsultResponse` is NOT extended with an envelope. New `chip_confirm` variant on `POST /v1/signal` writes a CHIP_CONFIRM interaction row with metadata, merges chip statuses (confirmed immutable; rejected may resurface when signal grows), and dispatches `ChipConfirmed` which forces an immediate taste-profile rewrite. Warming tier applies a config-driven 80/20 discovered/saved candidate-count blend.
+- 022-recommendations-context-signals: Renamed `consult_logs` → `recommendations` (ADR-060). ConsultService returns `recommendation_id`. New `GET /v1/user/context` (taste chips + saved count). Replaced `POST /v1/feedback` with `POST /v1/signal` (recommendation_id validation, discriminated union).
+- 021-taste-profile-memory: Replaced EMA taste model with signal_counts + LLM summary + chips (ADR-058). Deleted RankingService. Simplified interactions table (InteractionType enum, append-only, no gain/context). Debounced regen via asyncio. Unified `on_taste_signal` handler. ConsultService returns candidates unranked (agent-driven ranking deferred).
 
 
 ## Active Technologies
-- Python 3.11 + FastAPI 0.115, Pydantic 2.10, SQLAlchemy async, Alembic, Langfuse, Instructor (for IntentParser) (018-user-memory-layer)
-- PostgreSQL (`user_memories` table via Alembic) (018-user-memory-layer)
+- Python 3.11, FastAPI, SQLAlchemy async + asyncpg, Pydantic 2, Instructor, pgvector, Redis, Langfuse, Alembic. Voyage embeddings; Claude Opus orchestrator; GPT-4o-mini for taste regen + chat assistant.
+- PostgreSQL on Railway (this repo writes `places`, `embeddings`, `taste_model`, `interactions`, `recommendations`, `user_memories`). TypeORM in the product repo owns `users`, `user_settings`.
 

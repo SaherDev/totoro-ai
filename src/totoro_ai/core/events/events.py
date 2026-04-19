@@ -49,6 +49,16 @@ class OnboardingSignal(DomainEvent):
     confirmed: bool
 
 
+class ChipConfirmed(DomainEvent):
+    """Event: User submitted chip_confirm selections (feature 023).
+
+    Carries only user_id — the handler re-reads fresh chip state from the
+    DB so stale payloads can't corrupt the rewrite.
+    """
+
+    event_type: str = "chip_confirmed"
+
+
 class PersonalFactsExtracted(DomainEvent):
     """Event: Personal facts extracted from user message.
 

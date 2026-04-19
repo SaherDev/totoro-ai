@@ -1,14 +1,68 @@
 """Extraction service orchestrating the cascade pipeline."""
 
 import logging
+from uuid import uuid4
 
-from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse, SavedPlace
+from totoro_ai.api.schemas.extract_place import (
+    ExtractPlaceItem,
+    ExtractPlaceResponse,
+)
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.input_parser import parse_input
-from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
+from totoro_ai.core.extraction.persistence import (
+    ExtractionPersistenceService,
+    PlaceSaveOutcome,
+)
 from totoro_ai.core.extraction.types import ProvisionalResponse
+from totoro_ai.core.places import PlaceSource
 
 logger = logging.getLogger(__name__)
+
+
+def _source_from_url(url: str | None) -> PlaceSource | None:
+    """Map a URL to the canonical `PlaceSource` value.
+
+    - tiktok.com        → PlaceSource.tiktok
+    - instagram.com     → PlaceSource.instagram
+    - youtube.com/youtu.be → PlaceSource.youtube
+    - any other http(s) → PlaceSource.link
+    - None (plain text) → None (the save tool leaves source unset)
+    """
+    if url is None:
+        return None
+    lowered = url.lower()
+    if "tiktok.com" in lowered:
+        return PlaceSource.tiktok
+    if "instagram.com" in lowered:
+        return PlaceSource.instagram
+    if "youtube.com" in lowered or "youtu.be" in lowered:
+        return PlaceSource.youtube
+    return PlaceSource.link
+
+
+def _outcome_to_item(outcome: PlaceSaveOutcome) -> ExtractPlaceItem:
+    """Project one `PlaceSaveOutcome` into an `ExtractPlaceItem`.
+
+    Below-threshold outcomes carry the validator confidence (so the caller
+    can see how close the cascade got) but `place` stays `None` and status
+    collapses to "failed" — the row was never written to the permanent
+    store.
+
+    "needs_review" passes through unchanged: the row was written and the
+    place is set, but the UI should prompt the user to confirm the match
+    (ADR-057).
+    """
+    if outcome.status == "below_threshold":
+        return ExtractPlaceItem(
+            place=None,
+            confidence=outcome.metadata.confidence,
+            status="failed",
+        )
+    return ExtractPlaceItem(
+        place=outcome.place,
+        confidence=outcome.metadata.confidence,
+        status=outcome.status,
+    )
 
 
 class ExtractionService:
@@ -25,22 +79,29 @@ class ExtractionService:
     async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
         """Extract places from raw input and persist them.
 
-        Args:
-            raw_input: TikTok URL or plain text
-            user_id: User identifier (validated by NestJS)
+        Generates a `request_id` at the top so every response — saved,
+        pending, or failed — carries the same correlation id. The ID is
+        used for Langfuse traces, log joins, and the pending-status polling
+        cache. Pending responses inherit the pipeline's own request_id when
+        present (the background handler keyed the status cache on it) and
+        fall back to the freshly-generated one otherwise.
 
-        Returns:
-            ExtractPlaceResponse where every pipeline candidate appears in
-            places with its own extraction_status ("saved", "duplicate",
-            "below_threshold").
+        Returns an `ExtractPlaceResponse` whose `results` list has one
+        `ExtractPlaceItem` per outcome of the cascade:
 
-        Raises:
-            ValueError: If raw_input is empty (→ 400)
+        - one "saved" / "needs_review" / "duplicate" item per successful
+          validation
+        - one "failed" item when nothing resolves or confidence is below
+          `save_threshold`
+        - one "pending" item when the pipeline dispatched background
+          enrichers (caller polls via `request_id`)
         """
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
 
         parsed = parse_input(raw_input)
+        source = _source_from_url(parsed.url)
+        request_id = uuid4().hex
 
         result = await self._pipeline.run(
             url=parsed.url,
@@ -50,56 +111,32 @@ class ExtractionService:
 
         if isinstance(result, ProvisionalResponse):
             return ExtractPlaceResponse(
-                provisional=True,
-                places=[],
-                pending_levels=[level.value for level in result.pending_levels],
-                extraction_status="processing",
+                results=[
+                    ExtractPlaceItem(place=None, confidence=None, status="pending")
+                ],
                 source_url=parsed.url,
-                request_id=result.request_id or None,
+                request_id=result.request_id or request_id,
             )
 
         if not result:
-            # Pipeline found no candidates and there was no URL to dispatch
-            # background enrichers against (plain text, no recognisable venue).
             return ExtractPlaceResponse(
-                provisional=False,
-                places=[],
-                pending_levels=[],
-                extraction_status="below_threshold",
+                results=[
+                    ExtractPlaceItem(place=None, confidence=None, status="failed")
+                ],
                 source_url=parsed.url,
+                request_id=request_id,
             )
 
-        outcomes = await self._persistence.save_and_emit(result, user_id)
-
-        places = [
-            SavedPlace(
-                place_id=outcome.place_id,
-                place_name=outcome.result.place_name,
-                address=outcome.result.address,
-                city=outcome.result.city,
-                cuisine=outcome.result.cuisine,
-                confidence=outcome.result.confidence,
-                resolved_by=outcome.result.resolved_by.value,
-                external_provider=outcome.result.external_provider,
-                external_id=outcome.result.external_id,
-                extraction_status=outcome.status,
-            )
-            for outcome in outcomes
-        ]
-
-        # Top-level status: "saved" if any saved, else dominant non-saved status
-        statuses = {o.status for o in outcomes}
-        if "saved" in statuses:
-            top_status = "saved"
-        elif "below_threshold" in statuses:
-            top_status = "below_threshold"
-        else:
-            top_status = "duplicate"
+        outcomes = await self._persistence.save_and_emit(
+            result,
+            user_id,
+            source_url=parsed.url,
+            source=source,
+        )
+        items = [_outcome_to_item(o) for o in outcomes]
 
         return ExtractPlaceResponse(
-            provisional=False,
-            places=places,
-            pending_levels=[],
-            extraction_status=top_status,
+            results=items,
             source_url=parsed.url,
+            request_id=request_id,
         )
