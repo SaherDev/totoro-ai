@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-062: LangGraph over LangChain agent abstractions for the Totoro agent
+
+**Date:** 2026-04-19\
+**Status:** accepted\
+**Context:** The Totoro agent requires a conversational loop where Claude Sonnet selects and calls tools (recall, save, consult) based on user intent. Two implementation paths were available: LangChain's high-level agent abstractions (create_react_agent, AgentExecutor) or LangGraph's StateGraph directly. LangChain abstractions offer a working agent in fewer lines but hide the loop internals. Five specific requirements made the abstraction unsuitable: (1) session state carrying taste_profile_summary, memory_summary, conversation history, user_id, and location must persist across multiple HTTP requests via a Redis-backed checkpointer; (2) NodeInterrupt is required to pause execution mid-loop when save extraction confidence is below threshold and resume after user confirmation; (3) user_id and location must be injected into every tool call from state without appearing in the LLM-visible tool schema; (4) get_stream_writer() must emit reasoning step events from inside tool service functions via SSE throughout execution; (5) the failure budget guard must route to a fallback node when steps_taken or error_count hit their limits, which requires custom routing logic beyond max_iterations.\
+**Decision:** Use LangGraph StateGraph directly. One graph, one agent node (Claude Sonnet), one tool node (ToolNode), a should_continue routing function that checks steps and errors, and a fallback node. LangChain is used only for its components: @tool decorator, ChatAnthropic, bind_tools(), and message types. No AgentExecutor, no create_react_agent().\
+**Consequences:** More boilerplate than create_react_agent() — the graph, nodes, edges, and checkpointer must be wired explicitly. This is the correct tradeoff: the boilerplate is the control. Any future change to routing logic, state shape, tool injection, or streaming behavior is a targeted edit to one explicit part of the graph rather than a workaround against an abstraction. LangGraph is the current production standard for agentic systems — LangChain's own team now recommends LangGraph over AgentExecutor for any new agent work. Working with StateGraph directly means operating at the level of the underlying primitives — nodes, edges, state, checkpointers, and interrupt/resume — rather than working around an abstraction that no longer reflects how production agents are built. LangChain agent abstractions remain available if a simpler throwaway agent is ever needed outside the main loop.
+
+---
+
 ## ADR-061: Config-driven signal tier derivation and chip status lifecycle
 
 **Date:** 2026-04-18\
