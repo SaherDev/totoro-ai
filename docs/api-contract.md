@@ -34,15 +34,19 @@ Unified place shape returned by every read and write path (ADR-054, feat 019). T
     "ambiance": "casual",
     "dietary": ["vegetarian"],
     "good_for": ["date_night"],
-    "location_context": { "neighborhood": "Ari", "city": "Bangkok", "country": "TH" }
+    "location_context": {
+      "neighborhood": "Ari",
+      "city": "Bangkok",
+      "country": "TH"
+    }
   },
   "source_url": "https://tiktok.com/@user/video/123",
   "source": "tiktok",
   "provider_id": "google:ChIJN1t_tDeuEmsRUsoyG83frY4",
   "created_at": "2026-04-12T10:15:00Z",
 
-  "lat": 13.7780,
-  "lng": 100.5410,
+  "lat": 13.778,
+  "lng": 100.541,
   "address": "123 Ari Soi 4, Bangkok 10400",
   "geo_fresh": true,
 
@@ -55,38 +59,38 @@ Unified place shape returned by every read and write path (ADR-054, feat 019). T
 }
 ```
 
-| Tier | Field | Type | Notes |
-|---|---|---|---|
-| 1 | `place_id` | `string` | Internal UUID/ULID; always present |
-| 1 | `place_name` | `string` | Always present |
-| 1 | `place_type` | `"food_and_drink" \| "things_to_do" \| "shopping" \| "services" \| "accommodation"` | Enum |
-| 1 | `subcategory` | `string \| null` | Validated against the per-type vocabulary (e.g. `"restaurant"`, `"cafe"`, `"museum"`) |
-| 1 | `tags` | `string[]` | Free-form labels |
-| 1 | `attributes` | `PlaceAttributes` | Structured JSONB; shape below |
-| 1 | `source_url` | `string \| null` | Original URL the place was extracted from |
-| 1 | `source` | `"tiktok" \| "instagram" \| "youtube" \| "manual" \| "link" \| "consult" \| null` | Acquisition channel |
-| 1 | `provider_id` | `string \| null` | Namespaced external ID (e.g. `"google:ChIJ…"`); constructed only by the repository |
-| 1 | `created_at` | `ISO-8601 string \| null` | From ORM row; `null` for freshly-built, unsaved objects |
-| 2 | `lat` / `lng` | `float \| null` | Populated when geo cache is hydrated |
-| 2 | `address` | `string \| null` | Formatted address |
-| 2 | `geo_fresh` | `bool` | `true` when Tier 2 fields come from a live cache hit |
-| 3 | `hours` | `object \| null` | Keys: `sunday`–`saturday` (string or null) + `timezone` (IANA) |
-| 3 | `rating` | `float \| null` | Provider rating |
-| 3 | `phone` | `string \| null` | E.164 preferred |
-| 3 | `photo_url` | `string \| null` | Hotlinkable image URL |
-| 3 | `popularity` | `float \| null` | Normalized 0–1 |
-| 3 | `enriched` | `bool` | `true` when Tier 3 fields are populated. Recall-mode responses never set this `true` |
+| Tier | Field         | Type                                                                                | Notes                                                                                 |
+| ---- | ------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 1    | `place_id`    | `string`                                                                            | Internal UUID/ULID; always present                                                    |
+| 1    | `place_name`  | `string`                                                                            | Always present                                                                        |
+| 1    | `place_type`  | `"food_and_drink" \| "things_to_do" \| "shopping" \| "services" \| "accommodation"` | Enum                                                                                  |
+| 1    | `subcategory` | `string \| null`                                                                    | Validated against the per-type vocabulary (e.g. `"restaurant"`, `"cafe"`, `"museum"`) |
+| 1    | `tags`        | `string[]`                                                                          | Free-form labels                                                                      |
+| 1    | `attributes`  | `PlaceAttributes`                                                                   | Structured JSONB; shape below                                                         |
+| 1    | `source_url`  | `string \| null`                                                                    | Original URL the place was extracted from                                             |
+| 1    | `source`      | `"tiktok" \| "instagram" \| "youtube" \| "manual" \| "link" \| "consult" \| null`   | Acquisition channel                                                                   |
+| 1    | `provider_id` | `string \| null`                                                                    | Namespaced external ID (e.g. `"google:ChIJ…"`); constructed only by the repository    |
+| 1    | `created_at`  | `ISO-8601 string \| null`                                                           | From ORM row; `null` for freshly-built, unsaved objects                               |
+| 2    | `lat` / `lng` | `float \| null`                                                                     | Populated when geo cache is hydrated                                                  |
+| 2    | `address`     | `string \| null`                                                                    | Formatted address                                                                     |
+| 2    | `geo_fresh`   | `bool`                                                                              | `true` when Tier 2 fields come from a live cache hit                                  |
+| 3    | `hours`       | `object \| null`                                                                    | Keys: `sunday`–`saturday` (string or null) + `timezone` (IANA)                        |
+| 3    | `rating`      | `float \| null`                                                                     | Provider rating                                                                       |
+| 3    | `phone`       | `string \| null`                                                                    | E.164 preferred                                                                       |
+| 3    | `photo_url`   | `string \| null`                                                                    | Hotlinkable image URL                                                                 |
+| 3    | `popularity`  | `float \| null`                                                                     | Normalized 0–1                                                                        |
+| 3    | `enriched`    | `bool`                                                                              | `true` when Tier 3 fields are populated. Recall-mode responses never set this `true`  |
 
 `PlaceAttributes` shape:
 
-| Field | Type | Notes |
-|---|---|---|
-| `cuisine` | `string \| null` | e.g. `"japanese"` |
-| `price_hint` | `string \| null` | e.g. `"$"`, `"$$"`, `"$$$"` |
-| `ambiance` | `string \| null` | e.g. `"casual"`, `"upscale"` |
-| `dietary` | `string[]` | e.g. `["vegetarian", "gluten_free"]` |
-| `good_for` | `string[]` | e.g. `["date_night", "groups"]` |
-| `location_context` | `{ neighborhood, city, country } \| null` | All string or null |
+| Field              | Type                                      | Notes                                |
+| ------------------ | ----------------------------------------- | ------------------------------------ |
+| `cuisine`          | `string \| null`                          | e.g. `"japanese"`                    |
+| `price_hint`       | `string \| null`                          | e.g. `"$"`, `"$$"`, `"$$$"`          |
+| `ambiance`         | `string \| null`                          | e.g. `"casual"`, `"upscale"`         |
+| `dietary`          | `string[]`                                | e.g. `["vegetarian", "gluten_free"]` |
+| `good_for`         | `string[]`                                | e.g. `["date_night", "groups"]`      |
+| `location_context` | `{ neighborhood, city, country } \| null` | All string or null                   |
 
 ---
 
@@ -105,12 +109,12 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 }
 ```
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `user_id` | `string` | Yes | Clerk-issued user ID; trusted, not validated here |
-| `message` | `string` | Yes | Natural language message from the user |
-| `location` | `{ lat: float, lng: float }` | No | Passed to consult pipeline only; ignored for all other intents |
-| `signal_tier` | `"cold" \| "warming" \| "chip_selection" \| "active" \| null` | No | Tier hint from the product repo (ADR-061). Read from `GET /v1/user/context` and forwarded so consult can apply tier-aware behavior (warming candidate-count blend, active-tier rejected-chip filter). When `null`, consult defaults to `"active"`. At `cold` and `chip_selection` the product repo should not call `/v1/chat` with a consult-intent message at all — it renders onboarding / chip-selection UI directly from `/v1/user/context`. |
+| Field         | Type                                                          | Required | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------- | ------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `user_id`     | `string`                                                      | Yes      | Clerk-issued user ID; trusted, not validated here                                                                                                                                                                                                                                                                                                                                                                                                |
+| `message`     | `string`                                                      | Yes      | Natural language message from the user                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `location`    | `{ lat: float, lng: float }`                                  | No       | Passed to consult pipeline only; ignored for all other intents                                                                                                                                                                                                                                                                                                                                                                                   |
+| `signal_tier` | `"cold" \| "warming" \| "chip_selection" \| "active" \| null` | No       | Tier hint from the product repo (ADR-061). Read from `GET /v1/user/context` and forwarded so consult can apply tier-aware behavior (warming candidate-count blend, active-tier rejected-chip filter). When `null`, consult defaults to `"active"`. At `cold` and `chip_selection` the product repo should not call `/v1/chat` with a consult-intent message at all — it renders onboarding / chip-selection UI directly from `/v1/user/context`. |
 
 **Response:**
 
@@ -118,15 +122,15 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 {
   "type": "consult",
   "message": "Based on what I know about you, try Nara Eatery…",
-  "data": { }
+  "data": {}
 }
 ```
 
-| Field | Type | Notes |
-|---|---|---|
-| `type` | `string` | One of: `extract-place`, `consult`, `recall`, `assistant`, `clarification`, `error` |
-| `message` | `string` | Human-readable response text |
-| `data` | `object \| null` | Structured payload from downstream service; null for clarification/assistant/error |
+| Field     | Type             | Notes                                                                               |
+| --------- | ---------------- | ----------------------------------------------------------------------------------- |
+| `type`    | `string`         | One of: `extract-place`, `consult`, `recall`, `assistant`, `clarification`, `error` |
+| `message` | `string`         | Human-readable response text                                                        |
+| `data`    | `object \| null` | Structured payload from downstream service; null for clarification/assistant/error  |
 
 **Response Types by Intent:**
 
@@ -139,7 +143,9 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
   "data": {
     "results": [
       {
-        "place": { /* PlaceObject — see Shared Types */ },
+        "place": {
+          /* PlaceObject — see Shared Types */
+        },
         "confidence": 0.87,
         "status": "saved"
       }
@@ -152,19 +158,19 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 
 `data` (`ExtractPlaceResponse`):
 
-| Field | Type | Notes |
-|---|---|---|
-| `results` | `ExtractPlaceItem[]` | One entry per extracted place; see below |
-| `source_url` | `string \| null` | URL the extraction came from (if any) |
-| `request_id` | `string \| null` | Polling handle when any item has `status="pending"` |
+| Field        | Type                 | Notes                                               |
+| ------------ | -------------------- | --------------------------------------------------- |
+| `results`    | `ExtractPlaceItem[]` | One entry per extracted place; see below            |
+| `source_url` | `string \| null`     | URL the extraction came from (if any)               |
+| `request_id` | `string \| null`     | Polling handle when any item has `status="pending"` |
 
 `ExtractPlaceItem` shape:
 
-| Field | Type | Notes |
-|---|---|---|
-| `place` | `PlaceObject \| null` | Present for `"saved"`, `"needs_review"`, `"duplicate"`; `null` for `"pending"`/`"failed"` |
-| `confidence` | `float \| null` | Extraction confidence score (0–1); `null` if the cascade did not reach validation |
-| `status` | `"saved" \| "needs_review" \| "duplicate" \| "pending" \| "failed"` | See the extract-place schema docstring; `"needs_review"` means confidence landed in the tentative band between `save_threshold` and `confident_threshold` (ADR-057) |
+| Field        | Type                                                                | Notes                                                                                                                                                               |
+| ------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `place`      | `PlaceObject \| null`                                               | Present for `"saved"`, `"needs_review"`, `"duplicate"`; `null` for `"pending"`/`"failed"`                                                                           |
+| `confidence` | `float \| null`                                                     | Extraction confidence score (0–1); `null` if the cascade did not reach validation                                                                                   |
+| `status`     | `"saved" \| "needs_review" \| "duplicate" \| "pending" \| "failed"` | See the extract-place schema docstring; `"needs_review"` means confidence landed in the tentative band between `save_threshold` and `confident_threshold` (ADR-057) |
 
 ### `consult`
 
@@ -176,13 +182,18 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
     "recommendation_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "results": [
       {
-        "place": { /* PlaceObject — fully enriched (enriched=true) */ },
+        "place": {
+          /* PlaceObject — fully enriched (enriched=true) */
+        },
         "source": "saved"
       }
     ],
     "reasoning_steps": [
       { "step": "parse_intent", "summary": "Detected: dinner, nearby, cheap" },
-      { "step": "retrieve_candidates", "summary": "12 saved + 8 discovered within 2km" }
+      {
+        "step": "retrieve_candidates",
+        "summary": "12 saved + 8 discovered within 2km"
+      }
     ]
   }
 }
@@ -190,24 +201,24 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 
 `data` (`ConsultResponse`):
 
-| Field | Type | Notes |
-|---|---|---|
-| `recommendation_id` | `string \| null` | UUID of the persisted row in `recommendations`. `null` if the background persist failed (ADR-060) |
-| `results` | `ConsultResult[]` | Up to 3 items. Agent-driven ranking; order is not score-derived (ADR-058) |
-| `reasoning_steps` | `ReasoningStep[]` | Flat trace for eval/debug; UI does not need to render |
+| Field               | Type              | Notes                                                                                             |
+| ------------------- | ----------------- | ------------------------------------------------------------------------------------------------- |
+| `recommendation_id` | `string \| null`  | UUID of the persisted row in `recommendations`. `null` if the background persist failed (ADR-060) |
+| `results`           | `ConsultResult[]` | Up to 3 items. Agent-driven ranking; order is not score-derived (ADR-058)                         |
+| `reasoning_steps`   | `ReasoningStep[]` | Flat trace for eval/debug; UI does not need to render                                             |
 
 `ConsultResult` shape:
 
-| Field | Type | Notes |
-|---|---|---|
-| `place` | `PlaceObject` | Always fully enriched (`enriched=true`, Tier 2 + Tier 3 populated) |
+| Field    | Type                      | Notes                                                                                 |
+| -------- | ------------------------- | ------------------------------------------------------------------------------------- |
+| `place`  | `PlaceObject`             | Always fully enriched (`enriched=true`, Tier 2 + Tier 3 populated)                    |
 | `source` | `"saved" \| "discovered"` | `"saved"` = from user's recall set; `"discovered"` = from Google Places Nearby Search |
 
 `ReasoningStep` shape:
 
-| Field | Type | Notes |
-|---|---|---|
-| `step` | `string` | Pipeline step identifier |
+| Field     | Type     | Notes                                           |
+| --------- | -------- | ----------------------------------------------- |
+| `step`    | `string` | Pipeline step identifier                        |
 | `summary` | `string` | Human-readable summary of what the step decided |
 
 ### `recall`
@@ -219,7 +230,9 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
   "data": {
     "results": [
       {
-        "place": { /* PlaceObject — Tier 2 may be present; enriched=false */ },
+        "place": {
+          /* PlaceObject — Tier 2 may be present; enriched=false */
+        },
         "match_reason": "semantic + keyword",
         "relevance_score": 0.0187,
         "score_type": "rrf"
@@ -233,25 +246,29 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 
 `data` (`RecallResponse`):
 
-| Field | Type | Notes |
-|---|---|---|
-| `results` | `RecallResult[]` | Ordered by relevance when a query is present; by recency in filter-only mode |
-| `total_count` | `integer` | Pre-`LIMIT` match count. Post-distance-filter this is best-effort |
-| `empty_state` | `bool` | `true` only when the user has zero saved places |
+| Field         | Type             | Notes                                                                        |
+| ------------- | ---------------- | ---------------------------------------------------------------------------- |
+| `results`     | `RecallResult[]` | Ordered by relevance when a query is present; by recency in filter-only mode |
+| `total_count` | `integer`        | Pre-`LIMIT` match count. Post-distance-filter this is best-effort            |
+| `empty_state` | `bool`           | `true` only when the user has zero saved places                              |
 
 `RecallResult` shape:
 
-| Field | Type | Notes |
-|---|---|---|
-| `place` | `PlaceObject` | Recall never enriches Tier 3 — `enriched` is always `false` |
-| `match_reason` | `"filter" \| "semantic" \| "keyword" \| "semantic + keyword"` | Which retrieval path surfaced the row |
-| `relevance_score` | `float \| null` | Populated only in hybrid mode. Scale depends on `score_type` |
-| `score_type` | `"rrf" \| "ts_rank" \| null` | `rrf` scores are ~0.01–0.03; `ts_rank` scores are 0–1. Never compare across types |
+| Field             | Type                                                          | Notes                                                                             |
+| ----------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `place`           | `PlaceObject`                                                 | Recall never enriches Tier 3 — `enriched` is always `false`                       |
+| `match_reason`    | `"filter" \| "semantic" \| "keyword" \| "semantic + keyword"` | Which retrieval path surfaced the row                                             |
+| `relevance_score` | `float \| null`                                               | Populated only in hybrid mode. Scale depends on `score_type`                      |
+| `score_type`      | `"rrf" \| "ts_rank" \| null`                                  | `rrf` scores are ~0.01–0.03; `ts_rank` scores are 0–1. Never compare across types |
 
 ### `assistant`
 
 ```json
-{ "type": "assistant", "message": "Tipping is not expected in Japan…", "data": null }
+{
+  "type": "assistant",
+  "message": "Tipping is not expected in Japan…",
+  "data": null
+}
 ```
 
 `data` is always `null` — the LLM response lives in `message`.
@@ -259,7 +276,11 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 ### `clarification`
 
 ```json
-{ "type": "clarification", "message": "Are you looking for a place called Fuji you saved, or a recommendation near there?", "data": null }
+{
+  "type": "clarification",
+  "message": "Are you looking for a place called Fuji you saved, or a recommendation near there?",
+  "data": null
+}
 ```
 
 Returned when intent classification confidence is below 0.7. `data` is always `null`.
@@ -267,23 +288,27 @@ Returned when intent classification confidence is below 0.7. `data` is always `n
 ### `error`
 
 ```json
-{ "type": "error", "message": "Something went wrong, try again", "data": { "detail": "..." } }
+{
+  "type": "error",
+  "message": "Something went wrong, try again",
+  "data": { "detail": "..." }
+}
 ```
 
-| Field | Type | Notes |
-|---|---|---|
+| Field         | Type     | Notes                                                     |
+| ------------- | -------- | --------------------------------------------------------- |
 | `data.detail` | `string` | Internal detail string for logs; safe to ignore in the UI |
 
 All downstream exceptions are caught and surfaced as `type="error"` with HTTP 200 (not 5xx).
 
 **HTTP Status Codes:**
 
-| Code | When |
-|---|---|
+| Code  | When                                             |
+| ----- | ------------------------------------------------ |
 | `200` | All successful responses including clarification |
-| `400` | Malformed request body |
-| `422` | Validation error (FastAPI auto, per ADR-023) |
-| `500` | Unhandled internal error |
+| `400` | Malformed request body                           |
+| `422` | Validation error (FastAPI auto, per ADR-023)     |
+| `500` | Unhandled internal error                         |
 
 **Notes:**
 
@@ -301,12 +326,8 @@ Returns taste profile context for the product UI (ADR-060).
 **Request:**
 
 ```
-GET /v1/user/context?user_id=<user_id>
+GET /v1/user/context
 ```
-
-| Param | Type | Required | Notes |
-|---|---|---|---|
-| `user_id` | `string` | Yes | Query parameter. Used only to load the user's taste model; not echoed in the response |
 
 **Response (200):**
 
@@ -337,22 +358,22 @@ GET /v1/user/context?user_id=<user_id>
 
 Note: `selection_round` is always a string in `chip_selection` tier — the server stamps pending chips with the current crossed-stage name. The frontend copies each chip's `selection_round` verbatim into the `chip_confirm` submission; no separate `round` field needed.
 
-| Field | Type | Notes |
-|---|---|---|
-| `saved_places_count` | `integer` | Total number of saves; read from precomputed taste_model (not a live DB count) |
-| `signal_tier` | `"cold" \| "warming" \| "chip_selection" \| "active"` | Derived by `derive_signal_tier` (ADR-061). Config-driven — adding a new stage to `chip_selection_stages` works without code changes |
-| `chips` | `ChipView[]` | Full structured chips; see shape below |
+| Field                | Type                                                  | Notes                                                                                                                               |
+| -------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `saved_places_count` | `integer`                                             | Total number of saves; read from precomputed taste_model (not a live DB count)                                                      |
+| `signal_tier`        | `"cold" \| "warming" \| "chip_selection" \| "active"` | Derived by `derive_signal_tier` (ADR-061). Config-driven — adding a new stage to `chip_selection_stages` works without code changes |
+| `chips`              | `ChipView[]`                                          | Full structured chips; see shape below                                                                                              |
 
 `ChipView` shape:
 
-| Field | Type | Notes |
-|---|---|---|
-| `label` | `string` | Short display label |
-| `source_field` | `string` | JSON path into signal_counts that surfaced the chip |
-| `source_value` | `string` | Value at that path |
-| `signal_count` | `integer` | Aggregate signal count |
-| `status` | `"pending" \| "confirmed" \| "rejected"` | Lifecycle; defaults to `"pending"` until a `chip_confirm` signal lands |
-| `selection_round` | `string \| null` | For confirmed/rejected chips: the round the user decided in. For still-pending chips: the round the frontend should submit the chip under (server stamps the current crossed-stage name). `null` only at cold/warming tiers where no stage has been crossed. |
+| Field             | Type                                     | Notes                                                                                                                                                                                                                                                        |
+| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `label`           | `string`                                 | Short display label                                                                                                                                                                                                                                          |
+| `source_field`    | `string`                                 | JSON path into signal_counts that surfaced the chip                                                                                                                                                                                                          |
+| `source_value`    | `string`                                 | Value at that path                                                                                                                                                                                                                                           |
+| `signal_count`    | `integer`                                | Aggregate signal count                                                                                                                                                                                                                                       |
+| `status`          | `"pending" \| "confirmed" \| "rejected"` | Lifecycle; defaults to `"pending"` until a `chip_confirm` signal lands                                                                                                                                                                                       |
+| `selection_round` | `string \| null`                         | For confirmed/rejected chips: the round the user decided in. For still-pending chips: the round the frontend should submit the chip under (server stamps the current crossed-stage name). `null` only at cold/warming tiers where no stage has been crossed. |
 
 **Notes:**
 
@@ -379,12 +400,12 @@ Behavioral signal endpoint (ADR-060, ADR-061). Replaces `POST /v1/feedback`. Dis
 }
 ```
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `signal_type` | `string` | Yes | `"recommendation_accepted"` or `"recommendation_rejected"` |
-| `user_id` | `string` | Yes | Clerk-issued user ID |
-| `recommendation_id` | `string` | Yes | Must exist in recommendations table |
-| `place_id` | `string` | Yes | Trusted, not validated against places table |
+| Field               | Type     | Required | Notes                                                      |
+| ------------------- | -------- | -------- | ---------------------------------------------------------- |
+| `signal_type`       | `string` | Yes      | `"recommendation_accepted"` or `"recommendation_rejected"` |
+| `user_id`           | `string` | Yes      | Clerk-issued user ID                                       |
+| `recommendation_id` | `string` | Yes      | Must exist in recommendations table                        |
+| `place_id`          | `string` | Yes      | Trusted, not validated against places table                |
 
 **Responses:** `202 { "status": "accepted" }`; `404` if recommendation_id unknown; `422` on schema errors.
 
@@ -419,12 +440,12 @@ Behavioral signal endpoint (ADR-060, ADR-061). Replaces `POST /v1/feedback`. Dis
 }
 ```
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `signal_type` | `"chip_confirm"` | Yes | Discriminator |
-| `user_id` | `string` | Yes | Clerk-issued user ID |
-| `metadata.chips[i].status` | `"confirmed" \| "rejected"` | Yes | `"pending"` is not a valid submission (user is making a decision) |
-| `metadata.chips[i].selection_round` | `string` | Yes | Copied verbatim from the chip's `selection_round` in the `/v1/user/context` response |
+| Field                               | Type                        | Required | Notes                                                                                |
+| ----------------------------------- | --------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| `signal_type`                       | `"chip_confirm"`            | Yes      | Discriminator                                                                        |
+| `user_id`                           | `string`                    | Yes      | Clerk-issued user ID                                                                 |
+| `metadata.chips[i].status`          | `"confirmed" \| "rejected"` | Yes      | `"pending"` is not a valid submission (user is making a decision)                    |
+| `metadata.chips[i].selection_round` | `string`                    | Yes      | Copied verbatim from the chip's `selection_round` in the `/v1/user/context` response |
 
 The frontend just echoes each chip back with an updated `status`. No outer `round` field — each chip already carries its anchor round.
 
@@ -461,12 +482,12 @@ Health check endpoint. Returns service status and database connectivity.
 }
 ```
 
-| Field | Type | Notes |
-|---|---|---|
-| `status` | `string` | Always `"ok"` when the service is up and this handler is reachable |
-| `name` | `string` | App name from `config/app.yaml` (`app.name`) |
-| `version` | `string` | Package version from installed metadata; falls back to `"0.1.0"` if unresolved |
-| `db` | `"connected" \| "disconnected"` | Result of a `SELECT 1` probe against the primary PostgreSQL connection |
+| Field     | Type                            | Notes                                                                          |
+| --------- | ------------------------------- | ------------------------------------------------------------------------------ |
+| `status`  | `string`                        | Always `"ok"` when the service is up and this handler is reachable             |
+| `name`    | `string`                        | App name from `config/app.yaml` (`app.name`)                                   |
+| `version` | `string`                        | Package version from installed metadata; falls back to `"0.1.0"` if unresolved |
+| `db`      | `"connected" \| "disconnected"` | Result of a `SELECT 1` probe against the primary PostgreSQL connection         |
 
 Always HTTP 200 — DB outages surface via `db: "disconnected"`, not a non-2xx status.
 
@@ -474,12 +495,12 @@ Always HTTP 200 — DB outages surface via `db: "disconnected"`, not a non-2xx s
 
 ## API Contract Summary
 
-| Endpoint | Purpose | NestJS Sends | totoro-ai Returns |
-| --- | --- | --- | --- |
-| POST /v1/chat | Unified conversational entry point | user_id, message, optional location | type, message, optional data payload |
-| GET /v1/user/context | User taste context for product UI | user_id (query param) | saved_places_count, signal_tier, chips (each with status + selection_round) |
-| POST /v1/signal | Recommendation feedback OR chip_confirm | Discriminated on `signal_type` — recommendation variant (recommendation_id + place_id) OR chip_confirm variant (metadata.chips[] with per-chip selection_round) | status (202) |
-| GET /v1/health | Service health check | — | status, db connectivity |
+| Endpoint             | Purpose                                 | NestJS Sends                                                                                                                                                    | totoro-ai Returns                                                           |
+| -------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| POST /v1/chat        | Unified conversational entry point      | user_id, message, optional location                                                                                                                             | type, message, optional data payload                                        |
+| GET /v1/user/context | User taste context for product UI       | user_id (query param)                                                                                                                                           | saved_places_count, signal_tier, chips (each with status + selection_round) |
+| POST /v1/signal      | Recommendation feedback OR chip_confirm | Discriminated on `signal_type` — recommendation variant (recommendation_id + place_id) OR chip_confirm variant (metadata.chips[] with per-chip selection_round) | status (202)                                                                |
+| GET /v1/health       | Service health check                    | —                                                                                                                                                               | status, db connectivity                                                     |
 
 ---
 
@@ -487,13 +508,13 @@ Always HTTP 200 — DB outages surface via `db: "disconnected"`, not a non-2xx s
 
 The AI service returns standard HTTP status codes:
 
-| Status | Meaning | Product repo action |
-| --- | --- | --- |
-| 200 | Success (including clarification and error type responses) | Process response |
-| 400 | Bad request (malformed input) | Log error, return 400 to frontend |
-| 422 | Validation error | Return friendly message to frontend |
-| 500 | AI service internal error | Log error, return 503 to frontend with retry suggestion |
-| Timeout | Service unreachable | Return 503 with "service temporarily unavailable" |
+| Status  | Meaning                                                    | Product repo action                                     |
+| ------- | ---------------------------------------------------------- | ------------------------------------------------------- |
+| 200     | Success (including clarification and error type responses) | Process response                                        |
+| 400     | Bad request (malformed input)                              | Log error, return 400 to frontend                       |
+| 422     | Validation error                                           | Return friendly message to frontend                     |
+| 500     | AI service internal error                                  | Log error, return 503 to frontend with retry suggestion |
+| Timeout | Service unreachable                                        | Return 503 with "service temporarily unavailable"       |
 
 **Timeout policy:** Set HTTP client timeout to 30 seconds for all AI service calls. /v1/chat responses targeting consult intent may take up to 20s for complex queries.
 
