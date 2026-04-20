@@ -151,7 +151,6 @@ async def get_event_dispatcher(
     handlers = EventHandlers(
         taste_service=taste_service,
         memory_service=memory_service,
-        langfuse=None,
     )
 
     dispatcher = EventDispatcher(background_tasks=background_tasks)

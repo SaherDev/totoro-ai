@@ -14,7 +14,7 @@ from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
 from pydantic import BaseModel, ValidationError
 
 from totoro_ai.core.config import get_config, get_secrets
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 # --- Protocols ---
 
@@ -51,15 +51,11 @@ class OpenAIVisionExtractor:
             for frame in frames
         ]
 
-        langfuse = get_langfuse_client()
-        generation = (
-            langfuse.generation(
-                name="vision_frames_enricher",
-                input={"frame_count": len(frames)},
-                model=self._model,
-            )
-            if langfuse
-            else None
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="vision_frames_enricher",
+            input={"frame_count": len(frames)},
+            model=self._model,
         )
 
         messages: list[Any] = [
@@ -91,12 +87,10 @@ class OpenAIVisionExtractor:
                 for line in text.splitlines()
                 if line.strip()
             ]
-            if generation:
-                generation.end(output={"name_count": len(names)})
+            span.end(output={"name_count": len(names)})
             return names
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             raise
 
 

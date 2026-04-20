@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, cast
 
 from totoro_ai.api.errors import LLMUnavailableError
 from totoro_ai.providers.llm import get_llm
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 if TYPE_CHECKING:
     from totoro_ai.core.memory.service import UserMemoryService
@@ -66,14 +66,10 @@ class ChatAssistantService:
         memory_list = await self._memory.load_memories(user_id)
         user_memories = "\n".join(memory_list) if memory_list else None
 
-        lf = get_langfuse_client()
-        generation = (
-            lf.generation(
-                name="chat_assistant",
-                input={"user_id": user_id, "message": message},
-            )
-            if lf
-            else None
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="chat_assistant",
+            input={"user_id": user_id, "message": message},
         )
 
         # Build user message with memories injected (ADR-010, ADR-044)
@@ -93,10 +89,8 @@ class ChatAssistantService:
 
         try:
             response = cast(str, await self._llm.complete(messages))
-            if generation:
-                generation.end(output={"response": response})
+            span.end(output={"response": response})
             return response
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             raise LLMUnavailableError(str(exc)) from exc

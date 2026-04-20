@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from totoro_ai.core.config import get_config
 from totoro_ai.core.places.models import PlaceAttributes, PlaceType
-from totoro_ai.providers import get_instructor_client, get_langfuse_client
+from totoro_ai.providers import get_instructor_client, get_tracing_client
 
 
 class ParsedIntentPlace(BaseModel):
@@ -109,8 +109,7 @@ class IntentParser:
         `search.search_location` is always None here — ConsultService
         resolves coordinates from `search.search_location_name` after parsing.
         """
-        lf = get_langfuse_client()
-
+        tracer = get_tracing_client()
         config = get_config()
         nearby_radius_m = config.consult.nearby_radius_m
         walking_radius_m = config.consult.walking_radius_m
@@ -332,12 +331,10 @@ class IntentParser:
             {"role": "user", "content": user_content},
         ]
 
-        generation = None
-        if lf:
-            generation = lf.generation(
-                name="intent_parsing",
-                input={"system": system_prompt, "user": query},
-            )
+        span = tracer.generation(
+            name="intent_parsing",
+            input={"system": system_prompt, "user": query},
+        )
 
         try:
             result = cast(
@@ -354,13 +351,10 @@ class IntentParser:
             if result.search.enriched_query == "":
                 result.search.enriched_query = None
 
-            if generation:
-                generation.end(output=result.model_dump())
-
+            span.end(output=result.model_dump())
             return result
         except Exception as exc:
-            if generation:
-                generation.end(error=str(exc))
+            span.end(output={"error": str(exc)})
             raise
 
 

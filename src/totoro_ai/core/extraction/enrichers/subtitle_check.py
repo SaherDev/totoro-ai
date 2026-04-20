@@ -19,7 +19,7 @@ from totoro_ai.core.extraction.types import (
 )
 from totoro_ai.core.places import PlaceAttributes, PlaceCreate, PlaceType
 from totoro_ai.providers.llm import InstructorClient
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -136,14 +136,12 @@ class SubtitleCheckEnricher:
         await self._extract_places(clean_text, context)
 
     async def _extract_places(self, text: str, context: ExtractionContext) -> None:
-        langfuse = get_langfuse_client()
-        generation = None
-        if langfuse:
-            generation = langfuse.generation(
-                name="subtitle_check_enricher",
-                input={"text_length": len(text)},
-                model="gpt-4o-mini",
-            )
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="subtitle_check_enricher",
+            input={"text_length": len(text)},
+            model="gpt-4o-mini",
+        )
 
         try:
             response = cast(
@@ -163,8 +161,7 @@ class SubtitleCheckEnricher:
                 ),
             )
 
-            if generation:
-                generation.end(output={"place_count": len(response.places)})
+            span.end(output={"place_count": len(response.places)})
 
             for ner in response.places:
                 if not ner.place_name:
@@ -183,6 +180,5 @@ class SubtitleCheckEnricher:
                 )
 
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             logger.warning("SubtitleCheckEnricher NER failed: %s", exc, exc_info=True)

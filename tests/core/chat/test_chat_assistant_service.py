@@ -10,12 +10,19 @@ from totoro_ai.core.chat.chat_assistant_service import (
 )
 
 
+def _mock_tracer() -> MagicMock:
+    tracer = MagicMock()
+    tracer.generation.return_value = MagicMock()
+    return tracer
+
+
 @patch(
-    "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None
+    "totoro_ai.core.chat.chat_assistant_service.get_tracing_client",
+    return_value=_mock_tracer(),
 )
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
 async def test_run_happy_path(
-    mock_get_llm: MagicMock, mock_langfuse: MagicMock
+    mock_get_llm: MagicMock, mock_tracer: MagicMock
 ) -> None:
     """Service returns the LLM response string on success."""
     mock_llm = AsyncMock()
@@ -32,11 +39,12 @@ async def test_run_happy_path(
 
 
 @patch(
-    "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None
+    "totoro_ai.core.chat.chat_assistant_service.get_tracing_client",
+    return_value=_mock_tracer(),
 )
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
 async def test_run_llm_failure_raises_llm_unavailable_error(
-    mock_get_llm: MagicMock, mock_langfuse: MagicMock
+    mock_get_llm: MagicMock, mock_tracer: MagicMock
 ) -> None:
     """LLM exception is wrapped in LLMUnavailableError."""
     mock_llm = AsyncMock()
@@ -52,37 +60,38 @@ async def test_run_llm_failure_raises_llm_unavailable_error(
 
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
 async def test_run_tracks_langfuse_generation(mock_get_llm: MagicMock) -> None:
-    """Langfuse generation.end() is called after a successful run."""
+    """TracingClient.generation().end() is called after a successful run."""
     mock_llm = AsyncMock()
     mock_llm.complete.return_value = "Go to Tokyo."
     mock_get_llm.return_value = mock_llm
 
-    mock_generation = MagicMock()
-    mock_lf = MagicMock()
-    mock_lf.generation.return_value = mock_generation
+    mock_span = MagicMock()
+    mock_tracer = MagicMock()
+    mock_tracer.generation.return_value = mock_span
 
     with patch(
-        "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client",
-        return_value=mock_lf,
+        "totoro_ai.core.chat.chat_assistant_service.get_tracing_client",
+        return_value=mock_tracer,
     ):
         memory = MagicMock()
         memory.load_memories = AsyncMock(return_value=[])
         service = ChatAssistantService(memory_service=memory)
         await service.run("Tokyo food?", "user_123")
 
-    mock_lf.generation.assert_called_once_with(
+    mock_tracer.generation.assert_called_once_with(
         name="chat_assistant",
         input={"user_id": "user_123", "message": "Tokyo food?"},
     )
-    mock_generation.end.assert_called_once()
+    mock_span.end.assert_called_once()
 
 
 @patch(
-    "totoro_ai.core.chat.chat_assistant_service.get_langfuse_client", return_value=None
+    "totoro_ai.core.chat.chat_assistant_service.get_tracing_client",
+    return_value=_mock_tracer(),
 )
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
 async def test_system_prompt_passed_to_llm(
-    mock_get_llm: MagicMock, mock_langfuse: MagicMock
+    mock_get_llm: MagicMock, mock_tracer: MagicMock
 ) -> None:
     """System prompt is the first message and includes key persona signals."""
     mock_llm = AsyncMock()

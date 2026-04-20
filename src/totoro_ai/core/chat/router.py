@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from totoro_ai.core.memory.schemas import PersonalFact
 from totoro_ai.providers.llm import get_llm
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -82,16 +82,8 @@ async def classify_intent(message: str) -> IntentClassification:
         ValidationError: If LLM response cannot be parsed after one retry.
     """
     llm = get_llm("intent_router")
-    lf = get_langfuse_client()
-
-    generation = (
-        lf.generation(
-            name="intent_router",
-            input={"message": message},
-        )
-        if lf
-        else None
-    )
+    tracer = get_tracing_client()
+    span = tracer.generation(name="intent_router", input={"message": message})
 
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
@@ -101,8 +93,7 @@ async def classify_intent(message: str) -> IntentClassification:
     try:
         raw = await llm.complete(messages)
 
-        if generation:
-            generation.end(output={"raw": raw})
+        span.end(output={"raw": raw})
 
         try:
             return IntentClassification.model_validate_json(raw)
@@ -114,6 +105,5 @@ async def classify_intent(message: str) -> IntentClassification:
     except (ValidationError, json.JSONDecodeError):
         raise
     except Exception as exc:
-        if generation:
-            generation.end(output={"error": str(exc)})
+        span.end(output={"error": str(exc)})
         raise

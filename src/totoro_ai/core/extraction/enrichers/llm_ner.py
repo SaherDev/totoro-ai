@@ -19,7 +19,7 @@ from totoro_ai.core.extraction.types import (
 )
 from totoro_ai.core.places import PlaceAttributes, PlaceCreate, PlaceType
 from totoro_ai.providers.llm import InstructorClient
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -161,14 +161,12 @@ class LLMNEREnricher:
             f"{_VOCAB_INSTRUCTION}"
         )
 
-        langfuse = get_langfuse_client()
-        generation = None
-        if langfuse:
-            generation = langfuse.generation(
-                name="llm_ner_enricher",
-                input={"text_length": len(text_to_use)},
-                model="gpt-4o-mini",
-            )
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="llm_ner_enricher",
+            input={"text_length": len(text_to_use)},
+            model="gpt-4o-mini",
+        )
 
         try:
             response = cast(
@@ -182,8 +180,7 @@ class LLMNEREnricher:
                 ),
             )
 
-            if generation:
-                generation.end(output={"place_count": len(response.places)})
+            span.end(output={"place_count": len(response.places)})
 
             for ner in response.places:
                 if not ner.place_name:
@@ -205,6 +202,5 @@ class LLMNEREnricher:
                 )
 
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             logger.warning("LLMNEREnricher failed: %s", exc, exc_info=True)

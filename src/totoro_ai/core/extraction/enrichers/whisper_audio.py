@@ -23,7 +23,7 @@ from totoro_ai.core.places import (
 )
 from totoro_ai.providers.groq_client import GroqTranscriptionProtocol
 from totoro_ai.providers.llm import InstructorClient
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -142,14 +142,12 @@ class WhisperAudioEnricher:
         return result.stdout
 
     async def _extract_places(self, text: str, context: ExtractionContext) -> None:
-        langfuse = get_langfuse_client()
-        generation = None
-        if langfuse:
-            generation = langfuse.generation(
-                name="whisper_audio_enricher",
-                input={"text_length": len(text)},
-                model="gpt-4o-mini",
-            )
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="whisper_audio_enricher",
+            input={"text_length": len(text)},
+            model="gpt-4o-mini",
+        )
 
         try:
             response = cast(
@@ -169,8 +167,7 @@ class WhisperAudioEnricher:
                 ),
             )
 
-            if generation:
-                generation.end(output={"place_count": len(response.places)})
+            span.end(output={"place_count": len(response.places)})
 
             for ner in response.places:
                 if not ner.place_name:
@@ -189,8 +186,7 @@ class WhisperAudioEnricher:
                 )
 
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             logger.warning("WhisperAudioEnricher NER failed: %s", exc, exc_info=True)
 
 
