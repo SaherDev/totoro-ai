@@ -161,7 +161,7 @@ async def get_event_dispatcher(
         "recommendation_rejected",
         "onboarding_signal",
     ):
-        dispatcher.register_handler(event_type, handlers.on_taste_signal)  # type: ignore[arg-type]
+        dispatcher.register_handler(event_type, handlers.on_taste_signal)
     dispatcher.register_handler(
         "personal_facts_extracted",
         handlers.on_personal_facts_extracted,  # type: ignore[arg-type]
@@ -169,53 +169,6 @@ async def get_event_dispatcher(
     dispatcher.register_handler(
         "chip_confirmed",
         handlers.on_chip_confirmed,
-    )
-
-    # Register ExtractionPendingHandler (Run 3 — inline construction, no circular dep)
-    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
-    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
-    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
-    from totoro_ai.core.extraction.handlers.extraction_pending import (
-        ExtractionPendingHandler,
-    )
-    from totoro_ai.core.extraction.validator import GooglePlacesValidator
-    from totoro_ai.core.places import GooglePlacesClient
-
-    pending_cache = _build_places_cache()
-    pending_persistence = ExtractionPersistenceService(
-        places_service=PlacesService(
-            repo=PlacesRepository(db_session), cache=pending_cache, client=None
-        ),
-        places_cache=pending_cache,
-        embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
-        embedder=get_embedder(),
-        event_dispatcher=dispatcher,
-    )
-    pending_handler = ExtractionPendingHandler(
-        background_enrichers=[
-            SubtitleCheckEnricher(
-                instructor_client=get_instructor_client("intent_parser"),
-            ),
-            WhisperAudioEnricher(
-                groq_client=GroqWhisperClient(api_key=get_secrets().GROQ_API_KEY or ""),
-                instructor_client=get_instructor_client("intent_parser"),
-            ),
-            VisionFramesEnricher(
-                vision_extractor=get_vision_extractor("vision_frames")
-            ),
-        ],
-        validator=GooglePlacesValidator(
-            places_client=GooglePlacesClient(),
-            confidence_config=get_config().extraction.confidence,
-        ),
-        persistence=pending_persistence,
-        status_repo=ExtractionStatusRepository(
-            cache=RedisCacheBackend(url=get_secrets().REDIS_URL)
-        ),
-    )
-    dispatcher.register_handler(
-        "extraction_pending",
-        pending_handler.handle,  # type: ignore[arg-type]
     )
 
     return dispatcher
@@ -285,7 +238,6 @@ def _get_enrichment_pipeline() -> EnrichmentPipeline:
 
 
 def get_extraction_pipeline(
-    event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
     extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
 ) -> ExtractionPipeline:
     """FastAPI dependency providing ExtractionPipeline with all enrichers wired."""
@@ -315,7 +267,6 @@ def get_extraction_pipeline(
         enrichment=enrichment,
         validator=validator,
         background_enrichers=background_enrichers,
-        event_dispatcher=event_dispatcher,
         extraction_config=extraction_config,
     )
 
@@ -325,9 +276,12 @@ def get_extraction_service(
     persistence: ExtractionPersistenceService = Depends(  # noqa: B008
         get_extraction_persistence
     ),
+    status_repo: ExtractionStatusRepository = Depends(get_status_repo),  # noqa: B008
 ) -> ExtractionService:
-    """FastAPI dependency providing ExtractionService (2 deps replacing 7)."""
-    return ExtractionService(pipeline=pipeline, persistence=persistence)
+    """FastAPI dependency providing ExtractionService."""
+    return ExtractionService(
+        pipeline=pipeline, persistence=persistence, status_repo=status_repo
+    )
 
 
 async def get_recall_service(

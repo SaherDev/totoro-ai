@@ -22,8 +22,6 @@ __all__ = [
     "CandidatePlace",
     "ExtractionContext",
     "ValidatedCandidate",
-    "ProvisionalResponse",
-    "ExtractionPending",
     # Re-exported from core.places for legacy import paths.
     "PlaceCreate",
     "PlaceObject",
@@ -67,7 +65,6 @@ class ExtractionContext:
     caption: str | None = None
     transcript: str | None = None
     candidates: list[CandidatePlace] = field(default_factory=list)
-    pending_levels: list[ExtractionLevel] = field(default_factory=list)
     platform: str | None = None
     title: str | None = None
     hashtags: list[str] = field(default_factory=list)
@@ -96,28 +93,3 @@ class ValidatedCandidate:
     match_address: str | None = None
 
 
-@dataclass
-class ProvisionalResponse:
-    """Returned when Phase 2 validation finds nothing and Phase 3 fires."""
-
-    extraction_status: str
-    confidence: float
-    message: str
-    pending_levels: list[ExtractionLevel] = field(default_factory=list)
-    request_id: str = ""
-
-
-@dataclass
-class ExtractionPending:
-    """Typed domain event for background dispatch (ADR-043).
-
-    Intentionally NOT a DomainEvent subclass: ExtractionContext contains mutable
-    list fields that are incompatible with Pydantic BaseModel validation.
-    """
-
-    user_id: str
-    url: str | None
-    pending_levels: list[ExtractionLevel]
-    context: ExtractionContext
-    event_type: str = "extraction_pending"
-    request_id: str = ""

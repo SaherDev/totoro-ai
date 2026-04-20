@@ -4,8 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from totoro_ai.core.extraction.types import (
     ExtractionLevel,
-    ExtractionPending,
-    ProvisionalResponse,
     ValidatedCandidate,
 )
 from totoro_ai.core.places import (
@@ -38,10 +36,11 @@ def _make_validated(
 
 
 def _make_pipeline(
-    validator_returns=None,  # type: ignore[no-untyped-def]
-    dispatcher=None,
+    inline_validator_returns=None,  # type: ignore[no-untyped-def]
+    background_validator_returns=None,
+    background_enrichers=None,
 ) -> tuple:
-    """Returns (pipeline, enrichment_mock, validator_mock, dispatcher_mock)."""
+    """Returns (pipeline, enrichment_mock, validator_mock, bg_enrichers)."""
     from totoro_ai.core.config import (
         ConfidenceWeights,
         ExtractionConfig,
@@ -53,12 +52,19 @@ def _make_pipeline(
     enrichment = MagicMock(spec=EnrichmentPipeline)
     enrichment.run = AsyncMock()
 
-    validator = MagicMock()
-    validator.validate = AsyncMock(return_value=validator_returns)
+    # validator returns inline_validator_returns on first call,
+    # background_validator_returns on second (Phase 3 re-validation)
+    if background_validator_returns is not None:
+        validator = MagicMock()
+        validator.validate = AsyncMock(
+            side_effect=[inline_validator_returns, background_validator_returns]
+        )
+    else:
+        validator = MagicMock()
+        validator.validate = AsyncMock(return_value=inline_validator_returns)
 
-    if dispatcher is None:
-        dispatcher = MagicMock()
-        dispatcher.dispatch = AsyncMock()
+    if background_enrichers is None:
+        background_enrichers = []
 
     weights = ConfidenceWeights(
         base_scores={"CAPTION": 0.7},
@@ -72,69 +78,74 @@ def _make_pipeline(
     pipeline = ExtractionPipeline(
         enrichment=enrichment,
         validator=validator,
-        background_enrichers=[],
-        event_dispatcher=dispatcher,
+        background_enrichers=background_enrichers,
         extraction_config=extraction_config,
     )
-    return pipeline, enrichment, validator, dispatcher
+    return pipeline, enrichment, validator, background_enrichers
 
 
 async def test_inline_candidates_found_returns_results() -> None:
     results = [_make_validated()]
-    pipeline, enrichment, validator, dispatcher = _make_pipeline(
-        validator_returns=results
-    )
+    pipeline, _, _, _ = _make_pipeline(inline_validator_returns=results)
 
     output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
 
     assert output == results
-    dispatcher.dispatch.assert_not_called()
 
 
-async def test_no_inline_candidates_returns_provisional() -> None:
-    pipeline, _, _, _ = _make_pipeline(validator_returns=None)
-
-    output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
-
-    assert isinstance(output, ProvisionalResponse)
-    assert output.extraction_status == "processing"
-    assert output.confidence == 0.0
-
-
-async def test_no_inline_candidates_dispatches_extraction_pending() -> None:
-    dispatcher = MagicMock()
-    dispatcher.dispatch = AsyncMock()
-    pipeline, _, _, _ = _make_pipeline(validator_returns=None, dispatcher=dispatcher)
-
-    await pipeline.run(url="https://tiktok.com/1", user_id="u42")
-
-    dispatcher.dispatch.assert_awaited_once()
-    event = dispatcher.dispatch.call_args[0][0]
-    assert isinstance(event, ExtractionPending)
-    assert event.event_type == "extraction_pending"
-
-
-async def test_provisional_response_has_all_three_pending_levels() -> None:
-    pipeline, _, _, _ = _make_pipeline(validator_returns=None)
+async def test_no_inline_candidates_no_bg_enrichers_returns_empty() -> None:
+    pipeline, _, _, _ = _make_pipeline(inline_validator_returns=None)
 
     output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
 
-    assert isinstance(output, ProvisionalResponse)
-    assert ExtractionLevel.SUBTITLE_CHECK in output.pending_levels
-    assert ExtractionLevel.WHISPER_AUDIO in output.pending_levels
-    assert ExtractionLevel.VISION_FRAMES in output.pending_levels
+    assert output == []
 
 
-async def test_extraction_pending_event_has_correct_user_id_and_url() -> None:
-    dispatcher = MagicMock()
-    dispatcher.dispatch = AsyncMock()
-    pipeline, _, _, _ = _make_pipeline(validator_returns=None, dispatcher=dispatcher)
+async def test_no_inline_candidates_bg_enrichers_run_inline() -> None:
+    bg_enricher = MagicMock()
+    bg_enricher.enrich = AsyncMock()
+    bg_results = [_make_validated()]
 
-    await pipeline.run(url="https://tiktok.com/video/99", user_id="user_xyz")
+    pipeline, _, _, _ = _make_pipeline(
+        inline_validator_returns=None,
+        background_validator_returns=bg_results,
+        background_enrichers=[bg_enricher],
+    )
 
-    event = dispatcher.dispatch.call_args[0][0]
-    assert event.user_id == "user_xyz"
-    assert event.url == "https://tiktok.com/video/99"
+    output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+
+    bg_enricher.enrich.assert_awaited_once()
+    assert output == bg_results
+
+
+async def test_bg_enrichers_find_nothing_returns_empty() -> None:
+    bg_enricher = MagicMock()
+    bg_enricher.enrich = AsyncMock()
+
+    pipeline, _, _, _ = _make_pipeline(
+        inline_validator_returns=None,
+        background_validator_returns=None,
+        background_enrichers=[bg_enricher],
+    )
+
+    output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+
+    assert output == []
+
+
+async def test_plain_text_no_url_skips_bg_enrichers() -> None:
+    bg_enricher = MagicMock()
+    bg_enricher.enrich = AsyncMock()
+
+    pipeline, _, _, _ = _make_pipeline(
+        inline_validator_returns=None,
+        background_enrichers=[bg_enricher],
+    )
+
+    output = await pipeline.run(url=None, user_id="u1", supplementary_text="Some place")
+
+    bg_enricher.enrich.assert_not_called()
+    assert output == []
 
 
 async def test_same_provider_id_deduped_after_validation() -> None:
@@ -152,7 +163,7 @@ async def test_same_provider_id_deduped_after_validation() -> None:
         resolved_by=ExtractionLevel.LLM_NER,
         confidence=0.64,
     )
-    pipeline, _, _, _ = _make_pipeline(validator_returns=[emoji, ner])
+    pipeline, _, _, _ = _make_pipeline(inline_validator_returns=[emoji, ner])
 
     output = await pipeline.run(
         url=None, user_id="u1", supplementary_text="RAMEN KAISUGI Bangkok"
@@ -166,9 +177,7 @@ async def test_same_provider_id_deduped_after_validation() -> None:
 
 async def test_plain_text_input_url_none_passes_through() -> None:
     results = [_make_validated()]
-    pipeline, enrichment, validator, dispatcher = _make_pipeline(
-        validator_returns=results
-    )
+    pipeline, enrichment, _, _ = _make_pipeline(inline_validator_returns=results)
 
     output = await pipeline.run(
         url=None, user_id="u1", supplementary_text="Ramen House Paris"
@@ -182,16 +191,12 @@ async def test_plain_text_input_url_none_passes_through() -> None:
 
 
 async def test_validator_receives_only_candidates() -> None:
-    """validator.validate(candidates) — no user_id positional arg.
-
-    The user_id is already stamped onto each CandidatePlace's inner
-    PlaceCreate at enricher time, so the validator doesn't need it.
-    """
-    pipeline, _, validator, _ = _make_pipeline(validator_returns=None)
+    """validator.validate(candidates) — no user_id positional arg."""
+    pipeline, _, validator, _ = _make_pipeline(inline_validator_returns=None)
 
     await pipeline.run(url="https://tiktok.com/1", user_id="u-xyz")
 
-    validator.validate.assert_awaited_once()
+    assert validator.validate.await_count >= 1
     args = validator.validate.call_args.args
     kwargs = validator.validate.call_args.kwargs
     assert len(args) + len(kwargs) == 1

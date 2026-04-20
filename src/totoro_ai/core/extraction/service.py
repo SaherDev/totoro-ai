@@ -1,6 +1,8 @@
 """Extraction service orchestrating the cascade pipeline."""
 
+import asyncio
 import logging
+from typing import Any
 from uuid import uuid4
 
 from totoro_ai.api.schemas.extract_place import (
@@ -13,21 +15,13 @@ from totoro_ai.core.extraction.persistence import (
     ExtractionPersistenceService,
     PlaceSaveOutcome,
 )
-from totoro_ai.core.extraction.types import ProvisionalResponse
+from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.places import PlaceSource
 
 logger = logging.getLogger(__name__)
 
 
 def _source_from_url(url: str | None) -> PlaceSource | None:
-    """Map a URL to the canonical `PlaceSource` value.
-
-    - tiktok.com        → PlaceSource.tiktok
-    - instagram.com     → PlaceSource.instagram
-    - youtube.com/youtu.be → PlaceSource.youtube
-    - any other http(s) → PlaceSource.link
-    - None (plain text) → None (the save tool leaves source unset)
-    """
     if url is None:
         return None
     lowered = url.lower()
@@ -40,29 +34,19 @@ def _source_from_url(url: str | None) -> PlaceSource | None:
     return PlaceSource.link
 
 
-def _outcome_to_item(outcome: PlaceSaveOutcome) -> ExtractPlaceItem:
-    """Project one `PlaceSaveOutcome` into an `ExtractPlaceItem`.
-
-    Below-threshold outcomes carry the validator confidence (so the caller
-    can see how close the cascade got) but `place` stays `None` and status
-    collapses to "failed" — the row was never written to the permanent
-    store.
-
-    "needs_review" passes through unchanged: the row was written and the
-    place is set, but the UI should prompt the user to confirm the match
-    (ADR-057).
-    """
+def _outcome_to_dict(outcome: PlaceSaveOutcome) -> dict[str, Any]:
     if outcome.status == "below_threshold":
-        return ExtractPlaceItem(
-            place=None,
-            confidence=outcome.metadata.confidence,
-            status="failed",
-        )
-    return ExtractPlaceItem(
-        place=outcome.place,
-        confidence=outcome.metadata.confidence,
-        status=outcome.status,
-    )
+        return {
+            "place": None,
+            "confidence": outcome.metadata.confidence,
+            "status": "failed",
+        }
+    place = outcome.place
+    return {
+        "place": place.model_dump(mode="json") if place else None,
+        "confidence": outcome.metadata.confidence,
+        "status": outcome.status,
+    }
 
 
 class ExtractionService:
@@ -72,30 +56,14 @@ class ExtractionService:
         self,
         pipeline: ExtractionPipeline,
         persistence: ExtractionPersistenceService,
+        status_repo: ExtractionStatusRepository,
     ) -> None:
         self._pipeline = pipeline
         self._persistence = persistence
+        self._status_repo = status_repo
 
     async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
-        """Extract places from raw input and persist them.
-
-        Generates a `request_id` at the top so every response — saved,
-        pending, or failed — carries the same correlation id. The ID is
-        used for Langfuse traces, log joins, and the pending-status polling
-        cache. Pending responses inherit the pipeline's own request_id when
-        present (the background handler keyed the status cache on it) and
-        fall back to the freshly-generated one otherwise.
-
-        Returns an `ExtractPlaceResponse` whose `results` list has one
-        `ExtractPlaceItem` per outcome of the cascade:
-
-        - one "saved" / "needs_review" / "duplicate" item per successful
-          validation
-        - one "failed" item when nothing resolves or confidence is below
-          `save_threshold`
-        - one "pending" item when the pipeline dispatched background
-          enrichers (caller polls via `request_id`)
-        """
+        """Return pending immediately and run the full pipeline as a background task."""
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
 
@@ -103,40 +71,57 @@ class ExtractionService:
         source = _source_from_url(parsed.url)
         request_id = uuid4().hex
 
-        result = await self._pipeline.run(
-            url=parsed.url,
-            user_id=user_id,
-            supplementary_text=parsed.supplementary_text,
-        )
-
-        if isinstance(result, ProvisionalResponse):
-            return ExtractPlaceResponse(
-                results=[
-                    ExtractPlaceItem(place=None, confidence=None, status="pending")
-                ],
-                source_url=parsed.url,
-                request_id=result.request_id or request_id,
-            )
-
-        if not result:
-            return ExtractPlaceResponse(
-                results=[
-                    ExtractPlaceItem(place=None, confidence=None, status="failed")
-                ],
-                source_url=parsed.url,
+        asyncio.create_task(
+            self._run_background(
+                url=parsed.url,
+                supplementary_text=parsed.supplementary_text,
+                user_id=user_id,
+                source=source,
                 request_id=request_id,
             )
-
-        outcomes = await self._persistence.save_and_emit(
-            result,
-            user_id,
-            source_url=parsed.url,
-            source=source,
         )
-        items = [_outcome_to_item(o) for o in outcomes]
-
         return ExtractPlaceResponse(
-            results=items,
+            results=[ExtractPlaceItem(place=None, confidence=None, status="pending")],
             source_url=parsed.url,
             request_id=request_id,
         )
+
+    async def _run_background(
+        self,
+        url: str | None,
+        supplementary_text: str,
+        user_id: str,
+        source: PlaceSource | None,
+        request_id: str,
+    ) -> None:
+        try:
+            result = await self._pipeline.run(
+                url=url,
+                user_id=user_id,
+                supplementary_text=supplementary_text,
+            )
+            if not result:
+                await self._status_repo.write(
+                    request_id,
+                    {
+                        "results": [
+                            {"place": None, "confidence": None, "status": "failed"}
+                        ],
+                        "source_url": url,
+                        "request_id": None,
+                    },
+                )
+                return
+            outcomes = await self._persistence.save_and_emit(
+                result, user_id, source_url=url, source=source
+            )
+            await self._status_repo.write(
+                request_id,
+                {
+                    "results": [_outcome_to_dict(o) for o in outcomes],
+                    "source_url": url,
+                    "request_id": None,
+                },
+            )
+        except Exception:
+            logger.exception("Background extraction failed for request %s", request_id)

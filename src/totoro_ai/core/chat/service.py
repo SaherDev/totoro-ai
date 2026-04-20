@@ -114,30 +114,34 @@ class ChatService:
             extract_result = await self._extraction.run(
                 request.message, request.user_id
             )
-            saved = [
-                r
-                for r in extract_result.results
-                if r.status == "saved" and r.place is not None
-            ]
-            needs_review = [
-                r
-                for r in extract_result.results
-                if r.status == "needs_review" and r.place is not None
-            ]
-            duplicates = [r for r in extract_result.results if r.status == "duplicate"]
-            parts: list[str] = []
-            if saved:
-                names = ", ".join(r.place.place_name for r in saved if r.place)
-                parts.append(f"Saved: {names}")
-            if needs_review:
-                names = ", ".join(r.place.place_name for r in needs_review if r.place)
-                parts.append(f"Low confidence — please confirm: {names}")
-            if parts:
-                message = " ".join(parts)
-            elif duplicates:
-                message = "Already in your saves."
+            pending = any(r.status == "pending" for r in extract_result.results)
+            if pending:
+                message = "On it — extracting the place in the background. Check back in a moment."
             else:
-                message = "Couldn't extract a place from that."
+                saved = [
+                    r
+                    for r in extract_result.results
+                    if r.status == "saved" and r.place is not None
+                ]
+                needs_review = [
+                    r
+                    for r in extract_result.results
+                    if r.status == "needs_review" and r.place is not None
+                ]
+                duplicates = [r for r in extract_result.results if r.status == "duplicate"]
+                parts: list[str] = []
+                if saved:
+                    names = ", ".join(r.place.place_name for r in saved if r.place)
+                    parts.append(f"Saved: {names}")
+                if needs_review:
+                    names = ", ".join(r.place.place_name for r in needs_review if r.place)
+                    parts.append(f"Low confidence — please confirm: {names}")
+                if parts:
+                    message = " ".join(parts)
+                elif duplicates:
+                    message = "Already in your saves."
+                else:
+                    message = "Couldn't extract a place from that."
             return ChatResponse(
                 type="extract-place",
                 message=message,
