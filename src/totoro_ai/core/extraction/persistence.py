@@ -86,50 +86,6 @@ class ExtractionPersistenceService:
         self._embedder = embedder
         self._event_dispatcher = event_dispatcher
 
-    async def save_consult_places(
-        self,
-        places: list[PlaceCreate],
-        user_id: str,
-    ) -> list[PlaceObject]:
-        """Save discovered places from consult with source=consult.
-
-        No event, no embedding, no confidence scoring. Just persist
-        so place_ids are real for signals. Duplicates resolve to
-        existing place_ids.
-        """
-        if not places:
-            return []
-
-        stamped = [
-            p.model_copy(update={"user_id": user_id, "source": PlaceSource.consult})
-            if p.user_id != user_id or p.source != PlaceSource.consult
-            else p
-            for p in places
-        ]
-
-        try:
-            return await self._places_service.create_batch(stamped)
-        except DuplicatePlaceError as exc:
-            # Retry non-conflicting rows one by one, resolve conflicts
-            conflict_map = {c.provider_id: c.existing_place_id for c in exc.conflicts}
-            results: list[PlaceObject] = []
-            for item in stamped:
-                pid = build_provider_id(item.provider, item.external_id)
-                if pid and pid in conflict_map:
-                    existing = await self._places_service.get(conflict_map[pid])
-                    if existing:
-                        results.append(existing)
-                    continue
-                try:
-                    results.append(await self._places_service.create(item))
-                except DuplicatePlaceError as inner:
-                    existing = await self._places_service.get(
-                        inner.conflicts[0].existing_place_id
-                    )
-                    if existing:
-                        results.append(existing)
-            return results
-
     async def save_and_emit(
         self,
         results: list[ValidatedCandidate],
@@ -406,29 +362,35 @@ class ExtractionPersistenceService:
             "price_hint": lambda p: p.attributes.price_hint,
             "tags": lambda p: " ".join(p.tags) if p.tags else None,
             "good_for": (
-                lambda p: " ".join(p.attributes.good_for)
-                if p.attributes.good_for
-                else None
+                lambda p: (
+                    " ".join(p.attributes.good_for) if p.attributes.good_for else None
+                )
             ),
             "dietary": (
-                lambda p: " ".join(p.attributes.dietary)
-                if p.attributes.dietary
-                else None
+                lambda p: (
+                    " ".join(p.attributes.dietary) if p.attributes.dietary else None
+                )
             ),
             "neighborhood": (
-                lambda p: p.attributes.location_context.neighborhood
-                if p.attributes.location_context
-                else None
+                lambda p: (
+                    p.attributes.location_context.neighborhood
+                    if p.attributes.location_context
+                    else None
+                )
             ),
             "city": (
-                lambda p: p.attributes.location_context.city
-                if p.attributes.location_context
-                else None
+                lambda p: (
+                    p.attributes.location_context.city
+                    if p.attributes.location_context
+                    else None
+                )
             ),
             "country": (
-                lambda p: p.attributes.location_context.country
-                if p.attributes.location_context
-                else None
+                lambda p: (
+                    p.attributes.location_context.country
+                    if p.attributes.location_context
+                    else None
+                )
             ),
         }
 
