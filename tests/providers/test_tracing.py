@@ -72,14 +72,20 @@ def test_null_client_satisfies_protocol():
 
 def test_langfuse_client_generation_delegates_to_sdk():
     mock_gen = MagicMock()
+    mock_span = MagicMock()
+    mock_span.start_observation.return_value = mock_gen
     mock_sdk = MagicMock()
-    mock_sdk.start_observation.return_value = mock_gen
+    mock_sdk.start_span.return_value = mock_span
 
     client = tracing_module._LangfuseTracingClient(mock_sdk)
-    span = client.generation(name="my_op", input={"text": "hi"}, model="gpt-4o-mini")
+    span = client.generation(
+        name="my_op", input={"text": "hi"}, model="gpt-4o-mini", user_id="u1"
+    )
     span.end(output={"count": 3})
 
-    mock_sdk.start_observation.assert_called_once_with(
+    mock_sdk.start_span.assert_called_once_with(name="my_op")
+    mock_span.update_trace.assert_called_once_with(user_id="u1")
+    mock_span.start_observation.assert_called_once_with(
         as_type="generation", name="my_op", input={"text": "hi"}, model="gpt-4o-mini"
     )
     mock_gen.update.assert_called_once_with(output={"count": 3})
@@ -88,13 +94,16 @@ def test_langfuse_client_generation_delegates_to_sdk():
 
 def test_langfuse_client_capture_message_delegates_to_sdk():
     mock_obs = MagicMock()
+    mock_span = MagicMock()
+    mock_span.start_observation.return_value = mock_obs
     mock_sdk = MagicMock()
-    mock_sdk.start_observation.return_value = mock_obs
+    mock_sdk.start_span.return_value = mock_span
 
     client = tracing_module._LangfuseTracingClient(mock_sdk)
     client.capture_message(message="event handled", level="info", metadata={"id": "1"})
 
-    mock_sdk.start_observation.assert_called_once_with(
+    mock_sdk.start_span.assert_called_once_with(name="event handled")
+    mock_span.start_observation.assert_called_once_with(
         as_type="event",
         name="event handled",
         input={"level": "info", "id": "1"},

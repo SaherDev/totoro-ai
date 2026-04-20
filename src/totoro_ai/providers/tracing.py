@@ -112,17 +112,25 @@ class _LangfuseTracingClient:
         user_id: str | None = None,
         session_id: str | None = None,
     ) -> _LangfuseSpan:
-        kwargs: dict[str, Any] = {"name": name}
-        if input is not None:
-            kwargs["input"] = input
-        if model is not None:
-            kwargs["model"] = model
-        if user_id is not None:
-            kwargs["user_id"] = user_id
-        if session_id is not None:
-            kwargs["session_id"] = session_id
-        gen = self._client.start_observation(as_type="generation", **kwargs)
-        return _LangfuseSpan(gen)
+        try:
+            span = self._client.start_span(name=name)
+            trace_kwargs: dict[str, Any] = {}
+            if user_id is not None:
+                trace_kwargs["user_id"] = user_id
+            if session_id is not None:
+                trace_kwargs["session_id"] = session_id
+            if trace_kwargs:
+                span.update_trace(**trace_kwargs)
+            gen_kwargs: dict[str, Any] = {"name": name}
+            if input is not None:
+                gen_kwargs["input"] = input
+            if model is not None:
+                gen_kwargs["model"] = model
+            gen = span.start_observation(as_type="generation", **gen_kwargs)
+            return _LangfuseSpan(gen)
+        except Exception as exc:
+            logger.warning("Langfuse generation setup failed: %s", exc)
+            return _NullSpan()
 
     def capture_message(
         self,
@@ -132,20 +140,24 @@ class _LangfuseTracingClient:
         user_id: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        kwargs: dict[str, Any] = {
-            "as_type": "event",
-            "name": message,
-            "input": {"level": level, **(metadata or {})},
-        }
-        if user_id is not None:
-            kwargs["user_id"] = user_id
-        if session_id is not None:
-            kwargs["session_id"] = session_id
-        obs = self._client.start_observation(**kwargs)
-        obs.end()
+        try:
+            span = self._client.start_span(name=message)
+            if user_id is not None or session_id is not None:
+                span.update_trace(user_id=user_id, session_id=session_id)
+            span.start_observation(
+                as_type="event",
+                name=message,
+                input={"level": level, **(metadata or {})},
+            ).end()
+            span.end()
+        except Exception as exc:
+            logger.warning("Langfuse capture_message failed: %s", exc)
 
     def flush(self) -> None:
-        self._client.flush()
+        try:
+            self._client.flush()
+        except Exception as exc:
+            logger.warning("Langfuse flush failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
