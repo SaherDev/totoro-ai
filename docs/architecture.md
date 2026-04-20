@@ -71,26 +71,36 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
-extract-place is a three-phase deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. Enrichers run unconditionally in Step 1. The validator gates results in Step 2. Background dispatch fires in Step 3 only when Step 2 finds nothing.
+extract-place is a three-phase deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. The full pipeline always runs as a background task — the HTTP response returns immediately with `status="pending"` and a `request_id`. The caller polls `GET /v1/extraction/{request_id}` for the final result.
 
 ```
 Raw input (URL, plain text, or mixed)
     │
     ▼
 POST /v1/chat
-    │  ChatService classifies intent → "extract-place" → dispatches to ExtractionService
+    │  ChatService classifies intent → "extract-place" → ExtractionService.run()
+    │  Returns immediately: { status: "pending", request_id }
+    │  asyncio.create_task fires the full pipeline in the background
     │
-    ├── Step 1: Enrich candidates
-    │   Parallel caption fetch (TikTok oEmbed, yt-dlp), regex extraction, LLM NER
-    │   Deduplicate by name; corroborated candidates receive a confidence bonus
-    │
-    ├── Step 2: Validate candidates
-    │   Google Places API validates each candidate in parallel
-    │   Confidence scored per match quality; results saved and returned if any pass
-    │
-    └── Step 3: Background dispatch (only when Step 2 returns nothing)
-        ExtractionPending event dispatched → ProvisionalResponse returned immediately
-        Background: subtitle, audio (Whisper), vision enrichers → re-validate → save
+    └── Background task: ExtractionPipeline.run()
+        │
+        ├── Phase 1: Enrich candidates
+        │   Parallel caption fetch (TikTok oEmbed, yt-dlp), LLM NER
+        │   Deduplicate by name; corroborated candidates receive a confidence bonus
+        │
+        ├── Phase 2: Validate candidates
+        │   Google Places API validates each candidate in parallel
+        │   Confidence scored per match quality; skip Phase 3 if any pass
+        │
+        ├── Phase 3: Deep enrichment (only when Phase 2 returns nothing + URL present)
+        │   Subtitle check, audio transcription (Whisper), vision frame extraction
+        │   Deduplicate → re-validate against Google Places
+        │
+        └── Persist + write status to Redis at extraction:{request_id}
+
+GET /v1/extraction/{request_id}
+    Reads Redis → returns ExtractPlaceResponse (same shape as chat data payload)
+    404 while still running or after TTL (1 hour) expires
 ```
 
 The pipeline runs the full cascade deterministically. No mid-pipeline callbacks to NestJS.
@@ -252,10 +262,11 @@ response noting nothing was found. Never return a zero-result response.
 
 ## API Contract
 
-| Endpoint               | Request                               | Response                                              |
-| ---------------------- | ------------------------------------- | ----------------------------------------------------- |
-| POST /v1/chat          | user_id, message, optional location   | type, message, optional data payload (ADR-052)        |
-| GET /v1/health         | —                                     | status, db connectivity                               |
+| Endpoint                          | Request                               | Response                                              |
+| --------------------------------- | ------------------------------------- | ----------------------------------------------------- |
+| POST /v1/chat                     | user_id, message, optional location   | type, message, optional data payload (ADR-052)        |
+| GET /v1/extraction/{request_id}   | —                                     | ExtractPlaceResponse (results, source_url, request_id); 404 while pending or after TTL |
+| GET /v1/health                    | —                                     | status, db connectivity                               |
 
 All requests come from NestJS after auth verification. This repo never receives requests directly from the frontend.
 
@@ -335,7 +346,7 @@ Used for:
 
 ## Design Principles
 
-- extract-place is a three-phase workflow (Enrichment → Validation → Background), not an agent. No LangGraph. Enrichers populate ExtractionContext unconditionally. The validator gates results. Background dispatch fires only when inline validation finds nothing.
+- extract-place is a three-phase workflow (Enrichment → Validation → Deep enrichment), not an agent. No LangGraph. The full pipeline runs as a background asyncio task; the HTTP response returns `pending` immediately. Phase 3 (subtitle/whisper/vision) runs inline inside the pipeline — no domain event dispatch, no separate handler.
 - consult is currently a sequential 6-step Python pipeline in `ConsultService` (ADR-050: LangGraph parallelization deferred). If LangGraph is added in the future, Steps 2 (retrieve) and 3 (discover) are the candidates for parallel branches — they are independent and their results merge before validation.
 - Each pipeline step passes only the data the next step needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
 
