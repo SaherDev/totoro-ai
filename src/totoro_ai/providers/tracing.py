@@ -143,7 +143,14 @@ def get_tracing_client() -> TracingClient:
     try:
         import langfuse  # noqa: PLC0415
 
-        lf = langfuse.Langfuse()
+        from totoro_ai.core.config import get_secrets  # noqa: PLC0415
+
+        secrets = get_secrets()
+        lf = langfuse.Langfuse(
+            public_key=secrets.LANGFUSE_PUBLIC_KEY,
+            secret_key=secrets.LANGFUSE_SECRET_KEY,
+            host=secrets.LANGFUSE_HOST,
+        )
         lf.auth_check()
         _client = _LangfuseTracingClient(lf)
     except Exception as exc:

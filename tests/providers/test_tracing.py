@@ -24,8 +24,10 @@ def reset_tracing_cache():
 def test_get_tracing_client_returns_langfuse_adapter_when_configured():
     mock_lf = MagicMock()
     mock_lf.auth_check.return_value = None
+    mock_langfuse_module = MagicMock()
+    mock_langfuse_module.Langfuse.return_value = mock_lf
 
-    with patch.dict("sys.modules", {"langfuse": MagicMock(Langfuse=lambda: mock_lf)}):
+    with patch.dict("sys.modules", {"langfuse": mock_langfuse_module}):
         client = get_tracing_client()
 
     assert isinstance(client, tracing_module._LangfuseTracingClient)
@@ -41,8 +43,10 @@ def test_get_tracing_client_returns_null_adapter_when_langfuse_missing():
 def test_get_tracing_client_returns_null_adapter_when_auth_fails():
     mock_lf = MagicMock()
     mock_lf.auth_check.side_effect = Exception("invalid credentials")
+    mock_langfuse_module = MagicMock()
+    mock_langfuse_module.Langfuse.return_value = mock_lf
 
-    with patch.dict("sys.modules", {"langfuse": MagicMock(Langfuse=lambda: mock_lf)}):
+    with patch.dict("sys.modules", {"langfuse": mock_langfuse_module}):
         client = get_tracing_client()
 
     assert isinstance(client, tracing_module._NullTracingClient)
