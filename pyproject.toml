@@ -25,7 +25,7 @@ redis = {version = "^5.0", extras = ["asyncio"]}
 greenlet = "^3.3.2"
 instructor = "^1.0"
 httpx = "^0.28"
-langfuse = "^2.0"
+langfuse = "^3.0"
 groq = "^0.13"
 yt-dlp = "^2026.3.17"
 python-dotenv = "^1.0"

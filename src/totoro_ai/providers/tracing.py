@@ -88,9 +88,8 @@ class _LangfuseSpan:
 
     def end(self, output: dict[str, Any] | None = None, level: str = "DEFAULT") -> None:
         if output is not None:
-            self._generation.end(output=output)
-        else:
-            self._generation.end()
+            self._generation.update(output=output)
+        self._generation.end()
 
 
 class _LangfuseTracingClient:
@@ -103,10 +102,13 @@ class _LangfuseTracingClient:
         input: Any = None,
         model: str | None = None,
     ) -> _LangfuseSpan:
-        kwargs: dict[str, Any] = {"name": name, "input": input}
+        kwargs: dict[str, Any] = {"name": name}
+        if input is not None:
+            kwargs["input"] = input
         if model is not None:
             kwargs["model"] = model
-        return _LangfuseSpan(self._client.generation(**kwargs))
+        gen = self._client.start_observation(as_type="generation", **kwargs)
+        return _LangfuseSpan(gen)
 
     def capture_message(
         self,
@@ -114,9 +116,12 @@ class _LangfuseTracingClient:
         level: str = "info",
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        self._client.capture_message(
-            message=message, level=level, metadata=metadata or {}
+        obs = self._client.start_observation(
+            as_type="event",
+            name=message,
+            input={"level": level, **(metadata or {})},
         )
+        obs.end()
 
     def flush(self) -> None:
         self._client.flush()
