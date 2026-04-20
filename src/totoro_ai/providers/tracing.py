@@ -31,6 +31,8 @@ class TracingClient(Protocol):
         name: str,
         input: Any = None,
         model: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> TracingSpan:
         ...
 
@@ -39,6 +41,8 @@ class TracingClient(Protocol):
         message: str,
         level: str = "info",
         metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         ...
 
@@ -62,6 +66,8 @@ class _NullTracingClient:
         name: str,
         input: Any = None,
         model: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> _NullSpan:
         return _NullSpan()
 
@@ -70,6 +76,8 @@ class _NullTracingClient:
         message: str,
         level: str = "info",
         metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         pass
 
@@ -101,12 +109,18 @@ class _LangfuseTracingClient:
         name: str,
         input: Any = None,
         model: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> _LangfuseSpan:
         kwargs: dict[str, Any] = {"name": name}
         if input is not None:
             kwargs["input"] = input
         if model is not None:
             kwargs["model"] = model
+        if user_id is not None:
+            kwargs["user_id"] = user_id
+        if session_id is not None:
+            kwargs["session_id"] = session_id
         gen = self._client.start_observation(as_type="generation", **kwargs)
         return _LangfuseSpan(gen)
 
@@ -115,12 +129,19 @@ class _LangfuseTracingClient:
         message: str,
         level: str = "info",
         metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
-        obs = self._client.start_observation(
-            as_type="event",
-            name=message,
-            input={"level": level, **(metadata or {})},
-        )
+        kwargs: dict[str, Any] = {
+            "as_type": "event",
+            "name": message,
+            "input": {"level": level, **(metadata or {})},
+        }
+        if user_id is not None:
+            kwargs["user_id"] = user_id
+        if session_id is not None:
+            kwargs["session_id"] = session_id
+        obs = self._client.start_observation(**kwargs)
         obs.end()
 
     def flush(self) -> None:

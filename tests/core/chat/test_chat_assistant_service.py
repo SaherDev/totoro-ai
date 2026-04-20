@@ -80,7 +80,8 @@ async def test_run_tracks_langfuse_generation(mock_get_llm: MagicMock) -> None:
 
     mock_tracer.generation.assert_called_once_with(
         name="chat_assistant",
-        input={"user_id": "user_123", "message": "Tokyo food?"},
+        input={"message": "Tokyo food?"},
+        user_id="user_123",
     )
     mock_span.end.assert_called_once()
 

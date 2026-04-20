@@ -69,7 +69,7 @@ def _strip_markdown_fences(text: str) -> str:
     return text.strip()
 
 
-async def classify_intent(message: str) -> IntentClassification:
+async def classify_intent(message: str, user_id: str | None = None) -> IntentClassification:
     """Classify user message intent using the intent_router LLM role.
 
     Args:
@@ -83,7 +83,7 @@ async def classify_intent(message: str) -> IntentClassification:
     """
     llm = get_llm("intent_router")
     tracer = get_tracing_client()
-    span = tracer.generation(name="intent_router", input={"message": message})
+    span = tracer.generation(name="intent_router", input={"message": message}, user_id=user_id)
 
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},

@@ -71,7 +71,7 @@ class ChatService:
             ChatResponse with type, message, and optional data payload.
         """
         try:
-            classification = await classify_intent(request.message)
+            classification = await classify_intent(request.message, user_id=request.user_id)
             logger.info(
                 "Intent classification for user %s: intent=%s, facts=%s",
                 request.user_id,

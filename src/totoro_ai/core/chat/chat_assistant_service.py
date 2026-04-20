@@ -69,7 +69,8 @@ class ChatAssistantService:
         tracer = get_tracing_client()
         span = tracer.generation(
             name="chat_assistant",
-            input={"user_id": user_id, "message": message},
+            input={"message": message},
+            user_id=user_id,
         )
 
         # Build user message with memories injected (ADR-010, ADR-044)
