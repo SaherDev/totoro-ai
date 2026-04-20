@@ -377,7 +377,7 @@ class ConsultService:
             # storing them here would duplicate mutable cache state.
             tier1_results = [
                 ConsultResult(
-                    place=result.place.to_tier1(),
+                    place=result.place.copy_with(geo_fresh=False, enriched=False),
                     source=result.source,
                 )
                 for result in results
