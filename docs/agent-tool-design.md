@@ -692,3 +692,21 @@ FTS index:
 No Google content in PostgreSQL. No lat, lng, address, hours, rating, phone, photo_url, popularity columns. All Google-sourced data lives in Redis with TTL-based expiry. Redis already owned exclusively by this repo.
 
 Alembic migration: drop cuisine, price_range, ambiance, lat, lng, address, photo_url, hours, rating, phone, popularity, confidence, validated_at, external_provider columns. Add place_type, subcategory, tags (JSONB), attributes (JSONB). Rename external_id → provider_id, place_name stays as place_name. Data migration moves existing cuisine, price_range values into attributes JSONB. Existing lat/lng/address values seeded into Redis `places:geo:{provider_id}` with 30-day TTL before dropping columns.
+
+---
+
+## Pre-agent refactor required: ExtractionService background task
+
+**Before wiring the LangGraph agent**, `asyncio.create_task` must move out of `ExtractionService.run()` and up to `ChatService._dispatch()`.
+
+Current state: `ExtractionService.run()` always fires `create_task` internally and returns `pending` immediately. The agent's Save tool would call this and only ever get `pending` back — it can never see `saved`, `duplicate`, or `failed`, so it cannot compose a meaningful response.
+
+Required change:
+- `ExtractionService.run()` — remove `create_task`, `await self._run_background(...)` directly, return real `ExtractPlaceResponse`
+- `ChatService._dispatch()` — wrap the `ExtractionService.run()` call in `asyncio.create_task` for the HTTP flow, write result to `ExtractionStatusRepository`, return `pending` + `request_id` to the product repo
+
+After this refactor:
+- HTTP flow (product repo): `POST /v1/chat` → `pending` immediately → poll `GET /v1/extraction/{request_id}`
+- Agent Save tool: `await extraction_service.run(...)` → waits inline → receives real status
+
+No polling inside the agent. The agent is in the same process and event loop — `await` is sufficient.
