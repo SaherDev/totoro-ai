@@ -42,6 +42,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _consult_step(step: str, summary: str) -> ReasoningStep:
+    """Build a ReasoningStep with consult-tool provenance (feature 027 M3, FR-024).
+
+    All ConsultService steps are `source="tool"`, `tool_name="consult"`,
+    `visibility="debug"` — the M5 consult tool wrapper carries this
+    provenance through to the agent's reasoning trace and the
+    `visibility` filter keeps them out of the JSON payload.
+    """
+    return ReasoningStep(
+        step=step,
+        summary=summary,
+        source="tool",
+        tool_name="consult",
+        visibility="debug",
+    )
+
+
 class ConsultService:
     """6-step place recommendation pipeline (PlaceObject-first)."""
 
@@ -148,7 +165,7 @@ class ConsultService:
             saved_places.append(place)
 
         reasoning_steps.append(
-            ReasoningStep(
+            _consult_step(
                 step="retrieval",
                 summary=(
                     f"Retrieved {len(recall_response.results)} saved places, "
@@ -173,7 +190,7 @@ class ConsultService:
                         map_google_place_to_place_object(google_result)
                     )
                 reasoning_steps.append(
-                    ReasoningStep(
+                    _consult_step(
                         step="discovery",
                         summary=(
                             f"Found {len(discovered_places)} external candidates "
@@ -183,14 +200,14 @@ class ConsultService:
                 )
             except RuntimeError:
                 reasoning_steps.append(
-                    ReasoningStep(
+                    _consult_step(
                         step="discovery",
                         summary="External discovery skipped (provider unavailable)",
                     )
                 )
         else:
             reasoning_steps.append(
-                ReasoningStep(
+                _consult_step(
                     step="discovery",
                     summary="Discovery skipped (no location context)",
                 )
@@ -237,7 +254,7 @@ class ConsultService:
                 except RuntimeError:
                     pass
             reasoning_steps.append(
-                ReasoningStep(
+                _consult_step(
                     step="validation",
                     summary=(
                         f"Validated {len(validated)}/{len(enriched_places)} candidates "
@@ -248,14 +265,14 @@ class ConsultService:
             enriched_places = validated
         elif not validate_candidates:
             reasoning_steps.append(
-                ReasoningStep(
+                _consult_step(
                     step="validation",
                     summary="Validation skipped (no live constraints in query)",
                 )
             )
         else:
             reasoning_steps.append(
-                ReasoningStep(
+                _consult_step(
                     step="validation",
                     summary=(
                         "Validation skipped (no saved candidates to validate — "
@@ -287,7 +304,7 @@ class ConsultService:
                     if not any(_place_matches_chip(p, chip) for chip in rejected_chips)
                 ]
                 reasoning_steps.append(
-                    ReasoningStep(
+                    _consult_step(
                         step="active_rejected_filter",
                         summary=(
                             f"Filtered {before - len(enriched_places)}/{before} "
@@ -297,7 +314,7 @@ class ConsultService:
                 )
             if confirmed_chips:
                 reasoning_steps.append(
-                    ReasoningStep(
+                    _consult_step(
                         step="active_confirmed_signals",
                         summary=", ".join(c.label for c in confirmed_chips),
                     )
@@ -322,7 +339,7 @@ class ConsultService:
             ][:discovered_cap]
             top = (saved_pool + discovered_pool)[:total_cap]
             reasoning_steps.append(
-                ReasoningStep(
+                _consult_step(
                     step="warming_blend",
                     summary=(
                         f"discovered={len(discovered_pool)}, saved={len(saved_pool)}"
@@ -341,7 +358,7 @@ class ConsultService:
         ]
 
         reasoning_steps.append(
-            ReasoningStep(
+            _consult_step(
                 step="response",
                 summary=(
                     f"Returning {len(top)} candidates in source order "

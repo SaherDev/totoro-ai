@@ -1,0 +1,118 @@
+$schema: "http://json-schema.org/draft-07/schema#"
+$id: "https://totoro.local/schemas/agent-config.yaml"
+title: "agent: block in config/app.yaml"
+description: |
+  Shape contract for the `agent:` block that M2 adds to config/app.yaml.
+  Also documents the additional `prompts.agent` entry under the existing
+  `prompts:` block.
+
+  Loaded into a typed Pydantic `AgentConfig` / `ToolTimeoutsConfig` at
+  `get_config()` time. Validation is EAGER at boot per FR-018a — any
+  missing field, bad type, or non-positive integer aborts startup with
+  a clear error.
+
+type: object
+required: [agent, prompts]
+properties:
+  agent:
+    type: object
+    additionalProperties: false
+    required:
+      - enabled
+      - max_steps
+      - max_errors
+      - checkpointer_ttl_seconds
+      - tool_timeouts_seconds
+    properties:
+      enabled:
+        type: boolean
+        default: false
+        description: |
+          Feature flag gating the entire agent path. Default false for
+          this feature. Evaluated per-request at dispatch (FR-018b) so
+          M10 can flip it in a running process without a redeploy.
+      max_steps:
+        type: integer
+        minimum: 1
+        default: 10
+        description: |
+          Step ceiling for the graph's `should_continue` router. Reaching
+          this triggers `fallback_node`.
+      max_errors:
+        type: integer
+        minimum: 1
+        default: 3
+        description: |
+          Error budget for the graph's `should_continue` router. Reaching
+          this triggers `fallback_node`. Tool timeouts (M9) count toward
+          this budget.
+      checkpointer_ttl_seconds:
+        type: integer
+        minimum: 1
+        default: 86400
+        description: |
+          Future-use. Postgres has no native TTL; a periodic cleanup job
+          will honor this field in a later feature (A5). Present now so
+          the YAML doesn't break when the job lands.
+      tool_timeouts_seconds:
+        type: object
+        additionalProperties: false
+        required: [recall, consult, save]
+        properties:
+          recall:
+            type: integer
+            minimum: 1
+            default: 5
+            description: "Hybrid search timeout. Fail loudly if exceeded."
+          consult:
+            type: integer
+            minimum: 1
+            default: 10
+            description: "Google discover + enrich_batch cap."
+          save:
+            type: integer
+            minimum: 1
+            default: 25
+            description: "Accommodates Whisper 8s + vision 10s worst case."
+
+  prompts:
+    type: object
+    additionalProperties:
+      type: string
+    required: [agent]
+    properties:
+      agent:
+        type: string
+        const: "agent.txt"
+        description: |
+          Registers `config/prompts/agent.txt` under the logical name
+          "agent". The file must contain both template slots
+          `{taste_profile_summary}` and `{memory_summary}`; slot presence
+          is validated at `_load_prompts()` time (research.md R3).
+
+examples:
+  - agent:
+      enabled: false
+      max_steps: 10
+      max_errors: 3
+      checkpointer_ttl_seconds: 86400
+      tool_timeouts_seconds:
+        recall: 5
+        consult: 10
+        save: 25
+    prompts:
+      taste_regen: "taste_regen.txt"
+      agent: "agent.txt"
+
+x-boot-failure-modes:
+  - description: "Missing `agent:` block"
+    outcome: "AppConfig.agent falls back to AgentConfig() defaults (enabled=false). No boot failure."
+    note: "Defaults make the block optional — this is intentional so unrelated tests don't need the block."
+  - description: "Missing `agent.tool_timeouts_seconds.recall`"
+    outcome: "Pydantic ValidationError at get_config() — boot aborts naming the missing field."
+  - description: "`agent.max_steps: 0`"
+    outcome: "`AgentConfig._positive_integers` validator raises; boot aborts."
+  - description: "`prompts.agent` points at a missing file"
+    outcome: "`_load_prompts()` raises FileNotFoundError; boot aborts naming the missing path."
+  - description: "`config/prompts/agent.txt` missing `{memory_summary}`"
+    outcome: "`_load_prompts()` raises ValueError naming the missing slot; boot aborts."

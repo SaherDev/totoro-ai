@@ -2,12 +2,12 @@ import os
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
-from totoro_ai.db.base import Base
 import totoro_ai.db.models  # noqa: F401 — registers models with Base
+from alembic import context
+from totoro_ai.db.base import Base
 
 config = context.config
 
@@ -25,6 +25,16 @@ if "+asyncpg" in _url:
 config.set_main_option("sqlalchemy.url", _url)
 
 
+# Feature 027 FR-031: exclude library-owned checkpointer tables.
+# `langgraph-checkpoint-postgres` manages its own schema via
+# AsyncPostgresSaver.setup(). Pure logic lives in
+# `src/totoro_ai/db/alembic_exclusion.py` so it is testable without
+# booting Alembic's context.
+from totoro_ai.db.alembic_exclusion import (  # noqa: E402
+    include_object as _include_object,
+)
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -32,6 +42,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -44,7 +55,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=_include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

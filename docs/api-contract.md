@@ -141,6 +141,7 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
   "type": "extract-place",
   "message": "Saved: Nara Eatery, Bangkok",
   "data": {
+    "status": "completed",
     "results": [
       {
         "place": {
@@ -150,27 +151,30 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
         "status": "saved"
       }
     ],
-    "source_url": "https://tiktok.com/@user/video/123",
+    "raw_input": "https://tiktok.com/@user/video/123",
     "request_id": "req_01HZ..."
   }
 }
 ```
 
-`data` (`ExtractPlaceResponse`):
+`data` (`ExtractPlaceResponse`, ADR-063):
 
-| Field        | Type                 | Notes                                               |
-| ------------ | -------------------- | --------------------------------------------------- |
-| `results`    | `ExtractPlaceItem[]` | One entry per extracted place; see below            |
-| `source_url` | `string \| null`     | URL the extraction came from (if any)               |
-| `request_id` | `string \| null`     | Polling handle when any item has `status="pending"` |
+| Field        | Type                                 | Notes                                                                                                                                        |
+| ------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`     | `"pending" \| "completed" \| "failed"` | Pipeline-level state. `pending` = dispatch returned immediately; `completed` = at least one real outcome; `failed` = no usable outcome |
+| `results`    | `ExtractPlaceItem[]`                 | Empty iff `status != "completed"`. Below-threshold outcomes never appear here                                                                |
+| `raw_input`  | `string \| null`                     | Original user-supplied input, **verbatim** (no trimming, no URL canonicalization). Replaces the pre-ADR-063 `source_url` envelope field      |
+| `request_id` | `string \| null`                     | Polling handle when `status="pending"`; also carried on terminal envelopes                                                                   |
 
 `ExtractPlaceItem` shape:
 
-| Field        | Type                                                                | Notes                                                                                                                                                               |
-| ------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `place`      | `PlaceObject \| null`                                               | Present for `"saved"`, `"needs_review"`, `"duplicate"`; `null` for `"pending"`/`"failed"`                                                                           |
-| `confidence` | `float \| null`                                                     | Extraction confidence score (0–1); `null` if the cascade did not reach validation                                                                                   |
-| `status`     | `"saved" \| "needs_review" \| "duplicate" \| "pending" \| "failed"` | See the extract-place schema docstring; `"needs_review"` means confidence landed in the tentative band between `save_threshold` and `confident_threshold` (ADR-057) |
+| Field        | Type                                              | Notes                                                                                                                                                               |
+| ------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `place`      | `PlaceObject`                                     | Required, non-null. The extracted place                                                                                                                             |
+| `confidence` | `float`                                           | Required, non-null. Extraction confidence score in `[0.0, 1.0]`                                                                                                     |
+| `status`     | `"saved" \| "needs_review" \| "duplicate"`        | Per-place outcome. `"needs_review"` = confidence in the tentative band between `save_threshold` and `confident_threshold` (ADR-057). Pipeline states live on the envelope, never here |
+
+Operational note: status payloads are cached in Redis under the `extraction:v2:{request_id}` key prefix per ADR-063. Legacy `extraction:{request_id}` keys from pre-ADR-063 deploys are not read — the polling route returns `404` for any key not found under the v2 prefix (same code path as TTL expiry).
 
 ### `consult`
 

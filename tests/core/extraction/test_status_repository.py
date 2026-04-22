@@ -75,7 +75,8 @@ async def test_key_format_uses_extraction_prefix() -> None:
     backend = CapturingBackend()
     repo = ExtractionStatusRepository(cache=backend)  # type: ignore[arg-type]
     await repo.write("my-req-id", {"extraction_status": "failed"})
-    assert backend.last_key == "extraction:my-req-id"
+    # ADR-063: prefix bumped to v2 alongside the two-level ExtractPlaceResponse shape.
+    assert backend.last_key == "extraction:v2:my-req-id"
 
 
 async def test_write_uses_default_ttl_of_3600() -> None:

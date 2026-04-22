@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-063: Two-level ExtractPlaceResponse status + raw_input rename
+
+**Date:** 2026-04-21\
+**Status:** accepted\
+**Context:** `ExtractPlaceItem.status` conflated two concerns — per-place outcomes (`saved` / `duplicate` / `needs_review`) and pipeline-level states (`pending` / `failed`). The pipeline states had no place, so extractions faked an item with `place=None, confidence=None` just to carry the status. Multi-place extractions (one saved + one duplicate) fought the pipeline-wide status on the item level. The envelope field `source_url` was also a misnomer for the general-purpose `raw_input` case — it stored the parsed URL where applicable, but the user-supplied input may also be plain text or a URL with supplementary text, and downstream consumers (the agent Save tool in M5, the product-repo UI) benefit from seeing the original string verbatim.
+**Decision:** Split status into two levels. `ExtractPlaceResponse.status ∈ {pending, completed, failed}` on the envelope; `ExtractPlaceItem.status ∈ {saved, needs_review, duplicate}` on each item. `ExtractPlaceItem.place` and `ExtractPlaceItem.confidence` become required (non-nullable) — no null placeholders. `results` is empty iff `status != "completed"`. Below-threshold outcomes never appear in `results` — they contribute only to the envelope-level `failed` determination. Rename `source_url → raw_input` on the envelope; `raw_input` carries the user-supplied string verbatim (no trimming, URL canonicalization, or case-folding). Bump the Redis key prefix from `extraction:` to `extraction:v2:` so post-deploy reads cannot misinterpret legacy payloads; the polling route returns 404 for any `request_id` not found under the new prefix (same code path as TTL expiry).
+**Consequences:** Cleaner contract downstream — multi-outcome extractions represent naturally, the agent Save tool (M5) gets real per-place status inline, and product-repo consumers no longer reason about nullable place/confidence fields. Breaking change requiring product-repo (NestJS) TypeScript schema update in lockstep (feature 027 FR-036). Legacy `extraction:v1:*` keys TTL out within 1 hour of deploy; no backwards-compat read path is maintained. `PlaceObject.source_url` (the per-place field capturing where a place was extracted from) is unrelated and unchanged — only the envelope field renames.
+
+---
+
 ## ADR-062: LangGraph over LangChain agent abstractions for the Totoro agent
 
 **Date:** 2026-04-19\

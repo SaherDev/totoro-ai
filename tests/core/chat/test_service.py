@@ -82,12 +82,21 @@ def _consult_response() -> ConsultResponse:
                 source="saved",
             ),
         ],
-        reasoning_steps=[ReasoningStep(step="1", summary="Recalled from memory")],
+        reasoning_steps=[
+            ReasoningStep(
+                step="retrieval",
+                summary="Recalled from memory",
+                source="tool",
+                tool_name="consult",
+                visibility="debug",
+            )
+        ],
     )
 
 
 def _extract_response() -> ExtractPlaceResponse:
     return ExtractPlaceResponse(
+        status="completed",
         results=[
             ExtractPlaceItem(
                 place=PlaceObject(
@@ -102,7 +111,7 @@ def _extract_response() -> ExtractPlaceResponse:
                 status="saved",
             )
         ],
-        source_url=None,
+        raw_input=None,
     )
 
 
@@ -169,176 +178,89 @@ def _place(place_id: str, name: str) -> PlaceObject:
 
 
 @patch("totoro_ai.core.chat.service.classify_intent")
-async def test_run_extract_place_intent(mock_classify: MagicMock) -> None:
-    """ChatService routes 'extract-place' intent to ExtractionService."""
+async def test_dispatch_extraction_returns_pending_synchronously(
+    mock_classify: MagicMock,
+) -> None:
+    """M1 (feature 027): _dispatch for extract-place returns status=pending
+    + request_id immediately; ExtractionService.run() is scheduled via
+    asyncio.create_task and its result never influences this response.
+    """
+    import asyncio
+
     mock_classify.return_value = IntentClassification(
         intent="extract-place", confidence=0.98, clarification_needed=False
     )
+
+    # Make run() take a while; assert _dispatch returns before it finishes.
+    async def slow_run(*args: object, **kwargs: object) -> None:
+        await asyncio.sleep(5)
+
     extraction_mock = AsyncMock()
-    extraction_mock.run.return_value = _extract_response()
+    extraction_mock.run = AsyncMock(side_effect=slow_run)
 
     service = _make_service(extraction=extraction_mock)
     request = ChatRequest(user_id="user_1", message="https://www.tiktok.com/video/123")
 
-    result = await service.run(request)
+    result = await asyncio.wait_for(service.run(request), timeout=2.0)
 
     assert result.type == "extract-place"
-    assert result.data is not None
-    extraction_mock.run.assert_called_once_with(
-        "https://www.tiktok.com/video/123", "user_1"
+    assert result.message == (
+        "On it — extracting the place in the background. Check back in a moment."
     )
+    assert result.data is not None
+    assert result.data["status"] == "pending"
+    assert result.data["results"] == []
+    assert result.data["request_id"] is not None
+    assert len(result.data["request_id"]) == 32
 
 
 @patch("totoro_ai.core.chat.service.classify_intent")
-async def test_extract_place_message_picks_first_saved_not_first_result(
+async def test_dispatch_extraction_schedules_run_with_request_id(
     mock_classify: MagicMock,
 ) -> None:
-    """Message names the saved place even when it isn't results[0]."""
+    """ExtractionService.run() scheduled with the caller's request_id."""
+    import asyncio
+
     mock_classify.return_value = IntentClassification(
         intent="extract-place", confidence=0.98, clarification_needed=False
     )
     extraction_mock = AsyncMock()
-    extraction_mock.run.return_value = ExtractPlaceResponse(
-        results=[
-            ExtractPlaceItem(place=None, confidence=0.60, status="failed"),
-            ExtractPlaceItem(place=None, confidence=0.60, status="failed"),
-            ExtractPlaceItem(
-                place=_place("p1", "ChaTraMue"), confidence=0.75, status="saved"
-            ),
-            ExtractPlaceItem(place=None, confidence=0.65, status="failed"),
-        ],
-        source_url=None,
-    )
+    extraction_mock.run = AsyncMock(return_value=None)
 
     service = _make_service(extraction=extraction_mock)
     request = ChatRequest(user_id="user_1", message="https://tiktok.com/video/1")
 
     result = await service.run(request)
+    # Let the scheduled create_task run.
+    await asyncio.sleep(0)
 
-    assert result.type == "extract-place"
-    assert result.message == "Saved: ChaTraMue"
+    extraction_mock.run.assert_awaited_once()
+    call = extraction_mock.run.await_args
+    # run() is called positionally with (message, user_id, request_id=...).
+    assert call.args[0] == "https://tiktok.com/video/1"
+    assert call.args[1] == "user_1"
+    assert call.kwargs["request_id"] == result.data["request_id"]
 
 
 @patch("totoro_ai.core.chat.service.classify_intent")
-async def test_extract_place_message_all_duplicates(
+async def test_dispatch_extraction_raw_input_is_verbatim(
     mock_classify: MagicMock,
 ) -> None:
-    """When every result is a duplicate, the message does not lie about saving."""
+    """data.raw_input echoes the submitted message byte-for-byte."""
     mock_classify.return_value = IntentClassification(
         intent="extract-place", confidence=0.98, clarification_needed=False
     )
     extraction_mock = AsyncMock()
-    extraction_mock.run.return_value = ExtractPlaceResponse(
-        results=[
-            ExtractPlaceItem(
-                place=_place("p1", "Ichiran Ramen"),
-                confidence=0.92,
-                status="duplicate",
-            ),
-            ExtractPlaceItem(
-                place=_place("p2", "Nara Eatery"),
-                confidence=0.88,
-                status="duplicate",
-            ),
-        ],
-        source_url=None,
-    )
+    extraction_mock.run = AsyncMock(return_value=None)
 
+    gnarly = "  https://tiktok.com/v/abc?utm_src=SPAM&x=1   "
     service = _make_service(extraction=extraction_mock)
-    request = ChatRequest(user_id="user_1", message="https://tiktok.com/video/2")
+    request = ChatRequest(user_id="user_1", message=gnarly)
 
     result = await service.run(request)
 
-    assert result.type == "extract-place"
-    assert result.message == "Already in your saves."
-
-
-@patch("totoro_ai.core.chat.service.classify_intent")
-async def test_extract_place_message_all_failed(mock_classify: MagicMock) -> None:
-    """When nothing cleared the confidence bar, the message says so."""
-    mock_classify.return_value = IntentClassification(
-        intent="extract-place", confidence=0.98, clarification_needed=False
-    )
-    extraction_mock = AsyncMock()
-    extraction_mock.run.return_value = ExtractPlaceResponse(
-        results=[
-            ExtractPlaceItem(place=None, confidence=0.20, status="failed"),
-            ExtractPlaceItem(place=None, confidence=0.25, status="failed"),
-        ],
-        source_url=None,
-    )
-
-    service = _make_service(extraction=extraction_mock)
-    request = ChatRequest(user_id="user_1", message="https://tiktok.com/video/3")
-
-    result = await service.run(request)
-
-    assert result.type == "extract-place"
-    assert result.message == "Couldn't extract a place from that."
-
-
-@patch("totoro_ai.core.chat.service.classify_intent")
-async def test_extract_place_message_only_needs_review(
-    mock_classify: MagicMock,
-) -> None:
-    """Pure tentative save: the message surfaces the uncertainty (ADR-057)."""
-    mock_classify.return_value = IntentClassification(
-        intent="extract-place", confidence=0.98, clarification_needed=False
-    )
-    extraction_mock = AsyncMock()
-    extraction_mock.run.return_value = ExtractPlaceResponse(
-        results=[
-            ExtractPlaceItem(
-                place=_place("p1", "Thipsamai"),
-                confidence=0.60,
-                status="needs_review",
-            ),
-        ],
-        source_url=None,
-    )
-
-    service = _make_service(extraction=extraction_mock)
-    request = ChatRequest(user_id="user_1", message="https://tiktok.com/video/4")
-
-    result = await service.run(request)
-
-    assert result.type == "extract-place"
-    assert result.message == "Low confidence — please confirm: Thipsamai"
-
-
-@patch("totoro_ai.core.chat.service.classify_intent")
-async def test_extract_place_message_mixed_saved_and_needs_review(
-    mock_classify: MagicMock,
-) -> None:
-    """Mixed confident + tentative: the message lists both bands separately."""
-    mock_classify.return_value = IntentClassification(
-        intent="extract-place", confidence=0.98, clarification_needed=False
-    )
-    extraction_mock = AsyncMock()
-    extraction_mock.run.return_value = ExtractPlaceResponse(
-        results=[
-            ExtractPlaceItem(
-                place=_place("p1", "ChaTraMue"), confidence=0.75, status="saved"
-            ),
-            ExtractPlaceItem(
-                place=_place("p2", "Thipsamai"),
-                confidence=0.60,
-                status="needs_review",
-            ),
-            ExtractPlaceItem(place=None, confidence=0.22, status="failed"),
-        ],
-        source_url=None,
-    )
-
-    service = _make_service(extraction=extraction_mock)
-    request = ChatRequest(user_id="user_1", message="https://tiktok.com/video/5")
-
-    result = await service.run(request)
-
-    assert result.type == "extract-place"
-    assert result.message == (
-        "Saved: ChaTraMue Low confidence — please confirm: Thipsamai"
-    )
+    assert result.data is not None
+    assert result.data["raw_input"] == gnarly
 
 
 @patch("totoro_ai.core.chat.service.classify_intent")
@@ -419,8 +341,10 @@ async def test_run_recall_place_description_keeps_enriched_query(
     call = recall_mock.run.await_args
     assert call.kwargs["query"] == "cozy japanese ramen restaurant nearby"
     filters = call.kwargs["filters"]
-    assert filters.cuisine == "japanese"
-    assert filters.ambiance == "cozy"
+    # Attribute-level signals live under filters.attributes (ADR-056).
+    assert filters.attributes is not None
+    assert filters.attributes.cuisine == "japanese"
+    assert filters.attributes.ambiance == "cozy"
     assert filters.subcategory == "restaurant"
 
 
@@ -457,9 +381,13 @@ async def test_run_recall_projects_location_context_onto_filters(
     await service.run(request)
 
     filters = recall_mock.run.await_args.kwargs["filters"]
-    assert filters.city == "Bangkok"
-    assert filters.country == "Thailand"
-    assert filters.neighborhood is None
+    # LocationContext lives under filters.attributes.location_context.
+    assert filters.attributes is not None
+    loc = filters.attributes.location_context
+    assert loc is not None
+    assert loc.city == "Bangkok"
+    assert loc.country == "Thailand"
+    assert loc.neighborhood is None
 
 
 @patch("totoro_ai.core.chat.service.classify_intent")

@@ -10,6 +10,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# Feature 027 FR-024: ReasoningStep is re-exported from the agent module
+# so ConsultResponse.reasoning_steps carries the richer schema
+# (source / tool_name / visibility / timestamp). The M5 consult tool
+# wrapper stamps source="tool", tool_name="consult", visibility="debug"
+# on every step; ConsultService builds them with those kwargs set directly.
+from totoro_ai.core.agent.reasoning import ReasoningStep as ReasoningStep
 from totoro_ai.core.places.models import PlaceObject
 
 
@@ -33,13 +39,6 @@ class ConsultRequest(BaseModel):
             "from GET /v1/user/context. When null, consult defaults to 'active'."
         ),
     )
-
-
-class ReasoningStep(BaseModel):
-    """A step in the recommendation reasoning process."""
-
-    step: str
-    summary: str
 
 
 class ConsultResult(BaseModel):

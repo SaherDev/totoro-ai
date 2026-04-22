@@ -45,7 +45,10 @@
       "Bash(curl -s -w '\\\\nHTTP %{http_code}' -X POST http://localhost:8000/v1/signal -H 'Content-Type: application/json' -d '{\"signal_type\":\"recommendation_accepted\",\"user_id\":\"user_3AhqBhtLzKKlbKrjVNGTHro1o76\",\"recommendation_id\":\"0ed6e7a1-3350-4dcd-b522-e41c862c6cfc\",\"place_id\":\"google:ChIJoTEcYnaZ4jAReNxhREi58U0\"}')",
       "Bash(curl -s -w '\\\\nHTTP %{http_code}' -X POST http://localhost:8000/v1/signal -H 'Content-Type: application/json' -d '{\"signal_type\":\"recommendation_rejected\",\"user_id\":\"user_3AhqBhtLzKKlbKrjVNGTHro1o76\",\"recommendation_id\":\"0ed6e7a1-3350-4dcd-b522-e41c862c6cfc\",\"place_id\":\"google:ChIJoTEcYnaZ4jAReNxhREi58U0\"}')",
       "Bash(poetry update *)",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(poetry show *)",
+      "Bash(pip index *)",
+      "Bash(perl -i -pe 's/^- \\\\[ \\\\] \\(T04[4678]\\) /- [X] $1 /' specs/027-agent-foundation/tasks.md)"
     ]
   }
 }

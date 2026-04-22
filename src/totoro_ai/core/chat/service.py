@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
+from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
 from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
 from totoro_ai.core.chat.router import classify_intent
 from totoro_ai.core.consult.service import ConsultService
@@ -71,7 +74,9 @@ class ChatService:
             ChatResponse with type, message, and optional data payload.
         """
         try:
-            classification = await classify_intent(request.message, user_id=request.user_id)
+            classification = await classify_intent(
+                request.message, user_id=request.user_id
+            )
             logger.info(
                 "Intent classification for user %s: intent=%s, facts=%s",
                 request.user_id,
@@ -111,41 +116,26 @@ class ChatService:
     async def _dispatch(self, request: ChatRequest, intent: str) -> ChatResponse:
         """Route to the correct service based on classified intent."""
         if intent == "extract-place":
-            extract_result = await self._extraction.run(
-                request.message, request.user_id
+            # M1 (feature 027): ExtractionService.run() now awaits the
+            # pipeline inline. To preserve the HTTP fire-and-return
+            # behavior, schedule it as a background task here and return
+            # `pending` immediately with a request_id for polling.
+            request_id = uuid4().hex
+            asyncio.create_task(
+                self._extraction.run(
+                    request.message, request.user_id, request_id=request_id
+                )
             )
-            pending = any(r.status == "pending" for r in extract_result.results)
-            if pending:
-                message = "On it — extracting the place in the background. Check back in a moment."
-            else:
-                saved = [
-                    r
-                    for r in extract_result.results
-                    if r.status == "saved" and r.place is not None
-                ]
-                needs_review = [
-                    r
-                    for r in extract_result.results
-                    if r.status == "needs_review" and r.place is not None
-                ]
-                duplicates = [r for r in extract_result.results if r.status == "duplicate"]
-                parts: list[str] = []
-                if saved:
-                    names = ", ".join(r.place.place_name for r in saved if r.place)
-                    parts.append(f"Saved: {names}")
-                if needs_review:
-                    names = ", ".join(r.place.place_name for r in needs_review if r.place)
-                    parts.append(f"Low confidence — please confirm: {names}")
-                if parts:
-                    message = " ".join(parts)
-                elif duplicates:
-                    message = "Already in your saves."
-                else:
-                    message = "Couldn't extract a place from that."
+            pending = ExtractPlaceResponse(
+                status="pending",
+                results=[],
+                raw_input=request.message,
+                request_id=request_id,
+            )
             return ChatResponse(
                 type="extract-place",
-                message=message,
-                data=extract_result.model_dump(),
+                message="On it — extracting the place in the background. Check back in a moment.",
+                data=pending.model_dump(mode="json"),
             )
 
         if intent == "consult":
@@ -209,22 +199,16 @@ class ChatService:
 def _filters_from_parsed(parsed: ParsedIntent) -> RecallFilters:
     """Project `ParsedIntent.place` onto `RecallFilters` for recall dispatch.
 
-    Field names on `ParsedIntentPlace` / `PlaceAttributes` /
-    `LocationContext` already match `RecallFilters` 1:1 (ADR-056), so this
-    is a direct assignment with no translation. `place_type` is an enum on
-    the intent side and a string on the filter side — we unwrap `.value`.
+    `RecallFilters` mirrors `PlaceObject` (ADR-056 + feature 027 M4):
+    top-level `place_type`/`subcategory`/`tags_include`/`source` plus a
+    nested `attributes: PlaceAttributes`. This helper carries the parsed
+    intent's attribute-level signals (cuisine, price_hint, location) into
+    that nested container verbatim.
     """
     place = parsed.place
-    attrs = place.attributes
-    loc = attrs.location_context
     return RecallFilters(
         place_type=place.place_type.value if place.place_type else None,
         subcategory=place.subcategory,
         tags_include=list(place.tags) if place.tags else None,
-        cuisine=attrs.cuisine,
-        price_hint=attrs.price_hint,
-        ambiance=attrs.ambiance,
-        neighborhood=loc.neighborhood if loc else None,
-        city=loc.city if loc else None,
-        country=loc.country if loc else None,
+        attributes=place.attributes,
     )

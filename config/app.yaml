@@ -212,6 +212,25 @@ embeddings:
 # ---------------------------------------------------------------------------
 prompts:
   taste_regen: taste_regen.txt
+  agent: agent.txt
+
+# ---------------------------------------------------------------------------
+# Agent Configuration (feature 027 M2, ADR-062)
+# Gates the entire agent path via `enabled` (default false during migration).
+# max_steps / max_errors bound the graph's should_continue loop (M3).
+# tool_timeouts_seconds consumed by tool wrappers (M5) and timeout guard (M9).
+# checkpointer_ttl_seconds reserved for a future cleanup job (Postgres has
+# no native TTL; periodic cleanup is deferred).
+# ---------------------------------------------------------------------------
+agent:
+  enabled: false
+  max_steps: 10
+  max_errors: 3
+  checkpointer_ttl_seconds: 86400
+  tool_timeouts_seconds:
+    recall: 5
+    consult: 10
+    save: 25
 
 # ---------------------------------------------------------------------------
 # Taste Model Configuration
