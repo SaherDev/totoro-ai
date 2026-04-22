@@ -28,7 +28,7 @@ class TestAgentConfigDefaults:
 
     def test_app_config_exposes_agent_with_defaults(self) -> None:
         cfg = get_config()
-        assert cfg.agent.enabled is False
+        assert cfg.agent.enabled is True
         assert cfg.agent.max_steps == 10
         assert cfg.agent.max_errors == 3
         assert cfg.agent.tool_timeouts_seconds.recall == 5

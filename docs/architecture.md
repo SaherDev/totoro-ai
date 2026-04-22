@@ -202,63 +202,9 @@ POST /v1/chat
 - Graceful fallback: text-only path exists; embedding failure does not crash
 - Deterministic match_reason: reflects actual search behavior; no guessing
 
-## Data Flow: Assistant (General Food/Dining Q&A)
+## Agent Orchestration (ADR-062, ADR-065)
 
-assistant is a single-LLM-call service with no vector search, no ranking, and no database reads beyond user memories. It handles general food and dining questions that don't map to a specific saved place or recommendation request.
-
-```
-General question (e.g., "is tipping expected in Japan?")
-    │
-    ▼
-POST /v1/chat
-    │  ChatService classifies intent → "assistant" → dispatches to ChatAssistantService
-    │
-    ▼
-ChatAssistantService.run()
-    │
-    ├── Load user memories (UserMemoryService.load_memories)
-    │   Injected into user message as context (ADR-010)
-    │
-    └── Single LLM call (chat_assistant role: GPT-4o-mini)
-        System prompt: food/dining advisor persona
-        User message: optional memory context + question
-        Returns: conversational response string
-```
-
-No tools, no retrieval, no branching. Falls back to assistant for any unrecognized intent.
-
----
-
-## Intent Classification
-
-NestJS sends all conversational traffic to `POST /v1/chat`. Classification happens
-inside FastAPI's `ChatService` as the first step of request handling, using the
-`intent_router` LLM role (Groq llama-3.1-8b-instant). NestJS never sees the intent —
-it only receives the final `ChatResponse`.
-
-Intent types:
-
-- extract-place — user is sharing or recommending a specific place, including URLs and
-  plain-text named places ("RAMEN KAISUGI Bangkok is incredible", TikTok links, etc.)
-- consult — user wants a recommendation but has not named a specific place
-  ("cheap dinner nearby", "where should I eat tonight?")
-- recall — user wants to retrieve a place they previously saved
-  ("that ramen place I saved", "show me saved Thai restaurants")
-- assistant — general food/dining question with no save or retrieve intent
-  ("is tipping expected in Japan?")
-
-Classification rules (LLM-driven, not regex):
-
-- Confidence ≥ 0.7 → dispatch by intent
-- Confidence < 0.7 → return `type="clarification"` with a single short question
-- Default when uncertain → consult
-
-Personal facts are also extracted from each message (e.g., "I'm vegetarian") and
-persisted asynchronously via `PersonalFactsExtracted` event.
-
-Empty state rule: the system always returns something. At zero saves, a consult
-query returns nearby popular options. A recall with no matches returns an assistant
-response noting nothing was found. Never return a zero-result response.
+All conversational traffic routes through the LangGraph agent (Claude Sonnet 4.6 via the `orchestrator` model role). The agent selects from three tools per turn — recall, save, consult — and returns a `ChatResponse(type="agent")`. The legacy intent-router / intent-parser / chat_assistant dispatch path was deleted in M11 (ADR-065).
 
 ## API Contract
 
@@ -274,12 +220,10 @@ All requests come from NestJS after auth verification. This repo never receives 
 
 | Logical Role  | Model                   | Why                                                                  |
 | ------------- | ----------------------- | -------------------------------------------------------------------- |
-| intent_router | llama-3.1-8b-instant (Groq) | Fast, cheap LLM-based intent classification for all `/v1/chat` traffic |
-| intent_parser | GPT-4o-mini             | Structured extraction for consult intent (cuisine, price, radius, constraints) |
-| chat_assistant | GPT-4o-mini            | General food/dining Q&A for assistant intent                         |
-| orchestrator  | claude-sonnet-4-6       | Strong reasoning for tool calling (used by agent/orchestration layer) |
+| orchestrator  | claude-sonnet-4-6       | Strong reasoning for tool calling (LangGraph agent) |
+| extractor     | GPT-4o-mini             | NER and subtitle/audio extraction enrichers in the save pipeline |
 | embedder      | Voyage 4-lite           | 9.25% better retrieval quality than OpenAI; 1024-dimensional vectors |
-| evaluator     | GPT-4o-mini             | Cost-effective for batch evals                                       |
+| taste_regen   | GPT-4o-mini             | Cost-effective for taste profile summarization |
 | vision_frames | GPT-4o-mini             | Frame-level vision extraction for background enricher                |
 | transcriber   | whisper-large-v3-turbo (Groq) | Fast multilingual STT; 216x real-time; background audio enricher only (ADR-047) |
 

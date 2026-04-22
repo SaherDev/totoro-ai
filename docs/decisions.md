@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-065: Agent cutover — legacy intent pipeline deleted
+
+**Date:** 2026-04-22\
+**Status:** accepted\
+**Context:** `agent_enabled` flag (M6) was flipped to `true` (M10) and has been stable. The legacy intent-router-based dispatch path (`classify_intent`, `ChatAssistantService`, `IntentParser`) is dead code. The three deleted model roles (`intent_router`, `intent_parser`, `chat_assistant`) have no remaining callers in `src/` or `tests/`. `evaluator` was reserved-but-unused since repo inception — pruned alongside the agent-cutover cleanup.\
+**Decision:** Delete the legacy pipeline: `core/chat/router.py`, `core/chat/chat_assistant_service.py`, `core/intent/` (entire module). Remove `_run_legacy` from `ChatService.run`. Remove four model roles from `config/app.yaml`. ADR-062 is now fully implemented. Postgres checkpointer (`AsyncPostgresSaver`) is the confirmed backend (not Redis — Railway's default Redis lacks the modules required by `langgraph-checkpoint-redis`).\
+**Consequences:** `ChatService.run` is a one-liner delegating to `_run_agent`. No regression path exists — rollback requires reintroducing the legacy code from git history. `GET /v1/extraction/{request_id}` polling route (ADR-048) is retained for background extractions. The `agent.enabled` flag stays in config for potential future use but the flag-off path is gone.
+
+---
+
 ## ADR-064: Reasoning traces via service-emit / wrapper-wrap pattern
 
 **Date:** 2026-04-21\

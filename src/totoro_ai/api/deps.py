@@ -7,7 +7,6 @@ from typing import Any
 from fastapi import BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
 from totoro_ai.core.chat.service import ChatService
 from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
 from totoro_ai.core.consult.service import ConsultService
@@ -18,7 +17,6 @@ from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
-from totoro_ai.core.intent.intent_parser import IntentParser
 from totoro_ai.core.memory.repository import SQLAlchemyUserMemoryRepository
 from totoro_ai.core.memory.service import UserMemoryService
 from totoro_ai.core.places import GooglePlacesClient, PlacesService
@@ -110,16 +108,6 @@ def get_user_memory_service() -> UserMemoryService:
     return UserMemoryService(
         repo=SQLAlchemyUserMemoryRepository(_get_session_factory())
     )
-
-
-def get_chat_assistant_service(
-    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
-) -> ChatAssistantService:
-    """FastAPI dependency providing ChatAssistantService.
-
-    Injects UserMemoryService for context injection (ADR-010, ADR-038).
-    """
-    return ChatAssistantService(memory_service=memory_service)
 
 
 def get_extraction_config(
@@ -222,7 +210,7 @@ def _make_enrichment_pipeline() -> EnrichmentPipeline:
                     CircuitBreakerEnricher(YtDlpMetadataEnricher()),
                 ]
             ),
-            LLMNEREnricher(instructor_client=get_instructor_client("intent_parser")),
+            LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         ]
     )
 
@@ -256,11 +244,11 @@ def get_extraction_pipeline(
     )
     background_enrichers: list[Enricher] = [
         SubtitleCheckEnricher(
-            instructor_client=get_instructor_client("intent_parser"),
+            instructor_client=get_instructor_client("extractor"),
         ),
         WhisperAudioEnricher(
             groq_client=GroqWhisperClient(api_key=get_secrets().GROQ_API_KEY or ""),
-            instructor_client=get_instructor_client("intent_parser"),
+            instructor_client=get_instructor_client("extractor"),
         ),
         VisionFramesEnricher(vision_extractor=get_vision_extractor()),
     ]
@@ -366,9 +354,6 @@ async def get_chat_service(
     extraction_service: ExtractionService = Depends(get_extraction_service),  # noqa: B008
     consult_service: ConsultService = Depends(get_consult_service),  # noqa: B008
     recall_service: RecallService = Depends(get_recall_service),  # noqa: B008
-    assistant_service: ChatAssistantService = Depends(  # noqa: B008
-        get_chat_assistant_service
-    ),
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
     memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
     taste_service: TasteModelService = Depends(get_taste_service),  # noqa: B008
@@ -377,15 +362,13 @@ async def get_chat_service(
 ) -> ChatService:
     """FastAPI dependency providing a fully wired ChatService (ADR-019, ADR-052).
 
-    Feature 028 M6: adds `taste_service`, `config`, and `agent_graph` for
-    the flag-on agent path. Flag-off behavior is unchanged.
+    Feature 028 M11 (ADR-065): legacy intent_parser and assistant_service
+    removed — all traffic routed to the agent pipeline.
     """
     return ChatService(
         extraction_service=extraction_service,
         consult_service=consult_service,
         recall_service=recall_service,
-        intent_parser=IntentParser(),
-        assistant_service=assistant_service,
         event_dispatcher=event_dispatcher,
         memory_service=memory_service,
         taste_service=taste_service,

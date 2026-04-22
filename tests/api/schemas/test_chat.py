@@ -1,4 +1,4 @@
-"""Tests for ChatResponse schema (feature 028 M6 Literal tightening)."""
+"""Tests for ChatResponse schema (ADR-065 updated Literal)."""
 
 from __future__ import annotations
 
@@ -8,18 +8,25 @@ from pydantic import ValidationError
 from totoro_ai.api.schemas.chat import ChatResponse
 
 
-def test_chat_response_accepts_legacy_type_values() -> None:
-    legacy = (
+def test_chat_response_accepts_all_valid_types() -> None:
+    """All valid ChatResponse types are accepted by the schema (ADR-065)."""
+    valid = (
         "extract-place",
         "consult",
         "recall",
-        "assistant",
+        "agent",
         "clarification",
         "error",
     )
-    for t in legacy:
+    for t in valid:
         resp = ChatResponse(type=t, message="m")  # type: ignore[arg-type]
         assert resp.type == t
+
+
+def test_chat_response_rejects_legacy_assistant_type() -> None:
+    """'assistant' was removed in ADR-065 and must not be accepted."""
+    with pytest.raises(ValidationError):
+        ChatResponse(type="assistant", message="m")  # type: ignore[arg-type]
 
 
 def test_chat_response_accepts_agent_type_value() -> None:

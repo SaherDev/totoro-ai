@@ -14,7 +14,6 @@ ChatResponseType = Literal[
     "extract-place",
     "consult",
     "recall",
-    "assistant",
     "clarification",
     "error",
     "agent",
@@ -41,10 +40,9 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Response body for POST /v1/chat endpoint.
 
-    type: One of "extract-place", "consult", "recall", "assistant",
-          "clarification", "error", "agent". The "agent" value (feature
-          028 M6) only appears when `config.agent.enabled=true`; the
-          six legacy values are emitted by the flag-off dispatch path.
+    type: One of "extract-place", "consult", "recall", "agent",
+          "clarification", "error". "assistant" removed in ADR-065;
+          the agent is the only dispatch path since M11.
     message: Human-readable response text.
     data: Structured payload from downstream service; null for
           clarification / assistant / error; on the "agent" path carries

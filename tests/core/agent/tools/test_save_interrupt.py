@@ -101,7 +101,9 @@ async def test_no_interrupt_on_saved_status() -> None:
 
     state: dict[str, Any] = {"user_id": "u1", "reasoning_steps": []}
 
-    result = await tool.coroutine(raw_input="safe url", state=state, tool_call_id="tc-3")
+    result = await tool.coroutine(
+        raw_input="safe url", state=state, tool_call_id="tc-3"
+    )
     # Should return a Command (not raise)
     assert result.update["reasoning_steps"][-1].step == "tool.summary"
 

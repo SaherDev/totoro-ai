@@ -35,7 +35,7 @@ models:
     max_tokens: 512
     temperature: 0
 
-  intent_parser:
+  extractor:
     provider: openai
     model: gpt-4o-mini
     max_tokens: 512
@@ -53,30 +53,11 @@ models:
     max_tokens: 1024
     temperature: 0.7
 
-  evaluator:
-    provider: openai
-    model: gpt-4o-mini
-    max_tokens: 256
-    temperature: 0
-  # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
-
-  chat_assistant:
-    provider: openai
-    model: gpt-4o-mini
-    max_tokens: 1024
-    temperature: 0.9
-
   taste_regen:
     provider: openai
     model: gpt-4o-mini
     max_tokens: 512
     temperature: 0.3
-
-  intent_router:
-    provider: groq
-    model: llama-3.1-8b-instant
-    max_tokens: 256
-    temperature: 0
 
 # ---------------------------------------------------------------------------
 # Extraction pipeline — confidence weights and decision thresholds
