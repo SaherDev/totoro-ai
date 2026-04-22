@@ -337,17 +337,38 @@ async def get_consult_service(
     )
 
 
-def get_agent_graph(request: Request) -> Any:
-    """Return the compiled agent StateGraph built at startup (feature 028 M6).
+def get_agent_checkpointer(request: Request) -> Any:
+    """Return the process-scoped `AsyncPostgresSaver` warmed at startup.
 
-    Populated by `api/main.py` lifespan before the first request. Read-only
-    after construction; shared across all requests. Returns `None` when
-    the lifespan hasn't run (test clients built without the lifespan
-    context) or when graph construction failed — the flag-off path tolerates
-    a missing graph, and the flag-on path surfaces the failure as an error
-    response.
+    Populated by `api/main.py::_warm_agent_checkpointer`. Returns `None`
+    when the lifespan hasn't run (test clients) or warmup failed.
     """
-    return getattr(request.app.state, "agent_graph", None)
+    return getattr(request.app.state, "agent_checkpointer", None)
+
+
+def get_agent_graph(
+    recall_service: RecallService = Depends(get_recall_service),  # noqa: B008
+    extraction_service: ExtractionService = Depends(get_extraction_service),  # noqa: B008
+    consult_service: ConsultService = Depends(get_consult_service),  # noqa: B008
+    checkpointer: Any = Depends(get_agent_checkpointer),  # noqa: B008
+) -> Any:
+    """Build the agent StateGraph per-request.
+
+    Compiling per-request keeps tool-bound services request-scoped (fresh
+    SQLAlchemy sessions, real EventDispatcher) while reusing the
+    process-scoped checkpointer that owns its own psycopg pool.
+    Compilation is cheap compared to the LLM call it shepherds, so the
+    latency cost is negligible.
+    """
+    if checkpointer is None:
+        return None
+    from totoro_ai.core.agent.graph import build_graph
+    from totoro_ai.core.agent.tools import build_tools
+    from totoro_ai.providers.llm import get_langchain_chat_model
+
+    tools = build_tools(recall_service, extraction_service, consult_service)
+    llm = get_langchain_chat_model("orchestrator")
+    return build_graph(llm, tools, checkpointer)
 
 
 async def get_chat_service(
