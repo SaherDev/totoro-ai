@@ -7,10 +7,11 @@ Feature 028 M11 (ADR-065): the legacy intent-router dispatch path
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.errors import GraphInterrupt
 
 from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
@@ -112,9 +113,11 @@ class ChatService:
                 data={"interrupt": interrupt_val},
             )
 
-        ai_message = _last_ai_message(final_state.get("messages", []))
+        messages = final_state.get("messages", [])
+        ai_message = _last_ai_message(messages)
         all_steps = final_state.get("reasoning_steps", [])
         user_steps = [s for s in all_steps if s.visibility == "user"]
+        tool_results = _collect_current_turn_tool_results(messages)
 
         message_text = (
             extract_text_content(ai_message.content) if ai_message else ""
@@ -127,7 +130,10 @@ class ChatService:
         return ChatResponse(
             type="agent",
             message=message_text,
-            data={"reasoning_steps": [s.model_dump(mode="json") for s in user_steps]},
+            data={
+                "reasoning_steps": [s.model_dump(mode="json") for s in user_steps],
+                "tool_results": tool_results,
+            },
         )
 
     async def _compose_taste_summary(self, user_id: str) -> str:
@@ -152,3 +158,38 @@ def _last_ai_message(messages: list[Any]) -> AIMessage | None:
         if isinstance(m, AIMessage):
             return m
     return None
+
+
+def _collect_current_turn_tool_results(messages: list[Any]) -> list[dict[str, Any]]:
+    """Extract structured tool-result payloads produced during the current turn.
+
+    The checkpointer preserves conversation history across turns, so
+    `messages` contains prior turns too. We walk from the end and stop at
+    the most recent `HumanMessage` — everything after it belongs to this
+    turn. `ToolMessage.content` carries the tool's `response.model_dump_json()`
+    string, which we parse back into a dict for the client.
+    """
+    current_turn: list[Any] = []
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            break
+        current_turn.append(m)
+    current_turn.reverse()
+
+    results: list[dict[str, Any]] = []
+    for m in current_turn:
+        if not isinstance(m, ToolMessage):
+            continue
+        content = m.content if isinstance(m.content, str) else ""
+        try:
+            payload = json.loads(content) if content else None
+        except json.JSONDecodeError:
+            payload = None
+        results.append(
+            {
+                "tool": getattr(m, "name", None),
+                "tool_call_id": getattr(m, "tool_call_id", None),
+                "payload": payload,
+            }
+        )
+    return results
