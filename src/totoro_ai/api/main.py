@@ -187,10 +187,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.agent_graph = None
 
     yield
+
     # ADR-058: cancel in-flight taste regen debounce tasks on shutdown
     from totoro_ai.core.taste.debounce import regen_debouncer
 
     await regen_debouncer.cancel_all()
+
+    # Close the checkpointer connection pool gracefully.
+    graph = getattr(app.state, "agent_graph", None)
+    if graph is not None:
+        try:
+            checkpointer = graph.checkpointer
+            pool = getattr(checkpointer, "conn", None)
+            if pool is not None:
+                await pool.close()
+        except Exception:
+            logger.exception("Error closing checkpointer pool on shutdown")
 
 
 app = FastAPI(
