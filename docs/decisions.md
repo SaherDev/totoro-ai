@@ -15,13 +15,29 @@ Format:
 
 ---
 
-## ADR-066: Acceptable agent failure rate — under 10% of sessions
+## ADR-066: Agent reliability parameters and acceptable failure rate
 
 **Date:** 2026-04-22\
 **Status:** accepted\
-**Context:** The LangGraph agent routes to `fallback_node` when `error_count >= max_errors` or `steps_taken >= max_steps`. Without a defined threshold, there is no trigger for investigation. Langfuse spans on `agent_node` (llm_retry_exhausted), `fallback_node` (max_steps, max_errors), and `with_timeout` (tool_timeout, tool_crash) now provide per-failure-type visibility.\
-**Decision:** Fewer than 10% of `/v1/chat` sessions should reach `fallback_node` in normal operation. Measured via Langfuse spans tagged `error_type` on the `agent_fallback` generation. Review cadence: weekly during active development, monthly after stabilisation. If the threshold is exceeded: group failures by `error_type` in Langfuse, then tune the relevant budget — increase `tool_timeouts_seconds` for `tool_timeout`, increase `max_errors` for `llm_retry_exhausted` spikes, inspect prompt/tool design for `max_steps`.\
-**Consequences:** Failure visibility is a prerequisite for tuning. The 10% threshold is a starting point — tighten it once baseline data is available. Langfuse spans must be present on every failure exit path; adding a new failure mode requires a span before the ADR threshold applies to it.
+**Context:** The LangGraph agent has five numeric dials that bound cost, latency, and reliability. Without documented rationale these become magic numbers. Langfuse spans on `agent_node` (llm_retry_exhausted), `fallback_node` (max_steps, max_errors), and `with_timeout` (tool_timeout, tool_crash) provide per-failure-type visibility to measure against these targets.\
+**Decision:**
+
+**Session failure rate: under 10%**
+Percentage of `/v1/chat` sessions that hit `fallback_node`. 5% is too strict given combined external API flake rate (Google Places, TikTok/Instagram oEmbed, Groq Whisper, LLM providers) which runs 3–5% on a good day — demanding under 5% means chasing false alarms. 15% is too loose; every seventh interaction broken means the product doesn't work. 10% leaves room for unavoidable upstream failures while flagging systemic problems. Measured via Langfuse `agent_fallback` spans tagged `error_type`. Review cadence: weekly during active development, monthly after stabilisation.
+
+**max_errors: 3**
+Failure budget within a single turn. Each tool crash, LLM retry exhaustion, or timeout increments `error_count`. 1 means a single transient network blip kills the turn. 5+ lets the agent keep trying after things are clearly broken — users wait 30+ seconds for a fallback that should arrive at 10. 3 covers transient issues and bails when systemically broken. Tuning lever: raise if Langfuse shows high `llm_retry_exhausted` under normal conditions; lower if tail latency spikes.
+
+**max_steps: 10**
+Maximum `agent_node` loops per turn. Typical turns use 3–6 steps (recall → consult → respond = 3; save → recall → consult = 4–5). 10 gives 2× headroom for unusual chains without allowing infinite loops on ambiguous queries. Below 10 caps legitimate multi-tool chains. Above 10 burns tokens on queries that genuinely confuse the model.
+
+**LLM retries: 3 with exponential backoff (0.5s, 1s, 2s)**
+Within a single `agent_node` call, retry on any exception up to 3 times. 1 retry means any transient Anthropic API hiccup kills the turn. 5+ retries means 30+ second user wait. Exponential backoff (0.5s base, ×2) gives upstream systems room to recover rather than hammering a struggling endpoint. Covers 99%+ of transient issues without long waits.
+
+**max_history_messages: 40**
+Conversation history trimmed to the last 40 messages before each LLM call. Older messages stay in the Postgres checkpoint but do not go to Claude. 40 = 20 back-and-forth turns, covering typical usage while leaving room for system prompt, taste/memory summaries, and tool schemas within Claude Sonnet's 200k context. Below 40, long conversations lose context ("what about that wine bar from earlier?" breaks). Above 40, token costs and latency grow without adding user value.
+
+**Consequences:** If the 10% session failure threshold is exceeded: group Langfuse failures by `error_type`, then tune the relevant parameter — raise `tool_timeouts_seconds` for `tool_timeout` spikes, raise `max_errors` for `llm_retry_exhausted` under normal load, inspect prompt/tool design for `max_steps` saturation. All five values live in `config/app.yaml` and require no code changes to adjust. Langfuse spans must be present on every failure exit path; adding a new failure mode requires a span before this ADR's threshold applies to it.
 
 ## ADR-065: Agent cutover — legacy intent pipeline deleted
 
