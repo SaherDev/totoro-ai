@@ -1,4 +1,4 @@
-"""recall_tool — @tool wrapper around RecallService (feature 028 M5)."""
+"""recall_tool — @tool wrapper around RecallService (feature 028 M5/M9)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.agent.tools._emit import append_summary, build_emit_closure
+from totoro_ai.core.agent.tools._timeout import with_timeout
 from totoro_ai.core.places.models import PlaceObject
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.recall.types import RecallFilters
@@ -105,33 +106,38 @@ def build_recall_tool(service: RecallService) -> BaseTool:
         are stored in agent state and picked up by consult on the next
         call).
         """
-        collected, emit = build_emit_closure("recall")
-        raw_loc = state.get("location")
-        loc_tuple: tuple[float, float] | None = (
-            (raw_loc["lat"], raw_loc["lng"]) if raw_loc else None
-        )
-        response = await service.run(
-            query=query,
-            user_id=state["user_id"],
-            filters=filters,
-            sort_by=sort_by,
-            location=loc_tuple,
-            limit=limit,
-            emit=emit,
-        )
-        places = [r.place for r in response.results]
-        append_summary(collected, "recall", _recall_summary(query, filters, places))
-        update: dict[str, Any] = {
-            "last_recall_results": places,
-            "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
-            "messages": [
-                ToolMessage(
-                    content=response.model_dump_json(),
-                    tool_call_id=tool_call_id,
-                )
-            ],
-        }
-        return Command(update=update)
+        async def _do_recall() -> Command[Any]:
+            collected, emit = build_emit_closure("recall")
+            raw_loc = state.get("location")
+            loc_tuple: tuple[float, float] | None = (
+                (raw_loc["lat"], raw_loc["lng"]) if raw_loc else None
+            )
+            response = await service.run(
+                query=query,
+                user_id=state["user_id"],
+                filters=filters,
+                sort_by=sort_by,
+                location=loc_tuple,
+                limit=limit,
+                emit=emit,
+            )
+            places = [r.place for r in response.results]
+            append_summary(collected, "recall", _recall_summary(query, filters, places))
+            return Command(
+                update={
+                    "last_recall_results": places,
+                    "reasoning_steps": (state.get("reasoning_steps") or [])
+                    + collected,
+                    "messages": [
+                        ToolMessage(
+                            content=response.model_dump_json(),
+                            tool_call_id=tool_call_id,
+                        )
+                    ],
+                }
+            )
+
+        return await with_timeout("recall", tool_call_id, state, _do_recall())
 
     return recall_tool
 

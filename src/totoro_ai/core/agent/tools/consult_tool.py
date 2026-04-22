@@ -1,4 +1,4 @@
-"""consult_tool — @tool wrapper around ConsultService (feature 028 M5)."""
+"""consult_tool — @tool wrapper around ConsultService (feature 028 M5/M9)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from totoro_ai.api.schemas.consult import ConsultResponse, Location
 from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.agent.tools._emit import append_summary, build_emit_closure
+from totoro_ai.core.agent.tools._timeout import with_timeout
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.places.filters import ConsultFilters
 
@@ -83,33 +84,38 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
         matches, call recall anyway — consult will work with the empty
         list and return discoveries only.
         """
-        collected, emit = build_emit_closure("consult")
-        saved_places = state.get("last_recall_results") or []
-        raw_loc = state.get("location")
-        loc: Location | None = (
-            Location(lat=raw_loc["lat"], lng=raw_loc["lng"]) if raw_loc else None
-        )
-        response = await service.consult(
-            user_id=state["user_id"],
-            query=query,
-            saved_places=saved_places,
-            filters=filters,
-            location=loc,
-            preference_context=preference_context,
-            signal_tier="active",
-            emit=emit,
-        )
-        append_summary(collected, "consult", _consult_summary(response))
-        update: dict[str, Any] = {
-            "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
-            "messages": [
-                ToolMessage(
-                    content=response.model_dump_json(),
-                    tool_call_id=tool_call_id,
-                )
-            ],
-        }
-        return Command(update=update)
+        async def _do_consult() -> Command[Any]:
+            collected, emit = build_emit_closure("consult")
+            saved_places = state.get("last_recall_results") or []
+            raw_loc = state.get("location")
+            loc: Location | None = (
+                Location(lat=raw_loc["lat"], lng=raw_loc["lng"]) if raw_loc else None
+            )
+            response = await service.consult(
+                user_id=state["user_id"],
+                query=query,
+                saved_places=saved_places,
+                filters=filters,
+                location=loc,
+                preference_context=preference_context,
+                signal_tier="active",
+                emit=emit,
+            )
+            append_summary(collected, "consult", _consult_summary(response))
+            return Command(
+                update={
+                    "reasoning_steps": (state.get("reasoning_steps") or [])
+                    + collected,
+                    "messages": [
+                        ToolMessage(
+                            content=response.model_dump_json(),
+                            tool_call_id=tool_call_id,
+                        )
+                    ],
+                }
+            )
+
+        return await with_timeout("consult", tool_call_id, state, _do_consult())
 
     return consult_tool
 

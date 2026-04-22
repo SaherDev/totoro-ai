@@ -1,4 +1,4 @@
-"""save_tool — @tool wrapper around ExtractionService (feature 028 M5/M8)."""
+"""save_tool — @tool wrapper around ExtractionService (feature 028 M5/M8/M9)."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
 from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.agent.tools._emit import append_summary, build_emit_closure
+from totoro_ai.core.agent.tools._timeout import with_timeout
 from totoro_ai.core.extraction.service import ExtractionService
 
 
@@ -59,28 +60,33 @@ def build_save_tool(service: ExtractionService) -> BaseTool:
         names a specific place they want to save. Pass the raw URL or
         text — do not reformat.
         """
-        collected, emit = build_emit_closure("save")
-        response = await service.run(raw_input, state["user_id"], emit=emit)
+        async def _do_save() -> Command[Any]:
+            collected, emit = build_emit_closure("save")
+            response = await service.run(raw_input, state["user_id"], emit=emit)
 
-        needs_review = [r for r in response.results if r.status == "needs_review"]
-        if needs_review:
-            raise NodeInterrupt({
-                "type": "save_needs_review",
-                "request_id": response.request_id,
-                "candidates": [r.model_dump() for r in needs_review],
-            })
+            needs_review = [r for r in response.results if r.status == "needs_review"]
+            if needs_review:
+                raise NodeInterrupt({
+                    "type": "save_needs_review",
+                    "request_id": response.request_id,
+                    "candidates": [r.model_dump() for r in needs_review],
+                })
 
-        append_summary(collected, "save", _save_summary(response))
-        update: dict[str, Any] = {
-            "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
-            "messages": [
-                ToolMessage(
-                    content=response.model_dump_json(),
-                    tool_call_id=tool_call_id,
-                )
-            ],
-        }
-        return Command(update=update)
+            append_summary(collected, "save", _save_summary(response))
+            return Command(
+                update={
+                    "reasoning_steps": (state.get("reasoning_steps") or [])
+                    + collected,
+                    "messages": [
+                        ToolMessage(
+                            content=response.model_dump_json(),
+                            tool_call_id=tool_call_id,
+                        )
+                    ],
+                }
+            )
+
+        return await with_timeout("save", tool_call_id, state, _do_save())
 
     return save_tool
 

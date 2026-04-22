@@ -4,10 +4,14 @@ Structural only — M3 does not wire the graph to `/v1/chat` (that is M6).
 `agent_node` accepts an injected LLM; M3 tests drive it with a fake LLM
 (per clarification). Real orchestrator wiring lands in M6's lazy graph
 construction.
+
+M9 additions: error wrapping in agent_node (increments error_count on
+LLM failure) and debug diagnostic steps in fallback_node.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
@@ -18,6 +22,8 @@ from langgraph.prebuilt import ToolNode
 from totoro_ai.core.agent.reasoning import ReasoningStep
 from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.config import get_config
+
+logger = logging.getLogger(__name__)
 
 # Synthesized fallback decisions when AIMessage.content is empty but a
 # tool was called — gives the user-visible `agent.tool_decision` step
@@ -72,7 +78,14 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
     async def agent_node(state: AgentState) -> dict[str, Any]:
         system = SystemMessage(content=_render_system_prompt(state))
         conversation = [system, *state["messages"]]
-        ai_msg = await bound.ainvoke(conversation)
+        try:
+            ai_msg = await bound.ainvoke(conversation)
+        except Exception as exc:
+            logger.exception("agent_node failed: %s", exc)
+            return {
+                "error_count": state.get("error_count", 0) + 1,
+                "steps_taken": state.get("steps_taken", 0) + 1,
+            }
 
         full_text = (getattr(ai_msg, "content", "") or "").strip()
         tool_calls = getattr(ai_msg, "tool_calls", None) or []
@@ -139,25 +152,44 @@ def should_continue(state: AgentState) -> str:
 
 
 def fallback_node(state: AgentState) -> dict[str, Any]:
-    """Compose a graceful terminal message + a user-visible fallback step.
+    """Compose a graceful terminal message + reasoning steps.
 
-    M3 emits exactly one user-visible ReasoningStep (FR-027, clarification
-    2026-04-21). Debug diagnostic steps (`max_steps_detail` /
-    `max_errors_detail`) are deferred to M9 and MUST NOT be emitted here.
+    Emits one user-visible ReasoningStep (FR-027) plus one debug diagnostic
+    step (M9) when applicable (max_steps_detail / max_errors_detail).
     """
     cfg = get_config().agent
     steps_taken = state.get("steps_taken", 0)
     error_count = state.get("error_count", 0)
+
+    debug_steps: list[ReasoningStep] = []
     if steps_taken >= cfg.max_steps:
         summary = (
             f"Got stuck after {cfg.max_steps} steps, something went wrong on my end"
         )
+        debug_steps.append(
+            ReasoningStep(
+                step="max_steps_detail",
+                summary=f"exceeded max_steps={cfg.max_steps}",
+                source="fallback",
+                tool_name=None,
+                visibility="debug",
+            )
+        )
     elif error_count >= cfg.max_errors:
         summary = "Hit too many errors, try rephrasing or sharing more detail"
+        debug_steps.append(
+            ReasoningStep(
+                step="max_errors_detail",
+                summary=f"exceeded max_errors={cfg.max_errors}",
+                source="fallback",
+                tool_name=None,
+                visibility="debug",
+            )
+        )
     else:
         summary = "Something went wrong on my end"
 
-    step = ReasoningStep(
+    user_step = ReasoningStep(
         step="fallback",
         summary=summary,
         source="fallback",
@@ -167,7 +199,7 @@ def fallback_node(state: AgentState) -> dict[str, Any]:
     existing_steps = state.get("reasoning_steps") or []
     return {
         "messages": [AIMessage(content=_FALLBACK_MESSAGE)],
-        "reasoning_steps": existing_steps + [step],
+        "reasoning_steps": existing_steps + debug_steps + [user_step],
     }
 
 
