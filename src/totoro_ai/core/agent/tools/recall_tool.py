@@ -86,14 +86,60 @@ def _recall_summary(
 
 
 def build_recall_tool(service: RecallService) -> BaseTool:
-    """Return the @tool-decorated recall callable bound to `service`."""
+    """Return the @tool-decorated recall callable bound to `service`.
 
-    @tool("recall", args_schema=RecallToolInput)
+    No `args_schema=` here — see the save_tool docstring for why.
+    """
+
+    @tool("recall")
     async def recall_tool(
-        query: str | None,
-        filters: RecallFilters | None,
-        sort_by: Literal["relevance", "created_at"],
-        limit: int,
+        query: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "Retrieval phrase, rewritten from the user's message into "
+                    "a short noun phrase describing the place type or topic. "
+                    "Examples: 'find me a good ramen spot nearby' -> "
+                    "query='ramen restaurant'; 'that museum in Bangkok' -> "
+                    "query='museum Bangkok'; 'the hotel I liked in Tokyo' -> "
+                    "query='hotel Tokyo'; 'saved places in Japan' -> "
+                    "query='Japan'. Pass null for meta-queries like 'show me "
+                    "all my saves' or 'places from TikTok' — that triggers "
+                    "filter-only mode and uses no embedding search."
+                ),
+            ),
+        ],
+        filters: Annotated[
+            RecallFilters | None,
+            Field(
+                default=None,
+                description=(
+                    "Structural filters on the user's saves. Mirror "
+                    "PlaceObject — place_type, subcategory, tags_include, "
+                    "nested attributes (cuisine, price_hint, ambiance, etc.)."
+                ),
+            ),
+        ],
+        sort_by: Annotated[
+            Literal["relevance", "created_at"],
+            Field(
+                default="relevance",
+                description=(
+                    "Ordering. relevance = hybrid search score; created_at = "
+                    "most recently saved first (use for meta-queries)."
+                ),
+            ),
+        ],
+        limit: Annotated[
+            int,
+            Field(
+                default=20,
+                ge=1,
+                le=50,
+                description="Max places to return. Default 20.",
+            ),
+        ],
         state: Annotated[AgentState, InjectedState],
         tool_call_id: Annotated[str, InjectedToolCallId],
     ) -> Command[Any]:
@@ -106,6 +152,7 @@ def build_recall_tool(service: RecallService) -> BaseTool:
         are stored in agent state and picked up by consult on the next
         call).
         """
+
         async def _do_recall() -> Command[Any]:
             collected, emit = build_emit_closure("recall")
             raw_loc = state.get("location")
@@ -126,8 +173,7 @@ def build_recall_tool(service: RecallService) -> BaseTool:
             return Command(
                 update={
                     "last_recall_results": places,
-                    "reasoning_steps": (state.get("reasoning_steps") or [])
-                    + collected,
+                    "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
                     "messages": [
                         ToolMessage(
                             content=response.model_dump_json(),

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from langchain_core.messages import ToolMessage
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 async def with_timeout(
     tool_name: str,
     tool_call_id: str,
-    state: dict[str, Any],
+    state: Mapping[str, Any],
     body: Any,  # coroutine
 ) -> Command[Any]:
     """Enforce per-tool timeout and catch service exceptions.
@@ -41,8 +42,10 @@ async def with_timeout(
         body: Coroutine producing the normal Command result.
     """
     timeout: int = getattr(get_config().agent.tool_timeouts_seconds, tool_name)
+    logger.debug("with_timeout entered: tool=%s budget=%ss", tool_name, timeout)
     try:
-        return await asyncio.wait_for(body, timeout=float(timeout))
+        cmd: Command[Any] = await asyncio.wait_for(body, timeout=float(timeout))
+        return cmd
     except (NodeInterrupt, GraphInterrupt):
         raise
     except TimeoutError:
@@ -76,7 +79,7 @@ def _degraded_command(
     *,
     tool_name: str,
     tool_call_id: str,
-    state: dict[str, Any],
+    state: Mapping[str, Any],
     summary: str,
     tool_message_payload: dict[str, Any],
 ) -> Command[Any]:

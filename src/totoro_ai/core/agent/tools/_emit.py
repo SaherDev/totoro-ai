@@ -13,6 +13,7 @@ three wrappers.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -20,6 +21,8 @@ from langgraph.config import get_stream_writer
 
 from totoro_ai.core.agent.reasoning import ReasoningStep
 from totoro_ai.core.emit import EmitFn
+
+logger = logging.getLogger(__name__)
 
 ToolName = Literal["recall", "save", "consult"]
 
@@ -105,6 +108,12 @@ def append_summary(
     writer = _get_writer_safe()
     if writer is not None:
         writer(rs.model_dump())
+    logger.debug(
+        "tool.summary appended: tool=%s summary=%r collected_len=%d",
+        tool_name,
+        summary,
+        len(collected),
+    )
 
 
 __all__ = ["ToolName", "build_emit_closure", "append_summary"]

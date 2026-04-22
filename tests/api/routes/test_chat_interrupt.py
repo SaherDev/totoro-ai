@@ -29,9 +29,7 @@ def _make_interrupt_service(place_name: str = "Fuji Ramen") -> MagicMock:
     interrupt_payload = {
         "type": "save_needs_review",
         "request_id": "req-abc",
-        "candidates": [
-            {"place": {"place_name": place_name}, "confidence": 0.4}
-        ],
+        "candidates": [{"place": {"place_name": place_name}, "confidence": 0.4}],
     }
     svc.run = AsyncMock(side_effect=GraphInterrupt(interrupt_payload))
     return svc

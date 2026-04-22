@@ -46,11 +46,28 @@ def _save_summary(response: ExtractPlaceResponse) -> str:
 
 
 def build_save_tool(service: ExtractionService) -> BaseTool:
-    """Return the @tool-decorated save callable bound to `service`."""
+    """Return the @tool-decorated save callable bound to `service`.
 
-    @tool("save", args_schema=SaveToolInput)
+    No `args_schema=` here: LangGraph's `ToolNode` only honors
+    `Annotated[..., InjectedState]` / `InjectedToolCallId` on the
+    function signature when `@tool` is allowed to build the args schema
+    from that signature directly. Passing an explicit `args_schema`
+    short-circuits that inspection and the injected args are then called
+    as missing positional arguments.
+    """
+
+    @tool("save")
     async def save_tool(
-        raw_input: str,
+        raw_input: Annotated[
+            str,
+            Field(
+                description=(
+                    "Raw URL (TikTok, Instagram, YouTube) or the text naming "
+                    "a specific place to save. Do not reformat — pass "
+                    "verbatim."
+                )
+            ),
+        ],
         state: Annotated[AgentState, InjectedState],
         tool_call_id: Annotated[str, InjectedToolCallId],
     ) -> Command[Any]:
@@ -60,23 +77,25 @@ def build_save_tool(service: ExtractionService) -> BaseTool:
         names a specific place they want to save. Pass the raw URL or
         text — do not reformat.
         """
+
         async def _do_save() -> Command[Any]:
             collected, emit = build_emit_closure("save")
             response = await service.run(raw_input, state["user_id"], emit=emit)
 
             needs_review = [r for r in response.results if r.status == "needs_review"]
             if needs_review:
-                raise NodeInterrupt({
-                    "type": "save_needs_review",
-                    "request_id": response.request_id,
-                    "candidates": [r.model_dump() for r in needs_review],
-                })
+                raise NodeInterrupt(
+                    {
+                        "type": "save_needs_review",
+                        "request_id": response.request_id,
+                        "candidates": [r.model_dump() for r in needs_review],
+                    }
+                )
 
             append_summary(collected, "save", _save_summary(response))
             return Command(
                 update={
-                    "reasoning_steps": (state.get("reasoning_steps") or [])
-                    + collected,
+                    "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
                     "messages": [
                         ToolMessage(
                             content=response.model_dump_json(),

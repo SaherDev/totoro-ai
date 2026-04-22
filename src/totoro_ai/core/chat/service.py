@@ -113,9 +113,8 @@ class ChatService:
             )
 
         ai_message = _last_ai_message(final_state.get("messages", []))
-        user_steps = [
-            s for s in final_state.get("reasoning_steps", []) if s.visibility == "user"
-        ]
+        all_steps = final_state.get("reasoning_steps", [])
+        user_steps = [s for s in all_steps if s.visibility == "user"]
 
         message_text = (
             extract_text_content(ai_message.content) if ai_message else ""

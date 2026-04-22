@@ -64,13 +64,51 @@ def _consult_summary(response: ConsultResponse) -> str:
 
 
 def build_consult_tool(service: ConsultService) -> BaseTool:
-    """Return the @tool-decorated consult callable bound to `service`."""
+    """Return the @tool-decorated consult callable bound to `service`.
 
-    @tool("consult", args_schema=ConsultToolInput)
+    No `args_schema=` here — see the save_tool docstring for why.
+    """
+
+    @tool("consult")
     async def consult_tool(
-        query: str,
-        filters: ConsultFilters,
-        preference_context: str | None,
+        query: Annotated[
+            str,
+            Field(
+                description=(
+                    "Retrieval phrase describing what to recommend, rewritten "
+                    "from the user's message. Examples: 'where should I eat "
+                    "tonight?' -> query='dinner restaurant'; 'I need a quiet "
+                    "place to work' -> query='quiet cafe laptop work'; "
+                    "'something to do on a rainy afternoon' -> query='indoor "
+                    "activity'; 'a hotel near Shibuya' -> query='hotel "
+                    "Shibuya'."
+                ),
+            ),
+        ],
+        filters: Annotated[
+            ConsultFilters,
+            Field(
+                description=(
+                    "Structural + discovery filters. Mirror PlaceObject plus "
+                    "radius_m and search_location_name."
+                ),
+            ),
+        ],
+        preference_context: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "One- or two-sentence summary composed from "
+                    "taste_profile_summary and memory_summary, limited to "
+                    "signals RELEVANT to this request. Example for a dinner "
+                    "request: 'Prefers casual spots over formal. Wheelchair "
+                    "user. Avoids pork.' Example for a museum request: "
+                    "'Likes contemporary art. Visits on weekdays. Wheelchair "
+                    "user.' Omit irrelevant signals."
+                ),
+            ),
+        ],
         state: Annotated[AgentState, InjectedState],
         tool_call_id: Annotated[str, InjectedToolCallId],
     ) -> Command[Any]:
@@ -84,6 +122,7 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
         matches, call recall anyway — consult will work with the empty
         list and return discoveries only.
         """
+
         async def _do_consult() -> Command[Any]:
             collected, emit = build_emit_closure("consult")
             saved_places = state.get("last_recall_results") or []
@@ -104,8 +143,7 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
             append_summary(collected, "consult", _consult_summary(response))
             return Command(
                 update={
-                    "reasoning_steps": (state.get("reasoning_steps") or [])
-                    + collected,
+                    "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
                     "messages": [
                         ToolMessage(
                             content=response.model_dump_json(),
