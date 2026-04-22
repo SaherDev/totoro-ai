@@ -15,6 +15,14 @@ Format:
 
 ---
 
+## ADR-066: Acceptable agent failure rate — under 10% of sessions
+
+**Date:** 2026-04-22\
+**Status:** accepted\
+**Context:** The LangGraph agent routes to `fallback_node` when `error_count >= max_errors` or `steps_taken >= max_steps`. Without a defined threshold, there is no trigger for investigation. Langfuse spans on `agent_node` (llm_retry_exhausted), `fallback_node` (max_steps, max_errors), and `with_timeout` (tool_timeout, tool_crash) now provide per-failure-type visibility.\
+**Decision:** Fewer than 10% of `/v1/chat` sessions should reach `fallback_node` in normal operation. Measured via Langfuse spans tagged `error_type` on the `agent_fallback` generation. Review cadence: weekly during active development, monthly after stabilisation. If the threshold is exceeded: group failures by `error_type` in Langfuse, then tune the relevant budget — increase `tool_timeouts_seconds` for `tool_timeout`, increase `max_errors` for `llm_retry_exhausted` spikes, inspect prompt/tool design for `max_steps`.\
+**Consequences:** Failure visibility is a prerequisite for tuning. The 10% threshold is a starting point — tighten it once baseline data is available. Langfuse spans must be present on every failure exit path; adding a new failure mode requires a span before the ADR threshold applies to it.
+
 ## ADR-065: Agent cutover — legacy intent pipeline deleted
 
 **Date:** 2026-04-22\

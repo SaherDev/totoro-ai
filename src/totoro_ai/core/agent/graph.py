@@ -24,6 +24,7 @@ from totoro_ai.core.agent.messages import extract_text_content
 from totoro_ai.core.agent.reasoning import ReasoningStep
 from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.config import get_config
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,15 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
             ai_msg = await _invoke_llm_with_retry(bound, conversation)
         except Exception as exc:
             logger.exception("agent_node failed after retries: %s", exc)
+            tracer = get_tracing_client()
+            span = tracer.generation(
+                "agent_node",
+                user_id=state.get("user_id"),
+            )
+            span.end(
+                output={"error_type": "llm_retry_exhausted"},
+                level="ERROR",
+            )
             error_msg = AIMessage(
                 content=(
                     "I hit a temporary connection issue talking to my language "
@@ -260,6 +270,7 @@ def fallback_node(state: AgentState) -> dict[str, Any]:
 
     debug_steps: list[ReasoningStep] = []
     if steps_taken >= cfg.max_steps:
+        error_type = "max_steps"
         summary = (
             f"Got stuck after {cfg.max_steps} steps, something went wrong on my end"
         )
@@ -273,6 +284,7 @@ def fallback_node(state: AgentState) -> dict[str, Any]:
             )
         )
     elif error_count >= cfg.max_errors:
+        error_type = "max_errors"
         summary = "Hit too many errors, try rephrasing or sharing more detail"
         debug_steps.append(
             ReasoningStep(
@@ -284,7 +296,12 @@ def fallback_node(state: AgentState) -> dict[str, Any]:
             )
         )
     else:
+        error_type = "max_errors"
         summary = "Something went wrong on my end"
+
+    tracer = get_tracing_client()
+    span = tracer.generation("agent_fallback", user_id=state.get("user_id"))
+    span.end(output={"error_type": error_type}, level="ERROR")
 
     user_step = ReasoningStep(
         step="fallback",

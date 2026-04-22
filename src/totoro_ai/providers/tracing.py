@@ -93,8 +93,10 @@ class _LangfuseSpan:
         self._generation = generation
 
     def end(self, output: dict[str, Any] | None = None, level: str = "DEFAULT") -> None:
+        update_kwargs: dict[str, Any] = {"level": level}
         if output is not None:
-            self._generation.update(output=output)
+            update_kwargs["output"] = output
+        self._generation.update(**update_kwargs)
         self._generation.end()
 
 

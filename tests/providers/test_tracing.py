@@ -88,7 +88,7 @@ def test_langfuse_client_generation_delegates_to_sdk():
         model="gpt-4o-mini",
         metadata={"user_id": "u1"},
     )
-    mock_gen.update.assert_called_once_with(output={"count": 3})
+    mock_gen.update.assert_called_once_with(level="DEFAULT", output={"count": 3})
     mock_gen.end.assert_called_once()
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 from langchain_core.messages import AIMessage
 
 from totoro_ai.core.agent.graph import fallback_node
@@ -86,3 +88,43 @@ def test_fallback_node_emits_debug_diagnostics_on_m9() -> None:
     update = fallback_node(_base_state(steps_taken=cfg.max_steps))
     debug_steps = [s for s in update["reasoning_steps"] if s.visibility == "debug"]
     assert any(s.step == "max_steps_detail" for s in debug_steps)
+
+
+def test_fallback_emits_langfuse_span_with_error_type_max_errors() -> None:
+    """fallback_node emits a Langfuse span tagged error_type='max_errors'."""
+    cfg = get_config().agent
+    mock_span = MagicMock()
+    mock_tracer = MagicMock()
+    mock_tracer.generation.return_value = mock_span
+
+    with patch(
+        "totoro_ai.core.agent.graph.get_tracing_client",
+        return_value=mock_tracer,
+    ):
+        fallback_node(_base_state(error_count=cfg.max_errors))
+
+    mock_tracer.generation.assert_called_once_with(
+        "agent_fallback", user_id="u1"
+    )
+    mock_span.end.assert_called_once()
+    call_kwargs = mock_span.end.call_args.kwargs
+    assert call_kwargs["output"]["error_type"] == "max_errors"
+    assert call_kwargs["level"] == "ERROR"
+
+
+def test_fallback_emits_langfuse_span_with_error_type_max_steps() -> None:
+    """fallback_node emits a Langfuse span tagged error_type='max_steps'."""
+    cfg = get_config().agent
+    mock_span = MagicMock()
+    mock_tracer = MagicMock()
+    mock_tracer.generation.return_value = mock_span
+
+    with patch(
+        "totoro_ai.core.agent.graph.get_tracing_client",
+        return_value=mock_tracer,
+    ):
+        fallback_node(_base_state(steps_taken=cfg.max_steps))
+
+    call_kwargs = mock_span.end.call_args.kwargs
+    assert call_kwargs["output"]["error_type"] == "max_steps"
+    assert call_kwargs["level"] == "ERROR"

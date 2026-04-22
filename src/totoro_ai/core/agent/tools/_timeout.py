@@ -14,6 +14,7 @@ from langgraph.types import Command
 
 from totoro_ai.core.agent.reasoning import ReasoningStep
 from totoro_ai.core.config import get_config
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,12 @@ async def with_timeout(
         raise
     except TimeoutError:
         logger.warning("tool %s timed out after %ss", tool_name, timeout)
+        tracer = get_tracing_client()
+        span = tracer.generation("agent_tool", user_id=state.get("user_id"))
+        span.end(
+            output={"error_type": "tool_timeout", "tool": tool_name},
+            level="ERROR",
+        )
         return _degraded_command(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -61,6 +68,12 @@ async def with_timeout(
         logger.exception("tool %s crashed: %s", tool_name, exc)
         exc_type = type(exc).__name__
         exc_msg = str(exc)[:200]
+        tracer = get_tracing_client()
+        span = tracer.generation("agent_tool", user_id=state.get("user_id"))
+        span.end(
+            output={"error_type": "tool_crash", "tool": tool_name},
+            level="ERROR",
+        )
         return _degraded_command(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
