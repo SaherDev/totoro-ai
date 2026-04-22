@@ -204,7 +204,95 @@ POST /v1/chat
 
 ## Agent Orchestration (ADR-062, ADR-065)
 
-All conversational traffic routes through the LangGraph agent (Claude Sonnet 4.6 via the `orchestrator` model role). The agent selects from three tools per turn — recall, save, consult — and returns a `ChatResponse(type="agent")`. The legacy intent-router / intent-parser / chat_assistant dispatch path was deleted in M11 (ADR-065).
+All conversational traffic routes through the LangGraph agent (Claude Sonnet 4.6 via the `orchestrator` model role). The agent selects from three tools per turn — recall, save, consult — and returns a `ChatResponse(type="agent")`. The legacy intent-router / intent-parser / chat_assistant dispatch path was deleted (ADR-065).
+
+### Graph Structure
+
+```
+POST /v1/chat  (or /v1/chat/stream)
+    │
+    ▼
+ChatService
+    │  build_turn_payload(message, user_id, taste_summary, memory_summary, location)
+    │  graph.ainvoke(payload, config={"configurable": {"thread_id": user_id}})
+    │
+    ▼
+┌─────────────────────────────────────────────────────────┐
+│                    LangGraph StateGraph                  │
+│                                                          │
+│   ┌──────────┐   tool_calls?  ┌──────────┐              │
+│   │  agent   │ ─────────────► │  tools   │              │
+│   │  (node)  │ ◄────────────  │  (node)  │              │
+│   └────┬─────┘                └──────────┘              │
+│        │ max_steps / max_errors exceeded?               │
+│        ▼                                                 │
+│   ┌──────────┐                                           │
+│   │ fallback │ ──────────────────────────────► END       │
+│   │  (node)  │                                           │
+│   └──────────┘                                           │
+│        │ no tool calls?                                  │
+│        └─────────────────────────────────────► END       │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Nodes:**
+- `agent` — renders system prompt (taste + memory summaries substituted), trims history to `max_history_messages`, sanitizes orphaned tool calls, calls the LLM, emits one `agent.tool_decision` reasoning step per turn.
+- `tools` — LangGraph `ToolNode`; dispatches to whichever tool(s) the LLM selected.
+- `fallback` — fires when `steps_taken >= max_steps` or `error_count >= max_errors`; emits a graceful terminal message and a debug diagnostic step.
+
+**Routing (`should_continue`):** `error_count >= max_errors` → fallback; `steps_taken >= max_steps` → fallback; last message has tool_calls → tools; otherwise → END.
+
+### Per-Turn State
+
+State is a `TypedDict` (`AgentState`). LangGraph persists it via the Postgres checkpointer after every node execution.
+
+| Field | Reducer | Reset per turn? | Notes |
+|---|---|---|---|
+| `messages` | `add_messages` (append) | No — accumulates | Trimmed to `max_history_messages` (default 40) before each LLM call |
+| `taste_profile_summary` | overwrite | Yes — refreshed from DB | Injected by ChatService each turn |
+| `memory_summary` | overwrite | Yes — refreshed from DB | Injected by ChatService each turn |
+| `user_id` | overwrite | Yes | Used as checkpointer `thread_id`; isolates history per user |
+| `location` | overwrite | Yes | `{lat, lng}` or None |
+| `last_recall_results` | overwrite | Yes — reset to None | Set by `recall_tool`; read by `consult_tool` in the same turn |
+| `reasoning_steps` | overwrite | Yes — reset to `[]` | Accumulated within a turn; returned to caller |
+| `steps_taken` | overwrite | Yes — reset to 0 | Incremented by `agent_node`; bounds the loop |
+| `error_count` | overwrite | Yes — reset to 0 | Incremented by tool error handlers; bounds the loop |
+
+### Conversation History
+
+The Postgres checkpointer (`AsyncPostgresSaver` backed by `AsyncConnectionPool`) persists the full `AgentState` keyed by `thread_id = user_id`. Conversation history accumulates across sessions. Before each LLM call, `agent_node` trims to the last `max_history_messages` messages (default 40, configurable in `app.yaml`). Trim runs **before** `_sanitize_orphaned_tool_calls` — this ordering ensures a `ToolMessage` never lands at position 0 of the trimmed slice, which would cause a 400 from Anthropic.
+
+### Tools
+
+All three tools are `@tool`-decorated async functions built by factory functions (`build_recall_tool`, `build_consult_tool`, `build_save_tool`). Each tool uses `Annotated[AgentState, InjectedState]` and `Annotated[str, InjectedToolCallId]` for LangGraph injection — no `args_schema=` passed to `@tool` (that short-circuits LangGraph's injection inspection).
+
+Every tool wraps its body in `with_timeout(tool_name, ...)` which enforces the per-tool timeout from `app.yaml` (`tool_timeouts_seconds.recall/consult/save`) and returns a degraded `Command` on timeout or unhandled exception (increments `error_count`, emits a user-visible `tool.summary` step). `NodeInterrupt` and `GraphInterrupt` are re-raised — they are LangGraph control-flow signals.
+
+| Tool | Trigger | Reads from state | Writes to state | Writes to DB |
+|---|---|---|---|---|
+| `recall` | User references their saves, or consult precondition | `user_id`, `location`, `last_recall_results` (none) | `last_recall_results` (list of PlaceObjects) | Nothing |
+| `save` | User shares a URL or names a place | `user_id` | `reasoning_steps`, `messages` | `places` + `embeddings` (via ExtractionService) |
+| `consult` | User asks for a recommendation | `user_id`, `location`, `last_recall_results` (from prior recall in same turn) | `reasoning_steps`, `messages` | `recommendations` table (via ConsultService — ADR-060) |
+
+**recall → consult handoff:** When the agent calls both in one turn, `recall_tool` sets `state["last_recall_results"]`. `consult_tool` reads it from state directly — the LLM does not need to pass the list explicitly; LangGraph threads it automatically.
+
+**save + NodeInterrupt:** When extraction returns a `needs_review` result, `save_tool` raises `NodeInterrupt`. LangGraph checkpoints the state and suspends the graph. The caller receives `type="interrupt"` and the low-confidence candidates for user confirmation. Resuming with confirmation re-enters the graph at the interrupted node.
+
+### Reasoning Steps
+
+Every tool wrapper uses the `build_emit_closure(tool_name)` / `append_summary(...)` helpers from `core/agent/tools/_emit.py`. The pattern:
+
+1. Each service-internal milestone calls `emit(step, summary)` — appends a `debug`-visibility `ReasoningStep` to a local `collected` list and forwards it to `get_stream_writer()` for SSE fan-out.
+2. After the service returns, `append_summary(collected, tool_name, summary)` appends one `user`-visible `tool.summary` step.
+3. The full `collected` list is merged into `state["reasoning_steps"]` via the `Command` update.
+
+`agent_node` emits one `agent.tool_decision` step per LLM call (visibility `user`). `fallback_node` emits one `fallback` step (visibility `user`) plus one debug diagnostic step (`max_steps_detail` or `max_errors_detail`).
+
+Callers filter `reasoning_steps` by `visibility` to decide what reaches the product-facing JSON payload vs what stays in Langfuse/SSE debug streams.
+
+### Streaming
+
+`POST /v1/chat/stream` runs the same graph via `graph.astream(payload, config, stream_mode="custom")`. The `get_stream_writer()` writer acquired inside each node/tool fans out `ReasoningStep` dicts as SSE events in real time. The final `ChatResponse` is emitted as the last SSE event.
 
 ## API Contract
 
