@@ -16,7 +16,7 @@ async def test_should_continue_routes_to_fallback_on_max_errors() -> None:
     from totoro_ai.core.config import get_config
 
     max_errors = get_config().agent.max_errors
-    state: AgentState = {  # type: ignore[typeddict-item]
+    state: AgentState = {
         "messages": [HumanMessage(content="hi"), AIMessage(content="ok")],
         "error_count": max_errors,
         "steps_taken": 0,
@@ -31,20 +31,30 @@ async def test_should_continue_routes_to_fallback_on_max_errors() -> None:
     assert result == NODE_FALLBACK
 
 
-async def test_error_count_increments_on_agent_node_failure() -> None:
-    """agent_node increments error_count when the LLM raises an exception."""
+async def test_error_count_increments_on_agent_node_failure(
+    monkeypatch: Any,
+) -> None:
+    """agent_node increments error_count after exhausting LLM retries,
+    appends an AIMessage explaining the connection error, and emits a
+    user-visible reasoning step."""
+    from totoro_ai.core.agent import graph as graph_module
     from totoro_ai.core.agent.graph import make_agent_node
+
+    # Keep the test fast — skip backoff sleeps.
+    monkeypatch.setattr(graph_module, "_LLM_BACKOFF_BASE_SECONDS", 0)
 
     failing_llm = MagicMock()
     failing_llm.bind_tools = MagicMock(return_value=failing_llm)
+    call_count = {"n": 0}
 
     async def _fail(_messages: Any) -> AIMessage:
+        call_count["n"] += 1
         raise RuntimeError("LLM failed")
 
     failing_llm.ainvoke = MagicMock(side_effect=_fail)
 
     node = make_agent_node(failing_llm, [])
-    state: AgentState = {  # type: ignore[typeddict-item]
+    state: AgentState = {
         "messages": [HumanMessage(content="test")],
         "error_count": 0,
         "steps_taken": 0,
@@ -58,13 +68,63 @@ async def test_error_count_increments_on_agent_node_failure() -> None:
     result = await node(state)
     assert result["error_count"] == 1
     assert result["steps_taken"] == 1
+    assert call_count["n"] == graph_module._LLM_MAX_ATTEMPTS
+    assert len(result["messages"]) == 1
+    error_message = result["messages"][0]
+    assert isinstance(error_message, AIMessage)
+    assert isinstance(error_message.content, str)
+    assert "connection issue" in error_message.content.lower()
+    user_steps = [s for s in result["reasoning_steps"] if s.visibility == "user"]
+    assert len(user_steps) == 1
+    assert "connection error" in user_steps[0].summary.lower()
+
+
+async def test_llm_retry_recovers_on_second_attempt(monkeypatch: Any) -> None:
+    """First LLM call fails, second succeeds — agent_node returns the
+    successful AIMessage without incrementing error_count."""
+    from totoro_ai.core.agent import graph as graph_module
+    from totoro_ai.core.agent.graph import make_agent_node
+
+    monkeypatch.setattr(graph_module, "_LLM_BACKOFF_BASE_SECONDS", 0)
+
+    flaky_llm = MagicMock()
+    flaky_llm.bind_tools = MagicMock(return_value=flaky_llm)
+    call_count = {"n": 0}
+    success_msg = AIMessage(content="ok")
+
+    async def _flaky(_messages: Any) -> AIMessage:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("transient")
+        return success_msg
+
+    flaky_llm.ainvoke = MagicMock(side_effect=_flaky)
+
+    node = make_agent_node(flaky_llm, [])
+    state: AgentState = {
+        "messages": [HumanMessage(content="test")],
+        "error_count": 0,
+        "steps_taken": 0,
+        "reasoning_steps": [],
+        "last_recall_results": None,
+        "user_id": "u1",
+        "taste_profile_summary": "",
+        "memory_summary": "",
+        "location": None,
+    }
+    result = await node(state)
+    assert call_count["n"] == 2
+    # Happy path only writes messages/steps_taken/reasoning_steps — error_count
+    # is untouched so the state-merge leaves the prior value (0).
+    assert "error_count" not in result
+    assert result["messages"][0] is success_msg
 
 
 async def test_fallback_node_emits_user_visible_step() -> None:
     """fallback_node always emits a user-visible 'fallback' ReasoningStep."""
     from totoro_ai.core.agent.graph import fallback_node
 
-    state: AgentState = {  # type: ignore[typeddict-item]
+    state: AgentState = {
         "messages": [],
         "error_count": 0,
         "steps_taken": 0,

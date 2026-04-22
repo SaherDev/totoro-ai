@@ -11,6 +11,7 @@ LLM failure) and debug diagnostic steps in fallback_node.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -25,6 +26,38 @@ from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.config import get_config
 
 logger = logging.getLogger(__name__)
+
+# Number of attempts for each LLM call in agent_node. Anthropic's API
+# occasionally returns TLS handshake errors (SSLV3_ALERT_BAD_RECORD_MAC)
+# or dropped connections — a small bounded retry absorbs these without
+# surfacing to the user. Exponential backoff starting at 500ms.
+_LLM_MAX_ATTEMPTS = 3
+_LLM_BACKOFF_BASE_SECONDS = 0.5
+
+
+async def _invoke_llm_with_retry(bound: Any, conversation: list[Any]) -> Any:
+    """Call `bound.ainvoke(conversation)` with bounded retry.
+
+    Retries any Exception up to `_LLM_MAX_ATTEMPTS` total attempts with
+    exponential backoff. Re-raises the last exception on final failure.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(_LLM_MAX_ATTEMPTS):
+        try:
+            return await bound.ainvoke(conversation)
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "LLM attempt %d/%d failed: %s",
+                attempt + 1,
+                _LLM_MAX_ATTEMPTS,
+                exc,
+            )
+            if attempt < _LLM_MAX_ATTEMPTS - 1:
+                await asyncio.sleep(_LLM_BACKOFF_BASE_SECONDS * (2**attempt))
+    assert last_exc is not None
+    raise last_exc
+
 
 # Synthesized fallback decisions when AIMessage.content is empty but a
 # tool was called — gives the user-visible `agent.tool_decision` step
@@ -80,12 +113,28 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
         system = SystemMessage(content=_render_system_prompt(state))
         conversation = [system, *state["messages"]]
         try:
-            ai_msg = await bound.ainvoke(conversation)
+            ai_msg = await _invoke_llm_with_retry(bound, conversation)
         except Exception as exc:
-            logger.exception("agent_node failed: %s", exc)
+            logger.exception("agent_node failed after retries: %s", exc)
+            error_msg = AIMessage(
+                content=(
+                    "I hit a temporary connection issue talking to my language "
+                    "model. Please try again in a moment."
+                )
+            )
+            step = ReasoningStep(
+                step="agent.tool_decision",
+                summary=f"Connection error ({type(exc).__name__}) — please retry",
+                source="agent",
+                tool_name=None,
+                visibility="user",
+                duration_ms=0.0,
+            )
             return {
+                "messages": [error_msg],
                 "error_count": state.get("error_count", 0) + 1,
                 "steps_taken": state.get("steps_taken", 0) + 1,
+                "reasoning_steps": (state.get("reasoning_steps") or []) + [step],
             }
 
         full_text = extract_text_content(getattr(ai_msg, "content", None)).strip()
