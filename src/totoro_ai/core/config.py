@@ -355,6 +355,7 @@ class AgentConfig(BaseModel):
     enabled: bool = False
     max_steps: int = 10
     max_errors: int = 3
+    max_history_messages: int = 40
     checkpointer_ttl_seconds: int = 86400
     tool_timeouts_seconds: ToolTimeoutsConfig = ToolTimeoutsConfig()
 
@@ -363,11 +364,14 @@ class AgentConfig(BaseModel):
         if (
             self.max_steps < 1
             or self.max_errors < 1
+            or self.max_history_messages < 1
             or self.checkpointer_ttl_seconds < 1
         ):
             raise ValueError(
-                "agent.max_steps / max_errors / checkpointer_ttl_seconds must be >= 1 "
+                "agent.max_steps / max_errors / max_history_messages / "
+                "checkpointer_ttl_seconds must be >= 1 "
                 f"(got max_steps={self.max_steps}, max_errors={self.max_errors}, "
+                f"max_history_messages={self.max_history_messages}, "
                 f"checkpointer_ttl_seconds={self.checkpointer_ttl_seconds})"
             )
         return self

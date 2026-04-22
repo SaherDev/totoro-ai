@@ -15,7 +15,7 @@ import asyncio
 import logging
 from typing import Any
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -80,6 +80,45 @@ _FALLBACK_MESSAGE = (
 )
 
 
+def _sanitize_orphaned_tool_calls(messages: list[Any]) -> tuple[list[Any], int]:
+    """Inject placeholder ToolMessages for orphaned tool_use blocks.
+
+    When a tool call is interrupted (timeout, server restart), the checkpointer
+    stores an AIMessage with tool_calls but no subsequent ToolMessages. Sending
+    that history to Anthropic causes a 400. We detect the condition and inject
+    synthetic error ToolMessages so the conversation remains valid.
+
+    Returns the sanitized message list and the count of injected placeholders.
+    """
+    result: list[Any] = []
+    injected = 0
+    for i, msg in enumerate(messages):
+        result.append(msg)
+        if not isinstance(msg, AIMessage):
+            continue
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        if not tool_calls:
+            continue
+        expected_ids = {tc["id"] for tc in tool_calls if tc.get("id")}
+        satisfied_ids: set[str] = set()
+        j = i + 1
+        while j < len(messages) and isinstance(messages[j], ToolMessage):
+            tcid = getattr(messages[j], "tool_call_id", None)
+            if tcid:
+                satisfied_ids.add(tcid)
+            j += 1
+        for tc in tool_calls:
+            if tc.get("id") in expected_ids - satisfied_ids:
+                result.append(
+                    ToolMessage(
+                        content="Tool call did not complete — please continue.",
+                        tool_call_id=tc["id"],
+                    )
+                )
+                injected += 1
+    return result, injected
+
+
 def _render_system_prompt(state: AgentState) -> str:
     """Format the agent prompt with per-turn summaries substituted.
 
@@ -111,7 +150,15 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         system = SystemMessage(content=_render_system_prompt(state))
-        conversation = [system, *state["messages"]]
+        max_hist = get_config().agent.max_history_messages
+        trimmed = state["messages"][-max_hist:]
+        sanitized, dropped = _sanitize_orphaned_tool_calls(trimmed)
+        if dropped:
+            logger.warning(
+                "Injected %d placeholder ToolMessage(s) for orphaned tool_use blocks",
+                dropped,
+            )
+        conversation = [system, *sanitized]
         try:
             ai_msg = await _invoke_llm_with_retry(bound, conversation)
         except Exception as exc:

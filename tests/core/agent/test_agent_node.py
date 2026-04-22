@@ -8,10 +8,10 @@ response, increments steps_taken. Real LLM wiring lands in M6
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from totoro_ai.core.agent.graph import make_agent_node
 
@@ -108,3 +108,72 @@ async def test_agent_node_empty_summaries_still_renders(
     system = sent_messages[0]
     assert "{taste_profile_summary}" not in system.content
     assert "{memory_summary}" not in system.content
+
+
+async def test_agent_node_trims_history_to_max_history_messages(
+    captured_llm: MagicMock,
+) -> None:
+    """60-turn conversation: only the last max_history_messages are sent to the LLM."""
+    node = make_agent_node(captured_llm, [])
+    messages = [HumanMessage(content=f"msg {i}") for i in range(60)]
+    with patch("totoro_ai.core.agent.graph.get_config") as mock_cfg:
+        mock_cfg.return_value.agent.max_history_messages = 40
+        mock_cfg.return_value.prompts = {
+            "agent": MagicMock(
+                content="prompt {taste_profile_summary} {memory_summary}"
+            )
+        }
+        await node(_base_state(messages=messages))
+
+    sent_messages = captured_llm.ainvoke.call_args.args[0]
+    # system prompt is index 0; remaining are trimmed history
+    history_sent = sent_messages[1:]
+    assert len(history_sent) == 40
+    assert history_sent[0].content == "msg 20"
+    assert history_sent[-1].content == "msg 59"
+
+
+async def test_agent_node_trim_before_sanitize_no_orphaned_tool_message(
+    captured_llm: MagicMock,
+) -> None:
+    """Trim must happen before sanitize so a ToolMessage is never at position 0.
+
+    Scenario: history has an AIMessage with a tool_call at position 39 (0-indexed
+    from the full list) and its ToolMessage at position 40. After trimming to 40
+    messages we keep indices 21-60, so the AIMessage lands at index 0 of the
+    trimmed slice — sanitize then sees it has a satisfied ToolMessage following
+    it and does NOT inject a placeholder. The LLM receives both messages cleanly.
+    """
+    tool_call_id = "tc_abc"
+    ai_with_tool = AIMessage(
+        content="",
+        tool_calls=[{"id": tool_call_id, "name": "recall", "args": {}}],
+    )
+    tool_result = ToolMessage(content="results", tool_call_id=tool_call_id)
+
+    # 39 plain human messages, then the AI+tool pair = 41 total
+    messages: list[Any] = [HumanMessage(content=f"msg {i}") for i in range(39)]
+    messages.append(ai_with_tool)
+    messages.append(tool_result)
+
+    node = make_agent_node(captured_llm, [])
+    with patch("totoro_ai.core.agent.graph.get_config") as mock_cfg:
+        mock_cfg.return_value.agent.max_history_messages = 40
+        mock_cfg.return_value.prompts = {
+            "agent": MagicMock(
+                content="prompt {taste_profile_summary} {memory_summary}"
+            )
+        }
+        await node(_base_state(messages=messages))
+
+    sent_messages = captured_llm.ainvoke.call_args.args[0]
+    history_sent = sent_messages[1:]
+    assert len(history_sent) == 40
+    # The AI message with the tool call is present and its ToolMessage follows it —
+    # no synthetic placeholder was injected.
+    ai_positions = [i for i, m in enumerate(history_sent) if isinstance(m, AIMessage)]
+    assert ai_positions, "AIMessage not found in trimmed history"
+    ai_idx = ai_positions[-1]
+    assert ai_idx + 1 < len(history_sent)
+    assert isinstance(history_sent[ai_idx + 1], ToolMessage)
+    assert history_sent[ai_idx + 1].tool_call_id == tool_call_id

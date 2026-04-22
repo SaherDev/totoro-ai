@@ -207,6 +207,7 @@ agent:
   enabled: true
   max_steps: 10
   max_errors: 3
+  max_history_messages: 40
   checkpointer_ttl_seconds: 86400
   tool_timeouts_seconds:
     recall: 5
