@@ -46,6 +46,32 @@ _FALLBACK_MESSAGE = (
 )
 
 
+def _extract_text_content(content: Any) -> str:
+    """Return a flat string from an `AIMessage.content`.
+
+    Anthropic returns a list of content blocks (e.g. `[{"type": "text",
+    "text": "..."}, {"type": "tool_use", ...}]`) when the model emits a
+    tool call alongside reasoning. OpenAI returns a plain string. This
+    helper normalizes both shapes into a single string for the
+    `agent.tool_decision` reasoning-step summary.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
 def _render_system_prompt(state: AgentState) -> str:
     """Format the agent prompt with per-turn summaries substituted.
 
@@ -87,7 +113,7 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
                 "steps_taken": state.get("steps_taken", 0) + 1,
             }
 
-        full_text = (getattr(ai_msg, "content", "") or "").strip()
+        full_text = _extract_text_content(getattr(ai_msg, "content", None)).strip()
         tool_calls = getattr(ai_msg, "tool_calls", None) or []
         first_tool_name = tool_calls[0].get("name") if tool_calls else None
 
