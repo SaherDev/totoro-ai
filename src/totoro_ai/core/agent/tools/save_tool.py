@@ -1,4 +1,4 @@
-"""save_tool — @tool wrapper around ExtractionService (feature 028 M5)."""
+"""save_tool — @tool wrapper around ExtractionService (feature 028 M5/M8)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
+from langgraph.errors import NodeInterrupt
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 from pydantic import BaseModel, Field
@@ -60,6 +61,15 @@ def build_save_tool(service: ExtractionService) -> BaseTool:
         """
         collected, emit = build_emit_closure("save")
         response = await service.run(raw_input, state["user_id"], emit=emit)
+
+        needs_review = [r for r in response.results if r.status == "needs_review"]
+        if needs_review:
+            raise NodeInterrupt({
+                "type": "save_needs_review",
+                "request_id": response.request_id,
+                "candidates": [r.model_dump() for r in needs_review],
+            })
+
         append_summary(collected, "save", _save_summary(response))
         update: dict[str, Any] = {
             "reasoning_steps": (state.get("reasoning_steps") or []) + collected,

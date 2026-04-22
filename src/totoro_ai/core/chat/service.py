@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage
+from langgraph.errors import GraphInterrupt
 
 from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
 from totoro_ai.api.schemas.extract_place import ExtractPlaceResponse
@@ -129,7 +130,34 @@ class ChatService:
             "configurable": {"thread_id": request.user_id},
             "metadata": {"user_id": request.user_id},
         }
-        final_state = await self._agent_graph.ainvoke(payload, config=graph_config)
+        try:
+            final_state = await self._agent_graph.ainvoke(payload, config=graph_config)
+        except GraphInterrupt as interrupt:
+            # LangGraph wraps NodeInterrupt payload as:
+            #   interrupt.args[0] == [Interrupt(value=<payload>, ...)]
+            # Direct GraphInterrupt construction passes args[0] as a plain dict.
+            raw = interrupt.args[0] if interrupt.args else {}
+            if isinstance(raw, list) and raw and hasattr(raw[0], "value"):
+                interrupt_val: dict[str, Any] = raw[0].value
+            elif isinstance(raw, dict):
+                interrupt_val = raw
+            else:
+                interrupt_val = {}
+            candidates = (
+                interrupt_val.get("candidates", [])
+                if isinstance(interrupt_val, dict)
+                else []
+            )
+            name = (
+                candidates[0].get("place", {}).get("place_name", "this place")
+                if candidates
+                else "this place"
+            )
+            return ChatResponse(
+                type="clarification",
+                message=f"Low confidence on {name} — is this the place you meant?",
+                data={"interrupt": interrupt_val},
+            )
 
         ai_message = _last_ai_message(final_state.get("messages", []))
         user_steps = [
