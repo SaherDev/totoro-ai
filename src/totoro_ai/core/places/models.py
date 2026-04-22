@@ -60,6 +60,7 @@ _SUBCATEGORIES: dict[PlaceType, frozenset[str]] = {
             "food_truck",
             "brewery",
             "dessert_shop",
+            "market",
         }
     ),
     PlaceType.things_to_do: frozenset(
