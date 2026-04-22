@@ -19,6 +19,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from totoro_ai.core.agent.messages import extract_text_content
 from totoro_ai.core.agent.reasoning import ReasoningStep
 from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.config import get_config
@@ -44,32 +45,6 @@ NODE_FALLBACK = "fallback"
 _FALLBACK_MESSAGE = (
     "Something went wrong on my side — try again with a bit more detail?"
 )
-
-
-def _extract_text_content(content: Any) -> str:
-    """Return a flat string from an `AIMessage.content`.
-
-    Anthropic returns a list of content blocks (e.g. `[{"type": "text",
-    "text": "..."}, {"type": "tool_use", ...}]`) when the model emits a
-    tool call alongside reasoning. OpenAI returns a plain string. This
-    helper normalizes both shapes into a single string for the
-    `agent.tool_decision` reasoning-step summary.
-    """
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
-                text = block.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-        return "\n".join(parts)
-    return ""
 
 
 def _render_system_prompt(state: AgentState) -> str:
@@ -113,7 +88,7 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
                 "steps_taken": state.get("steps_taken", 0) + 1,
             }
 
-        full_text = _extract_text_content(getattr(ai_msg, "content", None)).strip()
+        full_text = extract_text_content(getattr(ai_msg, "content", None)).strip()
         tool_calls = getattr(ai_msg, "tool_calls", None) or []
         first_tool_name = tool_calls[0].get("name") if tool_calls else None
 

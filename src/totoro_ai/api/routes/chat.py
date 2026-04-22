@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage
 from totoro_ai.api.deps import get_agent_graph, get_chat_service
 from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
 from totoro_ai.core.agent.invocation import build_turn_payload
+from totoro_ai.core.agent.messages import extract_text_content
 from totoro_ai.core.chat.service import ChatService
 
 logger = logging.getLogger(__name__)
@@ -104,9 +105,11 @@ async def chat_stream(
                     if isinstance(output, dict):
                         messages = output.get("messages", [])
                         for m in reversed(messages):
-                            if isinstance(m, AIMessage) and m.content:
-                                final_message = m.content
-                                break
+                            if isinstance(m, AIMessage):
+                                text = extract_text_content(m.content)
+                                if text:
+                                    final_message = text
+                                    break
         except Exception as exc:
             logger.exception("chat_stream graph error: %s", exc)
             yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"

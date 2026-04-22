@@ -15,6 +15,7 @@ from langgraph.errors import GraphInterrupt
 
 from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
 from totoro_ai.core.agent.invocation import build_turn_payload
+from totoro_ai.core.agent.messages import extract_text_content
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.recall.service import RecallService
@@ -116,9 +117,17 @@ class ChatService:
             s for s in final_state.get("reasoning_steps", []) if s.visibility == "user"
         ]
 
+        message_text = (
+            extract_text_content(ai_message.content) if ai_message else ""
+        ).strip()
+        if not message_text:
+            # Tool-use-only AIMessage or no response at all — give the client
+            # something renderable rather than an empty bubble.
+            message_text = "I'm working on it."
+
         return ChatResponse(
             type="agent",
-            message=ai_message.content if ai_message else "",
+            message=message_text,
             data={"reasoning_steps": [s.model_dump(mode="json") for s in user_steps]},
         )
 
@@ -137,6 +146,7 @@ class ChatService:
         if not memory_list:
             return ""
         return "\n".join(memory_list)
+
 
 def _last_ai_message(messages: list[Any]) -> AIMessage | None:
     for m in reversed(messages):
