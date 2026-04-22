@@ -223,7 +223,7 @@ prompts:
 # no native TTL; periodic cleanup is deferred).
 # ---------------------------------------------------------------------------
 agent:
-  enabled: false
+  enabled: true
   max_steps: 10
   max_errors: 3
   checkpointer_ttl_seconds: 86400
