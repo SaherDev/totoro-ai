@@ -11,12 +11,23 @@ from __future__ import annotations
 from typing import Any
 
 from langchain_core.messages import AIMessage, SystemMessage
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from totoro_ai.core.agent.reasoning import ReasoningStep
 from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.config import get_config
+
+# Synthesized fallback decisions when AIMessage.content is empty but a
+# tool was called — gives the user-visible `agent.tool_decision` step
+# something concrete to render.
+_TOOL_DECISION_FALLBACKS: dict[str, str] = {
+    "recall": "recall — user referenced saved places",
+    "save": "save — message contains URL or named place",
+    "consult": "consult — recommendation request",
+}
+_DIRECT_RESPONSE_FALLBACK = "responding directly"
 
 # Node names are re-used by tests asserting graph structure.
 NODE_AGENT = "agent"
@@ -47,8 +58,14 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
 
     The node renders the system prompt with per-turn summaries, calls
     `llm.bind_tools(tools).ainvoke(...)`, appends the response to
-    `messages`, and increments `steps_taken`. FR-028: LLM is injected;
-    M3 tests use a fake.
+    `messages`, increments `steps_taken`, and emits one user-visible
+    `agent.tool_decision` reasoning step per LLM call (feature 028 M5).
+
+    The reasoning step's `summary` carries `AIMessage.content` truncated
+    to 200 chars. When `content` is empty (tool-call-only response), a
+    synthesized fallback keyed by the first tool-call name is used. A
+    streaming caller (via `get_stream_writer()`) receives the full,
+    untruncated text.
     """
     bound = llm.bind_tools(tools)
 
@@ -56,9 +73,41 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
         system = SystemMessage(content=_render_system_prompt(state))
         conversation = [system, *state["messages"]]
         ai_msg = await bound.ainvoke(conversation)
+
+        full_text = (getattr(ai_msg, "content", "") or "").strip()
+        tool_calls = getattr(ai_msg, "tool_calls", None) or []
+        first_tool_name = tool_calls[0].get("name") if tool_calls else None
+
+        if not full_text:
+            if first_tool_name is not None:
+                summary_source = _TOOL_DECISION_FALLBACKS.get(
+                    first_tool_name, _DIRECT_RESPONSE_FALLBACK
+                )
+            else:
+                summary_source = _DIRECT_RESPONSE_FALLBACK
+        else:
+            summary_source = full_text
+
+        try:
+            writer = get_stream_writer()
+        except RuntimeError:
+            writer = None
+        if writer is not None:
+            writer({"step": "agent.tool_decision", "summary": summary_source})
+
+        step = ReasoningStep(
+            step="agent.tool_decision",
+            summary=summary_source[:200],
+            source="agent",
+            tool_name=None,
+            visibility="user",
+            duration_ms=0.0,
+        )
+        existing_steps = state.get("reasoning_steps") or []
         return {
             "messages": [ai_msg],
             "steps_taken": state.get("steps_taken", 0) + 1,
+            "reasoning_steps": existing_steps + [step],
         }
 
     return agent_node

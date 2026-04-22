@@ -1,11 +1,13 @@
-"""Input/output types for the recall pipeline (feature 019, feature 027 M4).
+"""Input/output types for the recall pipeline (feature 019, feature 028 M4).
 
-`RecallFilters` mirrors `PlaceObject` 1:1 per ADR-056 (pulled forward from
-M4): same top-level keys (`place_type`, `subcategory`, `tags_include`,
-`source`) plus a nested `attributes: PlaceAttributes` holding cuisine,
-price_hint, ambiance, dietary, good_for, and location_context.
-Retrieval-specific fields (`max_distance_km`, `created_after`,
-`created_before`) extend the base shape.
+`RecallFilters` is a Pydantic `BaseModel` extending the shared
+`PlaceFilters` base (`core/places/filters.py`) per ADR-056. The
+migration from `@dataclass` to Pydantic landed in feature 028 M4 — the
+shared base plus the three retrieval-specific extensions
+(`max_distance_km`, `created_after`, `created_before`) live here. Every
+top-level `PlaceObject` key is reachable through the inherited base;
+attribute-level signals (cuisine, price_hint, ambiance, dietary,
+good_for, location_context) nest under `attributes: PlaceAttributes`.
 
 `RecallResult` wraps a `PlaceObject` with the `match_reason` string and
 optional `relevance_score` (populated only in hybrid mode).
@@ -13,29 +15,22 @@ optional `relevance_score` (populated only in hybrid mode).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from totoro_ai.core.places.models import PlaceAttributes, PlaceObject
+from totoro_ai.core.places.filters import PlaceFilters
+from totoro_ai.core.places.models import PlaceObject
 
 
-@dataclass
-class RecallFilters:
-    """Retrieval filters mirroring `PlaceObject` structure (ADR-056).
+class RecallFilters(PlaceFilters):
+    """Retrieval filters mirroring `PlaceObject` (ADR-056) + retrieval-only fields.
 
-    Top-level keys match `PlaceObject` 1:1; attribute-level signals nest
-    under `attributes`, matching `PlaceObject.attributes`. Retrieval-time
-    constraints (`max_distance_km`, `created_after`, `created_before`)
-    extend this shape.
+    Inherits `place_type`, `subcategory`, `tags_include`, `attributes`,
+    `source` from `PlaceFilters`. Adds `max_distance_km`,
+    `created_after`, `created_before` for the recall pipeline.
     """
 
-    place_type: str | None = None
-    subcategory: str | None = None
-    source: str | None = None
-    tags_include: list[str] | None = None
-    attributes: PlaceAttributes | None = None
-    # Retrieval-specific constraints (not on PlaceObject)
     max_distance_km: float | None = None
     created_after: datetime | None = None
     created_before: datetime | None = None
@@ -53,7 +48,3 @@ class RecallResult:
 
 
 __all__ = ["RecallFilters", "RecallResult"]
-
-# `field` imported for symmetry with other dataclass modules; reserved for
-# future mutable defaults.
-_ = field

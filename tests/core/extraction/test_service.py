@@ -326,3 +326,36 @@ async def test_pipeline_called_with_url_none_for_plain_text(
     await service.run("Fuji Ramen no url", user_id="user-1")
     kw = pipeline.run.call_args.kwargs
     assert kw["url"] is None
+
+
+# ---------------------------------------------------------------------------
+# emit callback contract (feature 028 M4)
+# ---------------------------------------------------------------------------
+
+
+async def test_emit_fires_parse_input_and_persist(service: ExtractionService) -> None:
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    await service.run("Fuji Ramen Bangkok", user_id="user-1", emit=spy)
+
+    steps = [s for s, _ in emitted]
+    assert steps[0] == "save.parse_input"
+    assert steps[-1] == "save.persist"
+
+
+async def test_emit_passes_callback_through_to_pipeline(
+    service: ExtractionService, pipeline: MagicMock
+) -> None:
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    await service.run("Fuji Ramen Bangkok", user_id="user-1", emit=spy)
+
+    assert pipeline.run.await_count == 1
+    # The pipeline receives the same emit callable — callers in M5 rely on this.
+    assert pipeline.run.await_args.kwargs.get("emit") is spy

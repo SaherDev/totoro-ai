@@ -22,6 +22,11 @@ class ReasoningStep(BaseModel):
     Invariant: `tool_name` is set iff `source == "tool"`. A tool step
     without a tool_name is a bug; a non-tool step with a tool_name is
     a bug. Enforced by the model_validator below.
+
+    `duration_ms` is populated either by the service (when it measured
+    the underlying operation directly) or by the wrapper's emit closure
+    from timestamp deltas (`core/agent/tools/_emit.py`). Non-null in
+    persisted steps; a lingering `None` is a bug.
     """
 
     step: str
@@ -30,6 +35,7 @@ class ReasoningStep(BaseModel):
     tool_name: Literal["recall", "save", "consult"] | None = None
     visibility: Literal["user", "debug"] = "user"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    duration_ms: float | None = None
 
     @model_validator(mode="after")
     def _source_tool_name_consistency(self) -> ReasoningStep:

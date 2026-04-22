@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import BackgroundTasks, Depends
+from typing import Any
+
+from fastapi import BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
@@ -323,16 +325,16 @@ def get_signal_service(
 
 async def get_consult_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
-    config: AppConfig = Depends(get_config),  # noqa: B008
     recommendation_repo: RecommendationRepository = Depends(get_recommendation_repo),  # noqa: B008
-    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
 ) -> ConsultService:
-    """FastAPI dependency providing a fully wired ConsultService.
+    """FastAPI dependency providing a fully wired ConsultService (feature 028 M4).
 
-    Wires the 6-step pipeline dependencies: intent parser, recall service,
-    places client, taste model service, and ranking service.
-    Also injects RecommendationRepository for persistence (ADR-060) and
-    UserMemoryService for context injection (ADR-010, ADR-038).
+    Wires the 4-phase pipeline dependencies: places client, places service,
+    taste model service (active-tier chip filter only, ADR-061), and
+    recommendation repository (ADR-060). IntentParser, RecallService, and
+    UserMemoryService are no longer held by the consult service — the
+    caller supplies pre-parsed `query`, pre-loaded `saved_places`, and an
+    optional `preference_context`.
     """
     places_service = PlacesService(
         repo=PlacesRepository(db_session),
@@ -340,19 +342,24 @@ async def get_consult_service(
         client=GooglePlacesClient(),
     )
     return ConsultService(
-        intent_parser=IntentParser(),
-        recall_service=RecallService(
-            embedder=get_embedder(),
-            recall_repo=SQLAlchemyRecallRepository(db_session),
-            config=config.recall,
-            places_service=places_service,
-        ),
         places_client=GooglePlacesClient(),
         places_service=places_service,
-        memory_service=memory_service,
         taste_service=TasteModelService(session_factory=_get_session_factory()),
         recommendation_repo=recommendation_repo,
     )
+
+
+def get_agent_graph(request: Request) -> Any:
+    """Return the compiled agent StateGraph built at startup (feature 028 M6).
+
+    Populated by `api/main.py` lifespan before the first request. Read-only
+    after construction; shared across all requests. Returns `None` when
+    the lifespan hasn't run (test clients built without the lifespan
+    context) or when graph construction failed — the flag-off path tolerates
+    a missing graph, and the flag-on path surfaces the failure as an error
+    response.
+    """
+    return getattr(request.app.state, "agent_graph", None)
 
 
 async def get_chat_service(
@@ -364,13 +371,14 @@ async def get_chat_service(
     ),
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
     memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
+    taste_service: TasteModelService = Depends(get_taste_service),  # noqa: B008
+    config: AppConfig = Depends(get_config),  # noqa: B008
+    agent_graph: Any = Depends(get_agent_graph),  # noqa: B008
 ) -> ChatService:
     """FastAPI dependency providing a fully wired ChatService (ADR-019, ADR-052).
 
-    Injects all four downstream services plus event dispatcher and memory service.
-    ConsultService is responsible for consult log persistence — ChatService holds
-    no DB repository. PersonalFactsExtracted events fire after intent classification
-    to enable asynchronous memory persistence (ADR-043).
+    Feature 028 M6: adds `taste_service`, `config`, and `agent_graph` for
+    the flag-on agent path. Flag-off behavior is unchanged.
     """
     return ChatService(
         extraction_service=extraction_service,
@@ -380,4 +388,7 @@ async def get_chat_service(
         assistant_service=assistant_service,
         event_dispatcher=event_dispatcher,
         memory_service=memory_service,
+        taste_service=taste_service,
+        config=config,
+        agent_graph=agent_graph,
     )

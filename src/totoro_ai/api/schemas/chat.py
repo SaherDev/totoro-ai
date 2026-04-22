@@ -10,6 +10,16 @@ from totoro_ai.api.schemas.consult import Location
 
 SignalTierHint = Literal["cold", "warming", "chip_selection", "active"]
 
+ChatResponseType = Literal[
+    "extract-place",
+    "consult",
+    "recall",
+    "assistant",
+    "clarification",
+    "error",
+    "agent",
+]
+
 
 class ChatRequest(BaseModel):
     """Request body for POST /v1/chat endpoint."""
@@ -32,12 +42,16 @@ class ChatResponse(BaseModel):
     """Response body for POST /v1/chat endpoint.
 
     type: One of "extract-place", "consult", "recall", "assistant",
-          "clarification", "error"
+          "clarification", "error", "agent". The "agent" value (feature
+          028 M6) only appears when `config.agent.enabled=true`; the
+          six legacy values are emitted by the flag-off dispatch path.
     message: Human-readable response text.
-    data: Structured payload from downstream service; null for clarification/
-          assistant/error.
+    data: Structured payload from downstream service; null for
+          clarification / assistant / error; on the "agent" path carries
+          `{"reasoning_steps": [<ReasoningStep.model_dump>, ...]}` —
+          only user-visible steps survive the serialization filter.
     """
 
-    type: str
+    type: ChatResponseType
     message: str
     data: dict[str, Any] | None = None

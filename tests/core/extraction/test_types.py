@@ -105,5 +105,3 @@ class TestValidatedCandidate:
         # City lives on attributes.location_context, not on the wrapper.
         assert vc.place.attributes.location_context is not None
         assert vc.place.attributes.location_context.city == "Bangkok"
-
-

@@ -21,9 +21,7 @@ def _mock_tracer() -> MagicMock:
     return_value=_mock_tracer(),
 )
 @patch("totoro_ai.core.chat.chat_assistant_service.get_llm")
-async def test_run_happy_path(
-    mock_get_llm: MagicMock, mock_tracer: MagicMock
-) -> None:
+async def test_run_happy_path(mock_get_llm: MagicMock, mock_tracer: MagicMock) -> None:
     """Service returns the LLM response string on success."""
     mock_llm = AsyncMock()
     mock_llm.complete.return_value = "Tokyo is outstanding for food."

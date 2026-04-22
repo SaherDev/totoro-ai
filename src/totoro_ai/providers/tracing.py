@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class TracingSpan(Protocol):
-    def end(self, output: dict[str, Any] | None = None, level: str = "DEFAULT") -> None:
-        ...
+    def end(
+        self, output: dict[str, Any] | None = None, level: str = "DEFAULT"
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -33,8 +34,7 @@ class TracingClient(Protocol):
         model: str | None = None,
         user_id: str | None = None,
         session_id: str | None = None,
-    ) -> TracingSpan:
-        ...
+    ) -> TracingSpan: ...
 
     def capture_message(
         self,
@@ -43,11 +43,9 @@ class TracingClient(Protocol):
         metadata: dict[str, Any] | None = None,
         user_id: str | None = None,
         session_id: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    def flush(self) -> None:
-        ...
+    def flush(self) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +138,7 @@ class _LangfuseTracingClient:
             meta["user_id"] = user_id
         if session_id is not None:
             meta["session_id"] = session_id
-        self._client.start_observation(
-            as_type="event", name=message, input=meta
-        ).end()
+        self._client.start_observation(as_type="event", name=message, input=meta).end()
 
     def flush(self) -> None:
         self._client.flush()
@@ -183,5 +179,5 @@ def get_tracing_client() -> TracingClient:
         logger.warning("Langfuse tracing disabled: %s", exc)
         _client = _NullTracingClient()
 
-    assert isinstance(_client, (_LangfuseTracingClient, _NullTracingClient))
+    assert isinstance(_client, _LangfuseTracingClient | _NullTracingClient)
     return _client

@@ -58,10 +58,10 @@ class ConsultResult(BaseModel):
 class ConsultResponse(BaseModel):
     """Response body for POST /v1/consult.
 
-    `results` is ordered by `confidence` descending (the ranker sorts
-    internally) and capped at 3 entries. `reasoning_steps` is a flat
-    trace of the six-step pipeline — useful for eval/debug, not required
-    for the UI.
+    `results` is ordered by source (saved first, discovered second) and
+    capped at `consult.total_cap` entries. Reasoning steps are delivered
+    live via the `emit` callback on the agent path (feature 028 M4) —
+    the response no longer bundles them.
     """
 
     recommendation_id: str | None = Field(
@@ -69,4 +69,3 @@ class ConsultResponse(BaseModel):
         description="UUID from recommendations table. Null if persist failed.",
     )
     results: list[ConsultResult]
-    reasoning_steps: list[ReasoningStep]

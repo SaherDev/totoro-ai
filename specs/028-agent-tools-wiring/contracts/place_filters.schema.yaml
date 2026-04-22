@@ -1,0 +1,96 @@
+# PlaceFilters family — shared filter base + retrieval / discovery extensions
+# Feature 028 — M4.
+#
+# Source of truth: ADR-056 (PlaceObject unified shape) + feature 019 PlaceAttributes.
+
+$schema: https://json-schema.org/draft/2020-12/schema
+$defs:
+  PlaceType:
+    type: string
+    description: |
+      Enum defined in `core/places/models.py::PlaceType`. Values include
+      restaurant, bar, cafe, museum, shop, hotel, service, etc.
+
+  PlaceSource:
+    type: string
+    description: |
+      Enum defined in `core/places/models.py::PlaceSource`. Tracks provenance
+      (tiktok, instagram, google, manual, etc.).
+
+  PlaceAttributes:
+    type: object
+    description: |
+      Nested attribute bundle matching `PlaceObject.attributes` 1:1
+      (ADR-056). All fields optional.
+    properties:
+      cuisine:
+        oneOf: [{ type: "null" }, { type: array, items: { type: string } }]
+      price_hint:
+        oneOf: [{ type: "null" }, { type: string, enum: [cheap, mid, high, luxury] }]
+      ambiance:
+        oneOf: [{ type: "null" }, { type: array, items: { type: string } }]
+      dietary:
+        oneOf: [{ type: "null" }, { type: array, items: { type: string } }]
+      good_for:
+        oneOf: [{ type: "null" }, { type: array, items: { type: string } }]
+      location_context:
+        oneOf:
+          - type: "null"
+          - type: object
+            properties:
+              neighborhood: { oneOf: [{ type: "null" }, { type: string }] }
+              city:         { oneOf: [{ type: "null" }, { type: string }] }
+              country:      { oneOf: [{ type: "null" }, { type: string }] }
+
+  PlaceFilters:
+    type: object
+    description: |
+      Shared filter base. Mirrors PlaceObject 1:1 (ADR-056). All fields optional.
+      Used by RecallFilters, ConsultFilters (extension types below), and tool
+      input schemas.
+    properties:
+      place_type:    { oneOf: [{ type: "null" }, { $ref: "#/$defs/PlaceType" }] }
+      subcategory:   { oneOf: [{ type: "null" }, { type: string }] }
+      tags_include:  { oneOf: [{ type: "null" }, { type: array, items: { type: string } }] }
+      attributes:    { oneOf: [{ type: "null" }, { $ref: "#/$defs/PlaceAttributes" }] }
+      source:        { oneOf: [{ type: "null" }, { $ref: "#/$defs/PlaceSource" }] }
+
+  RecallFilters:
+    description: |
+      Retrieval-time filter. Extends PlaceFilters with constraints that only
+      apply to the user's saved places (distance bound, creation window).
+    allOf:
+      - $ref: "#/$defs/PlaceFilters"
+      - type: object
+        properties:
+          max_distance_km:
+            oneOf: [{ type: "null" }, { type: number, minimum: 0 }]
+          created_after:
+            oneOf: [{ type: "null" }, { type: string, format: date-time }]
+          created_before:
+            oneOf: [{ type: "null" }, { type: string, format: date-time }]
+
+  ConsultFilters:
+    description: |
+      Discovery-time filter. Extends PlaceFilters with Google Places discovery
+      parameters (radius, location name, passthrough query params).
+    allOf:
+      - $ref: "#/$defs/PlaceFilters"
+      - type: object
+        properties:
+          radius_m:
+            oneOf: [{ type: "null" }, { type: integer, minimum: 1 }]
+          search_location_name:
+            oneOf: [{ type: "null" }, { type: string }]
+          discovery_filters:
+            oneOf: [{ type: "null" }, { type: object, additionalProperties: true }]
+
+x-invariants:
+  - RecallFilters and ConsultFilters share the PlaceFilters base by inheritance.
+    Every PlaceObject field reachable on the base is also reachable on both
+    extensions without redeclaration.
+  - No field is duplicated across the base and an extension — extensions add,
+    never override.
+  - Attributes-level signals (cuisine, price_hint, ambiance, dietary, good_for,
+    location_context) live exclusively under the nested `attributes` object,
+    matching `PlaceObject.attributes`.

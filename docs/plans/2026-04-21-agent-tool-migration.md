@@ -9,7 +9,7 @@ Replace the intent-router-based dispatch in `ChatService` with a single LangGrap
 - **LangGraph StateGraph directly** — not `create_react_agent` / `AgentExecutor` (ADR-062).
 - **Drop `IntentParser` entirely.** `ConsultService.consult()` signature changes to take agent-parsed args (enriched query, filters, location, preference_context). No LLM call inside ConsultService.
 - **Single feature flag `agent_enabled`** (boolean in `config/app.yaml`, default `false` during migration, `true` to cut over). All-or-nothing. No per-user rollout.
-- **Official Postgres checkpointer** — `langgraph-checkpoint-postgres` (`AsyncPostgresSaver`). Thread key is `user_id` so conversation history persists per-user. Pointed at the existing Railway Postgres instance via `DATABASE_URL`. **Not Redis** — the `langgraph-checkpoint-redis` package requires RedisJSON + RediSearch modules (Redis Stack), which Railway's default Redis does not provide. Switching our single Redis service to Redis Stack would force the PlaceObject geo + enrichment caches onto a modules-enabled image we don't otherwise need. Postgres keeps vanilla Redis clean for the PlaceObject cache layer, uses existing infrastructure, and is the LangChain-team-maintained option. Minor nuance with ADR-062 wording ("Redis-backed checkpointer") — the ADR's load-bearing decision was *LangGraph StateGraph directly*, not the specific backend; the Redis mention was illustrative. M11 ADR-064 captures the chosen backend.
+- **Official Postgres checkpointer** — `langgraph-checkpoint-postgres` (`AsyncPostgresSaver`). Thread key is `user_id` so conversation history persists per-user. Pointed at the existing Railway Postgres instance via `DATABASE_URL`. **Not Redis** — the `langgraph-checkpoint-redis` package requires RedisJSON + RediSearch modules (Redis Stack), which Railway's default Redis does not provide. Switching our single Redis service to Redis Stack would force the PlaceObject geo + enrichment caches onto a modules-enabled image we don't otherwise need. Postgres keeps vanilla Redis clean for the PlaceObject cache layer, uses existing infrastructure, and is the LangChain-team-maintained option. Minor nuance with ADR-062 wording ("Redis-backed checkpointer") — the ADR's load-bearing decision was *LangGraph StateGraph directly*, not the specific backend; the Redis mention was illustrative. M11 ADR-065 captures the chosen backend.
 - **Inline tool await** — the Save tool `await`s extraction; the agent blocks until the real status is returned, then composes the user message. Long-running enrichers (Whisper/vision) are bounded by `extraction.whisper.timeout_seconds` (8s) and `extraction.vision.timeout_seconds` (10s) — acceptable within the chat turn. The existing `GET /v1/extraction/{request_id}` polling route (ADR-048) stays in place for the non-agent HTTP fallback path during migration.
 - **`orchestrator` role kept, not renamed** to `agent`. Cosmetic churn; design doc explicitly says KEPT.
 - **Everything schema/PlaceObject-related is already done** (ADRs 054, 055, 056, 058, 060, 061). No migration, no data changes.
@@ -317,7 +317,9 @@ class AgentState(TypedDict):
     error_count: int
 ```
 
-**No reducer on `reasoning_steps`.** Tools append by reading `runtime.state.get("reasoning_steps")` via the injected `ToolRuntime` and returning the concatenated list in their `Command(update=...)`. This keeps the reset semantics simple: a plain-overwrite `{"reasoning_steps": []}` in the invocation payload clears the field. An append-reducer would make reset ambiguous (empty list could mean "nothing to add" or "reset") and we'd need a sentinel. Tool calls happen sequentially within a turn (ToolNode does not parallelize Sonnet's single tool call per response), so there is no multi-writer race on this field.
+**No reducer on `reasoning_steps`.** Tools append by reading `runtime.state.get("reasoning_steps")` via the injected `ToolRuntime` and returning the concatenated list in their `Command(update=...)`. This keeps the reset semantics simple: a plain-overwrite `{"reasoning_steps": []}` in the invocation payload clears the field. An append-reducer would make reset ambiguous (empty list could mean "nothing to add" or "reset") and we'd need a sentinel.
+
+**Parallel-tool-call caveat.** If Sonnet emits multiple `tool_calls` in a single `AIMessage`, LangGraph's `ToolNode` runs them concurrently. Each tool's `Command` independently sets `reasoning_steps = prior + collected`, and without a reducer the last writer wins — one tool's debug/summary steps get dropped on the floor. **Mitigation (primary):** the M2 system prompt instructs Sonnet to emit **one tool call per response**, chaining sequentially across turns instead of parallelizing within one. This matches the recall → consult design anyway (consult needs `last_recall_results` populated first). **Mitigation (defensive):** an integration test in M9 verifies the one-call-per-turn invariant holds under the canary prompt — if a future prompt revision loosens this, the test fails loudly. **Future option:** if we ever intentionally enable parallel tool calls, swap to a list-merge reducer on `reasoning_steps` and move the per-turn reset into a dedicated `session_init` node.
 
 ### Per-turn reset helper
 
@@ -364,9 +366,12 @@ class ReasoningStep(BaseModel):
     tool_name: Literal["recall", "save", "consult"] | None = None
     visibility: Literal["user", "debug"] = "user"   # JSON payload filter
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    duration_ms: float | None = None                # elapsed time attributed to this step
 ```
 
-The existing `api/schemas/consult.py::ReasoningStep` (just `step` + `summary`) is **replaced by a re-export** of this model. `ConsultResponse.reasoning_steps` keeps the same field name but adopts the richer schema. The consult tool wrapper upgrades each `ReasoningStep` from `ConsultService` with `source="tool"`, `tool_name="consult"`, and visibility per the catalog in M5.
+`duration_ms` aligns with structured-logging standards — elapsed time is a primary debugging signal for evals and perf regressions. Populated one of two ways: the service passes it explicitly when it knows (e.g. measured around a Google Places call), or the wrapper's emit closure computes it from timestamp deltas (time since the previous emit, or since the closure was built for the first emit). Always populated in the final `ReasoningStep`; `None` as an input just means "let the wrapper compute it."
+
+The existing `api/schemas/consult.py::ReasoningStep` (just `step` + `summary`) becomes obsolete — `ConsultResponse.reasoning_steps` is **deleted** at M4 (not renamed, not migrated). Services never import `ReasoningStep`; see the "Reasoning emission pattern" subsection at the top of M4 for how steps reach `AgentState` via the wrapper's emit closure.
 
 ### Add — `src/totoro_ai/core/agent/graph.py`
 
@@ -471,9 +476,64 @@ No LLM calls in tests for this milestone — the graph builder is tested for str
 
 ---
 
-## M4 — Drop `IntentParser` from `ConsultService`
+## M4 — Drop `IntentParser` from `ConsultService` + reasoning emission pattern
 
 **Why before tool wrappers (M5):** The consult tool wrapper needs a stable target signature. `ConsultService.consult()` signature changes as part of this step, so wrapper work in M5 is straightforward.
+
+### Reasoning emission pattern (cross-cutting)
+
+All three services (`RecallService`, `ConsultService`, `ExtractionService`) gain an optional `emit: EmitFn | None` parameter. Services call `emit(step_name, summary)` at each pipeline boundary as it completes. Tool wrappers (M5) provide the callback and fan out to two places: an accumulator list (→ `Command.update["reasoning_steps"]` at node return → `AgentState.reasoning_steps` → JSON payload at end of turn) and `runtime.stream_writer` (→ live SSE frame). Services never import `ReasoningStep` — they emit primitive `(step, summary)` string tuples only. The wrapper owns `source`, `tool_name`, `visibility`, and `timestamp`.
+
+#### Add — `src/totoro_ai/core/emit.py`
+
+```python
+from typing import Protocol
+
+class EmitFn(Protocol):
+    def __call__(self, step: str, summary: str, duration_ms: float | None = None) -> None: ...
+```
+
+Protocol instead of `Callable[...]` because the third argument has a default. Services call it as:
+- `emit("consult.discover", "...")` — third arg omitted; wrapper computes duration from timestamp deltas.
+- `emit("consult.discover", "...", duration_ms=elapsed)` — service has measured the operation directly (e.g. wrapped a Google Places call in its own timer).
+
+Either form is valid.
+
+**SSE is deferred until the product repo opts in.** Tool-side `runtime.stream_writer` fan-out is wired from M5 onward (harmless when no caller is streaming — the `if runtime.stream_writer:` guard in the emit closure is a silent no-op). The `POST /v1/chat/stream` HTTP route itself is M7 work, and M7 is deferred until the product repo is ready to consume SSE. Until then, the emit pattern delivers steps to the JSON payload only (via Command → AgentState → end-of-turn `ChatResponse.data.reasoning_steps`). No code in services or wrappers changes when SSE is eventually enabled — just the route gets added.
+
+#### Contract split
+
+| Concern | Owner |
+|---|---|
+| What happened + short summary string | Service (calls `emit(step, summary)`) |
+| `source` / `tool_name` / `visibility` / `timestamp` | Wrapper (builds `ReasoningStep` in the emit closure) |
+| SSE fan-out via `runtime.stream_writer` | Wrapper |
+| Accumulation into `AgentState.reasoning_steps` | Wrapper, via `Command(update=...)` at node return |
+
+#### Flow (recall turn)
+
+```
+Sonnet → tool_call: recall
+  └─ recall_tool wrapper
+       ├─ builds `collected = []` + `emit(step, summary)` closure
+       ├─ calls RecallService.run(..., emit=emit)
+       │     ├─ _emit("recall.mode", "mode=hybrid_search; limit=20...")
+       │     │     └─ wrapper closure: collected.append(rs); stream_writer(rs)  ← live SSE frame
+       │     ├─ [hybrid search runs]
+       │     └─ _emit("recall.result", "2 places matched...")
+       │           └─ wrapper closure: collected.append(rs); stream_writer(rs)  ← live SSE frame
+       ├─ response returned
+       ├─ builds user-visible tool.summary step + same fan-out
+       └─ returns Command(update={"reasoning_steps": prior + collected, ...})
+```
+
+#### Invariants
+
+- **State is updated at node boundaries only** (LangGraph constraint). JSON payload is always a batch at end-of-turn. Each step's `timestamp` preserves execution order.
+- **SSE is the live channel** via `runtime.stream_writer` — fires from inside the emit closure as each service emit lands.
+- **Services don't know about streaming.** They call `emit`. The wrapper's closure decides what happens with each event.
+- **`ReasoningStep` stays at `core/agent/reasoning.py`** (from M3) — never imported by services, so the location is fine.
+- **Step names follow the M5 catalog** — each service has a fixed vocabulary of step names it emits.
 
 ### Change — `src/totoro_ai/core/consult/service.py`
 
@@ -489,10 +549,11 @@ async def consult(
     user_id: str,
     query: str,
     saved_places: list[PlaceObject],
-    filters: ConsultFilters,           # NEW Pydantic model
+    filters: ConsultFilters,            # NEW Pydantic model
     location: Location | None = None,
     preference_context: str | None = None,
     signal_tier: str = "active",
+    emit: EmitFn | None = None,         # NEW — primitive callback
 ) -> ConsultResponse
 ```
 
@@ -503,6 +564,7 @@ Remove:
 - The `IntentParser.parse()` call and all `ParsedIntent` handling
 - `_taste_service.get_taste_profile()` call for context
 - Internal call to `RecallService.run()` — agent supplies `saved_places` instead
+- **`ConsultResponse.reasoning_steps`** — field deleted from the response schema; steps are delivered live via `emit`, not bundled into the response
 
 Keep:
 - Geocoding branch (when `filters.search_location_name` is set, call `places_client.geocode(...)`)
@@ -512,6 +574,46 @@ Keep:
 - Warming-tier candidate-count blend (ADR-061)
 - Active-tier rejected-chip filter + confirmed-chip reasoning (ADR-061) — `_taste_service` call for chips stays; it's cheap and scoped to chip filtering
 - Recommendation persistence (ADR-060)
+
+Emission pattern inside `consult()`:
+
+```python
+_emit = emit or (lambda _s, _m: None)
+
+if filters.search_location_name:
+    geocoded = await self._places_client.geocode(filters.search_location_name, ...)
+    _emit("consult.geocode",
+          f"'{filters.search_location_name}' → lat={geocoded['lat']:.3f}, lng={geocoded['lng']:.3f}")
+
+discovered = await self._places_client.discover(...)
+_emit("consult.discover",
+      f"{len(discovered)} candidates from Google nearby (radius={filters.radius_m}m)")
+
+merged = saved_places + discovered
+_emit("consult.merge",
+      f"{len(saved_places)} saved + {len(discovered)} discovered → {len(merged)} total")
+
+# ... dedupe, enrich, tier_blend, chip_filter — same pattern
+```
+
+### Change — `src/totoro_ai/core/recall/service.py`
+
+Add `emit: EmitFn | None = None` parameter to `RecallService.run(...)`. Emit points:
+- `emit("recall.mode", f"mode={mode}; limit={limit}; sort_by={sort_by}")` right after mode is determined
+- `emit("recall.result", f"{len(results)} places matched; top RRF {...}")` right after the query runs
+
+`RecallResponse` does not gain a new field — emission is purely side-effect via the callback.
+
+### Change — `src/totoro_ai/core/extraction/service.py`
+
+Add `emit: EmitFn | None = None` parameter to `ExtractionService.run(...)`. Emit points at each pipeline boundary:
+- `emit("save.parse_input", f"url={url}; supplementary_text={n} chars")` after input parse
+- `emit("save.enrich", f"{n} candidates from caption + NER ({k} corroborated)")` after Phase 1
+- `emit("save.deep_enrichment", f"Phase 3 fired: {'+'.join(enrichers)}")` only when Phase 3 is triggered — this is the "heartbeat for long runs" signal, no special mechanism needed
+- `emit("save.validate", f"{m} validated via Google Places")` after Phase 2
+- `emit("save.persist", f"status={outcome.status}; below_threshold={bt}")` after persistence
+
+`ExtractPlaceResponse` shape unchanged from M0.5 — no `metadata` field added; no `reasoning_steps` field added.
 
 ### Add — `src/totoro_ai/core/places/filters.py` (shared base)
 
@@ -555,11 +657,16 @@ Existing `RecallFilters` is **flat** today (top-level `cuisine`, `price_hint`, `
 
 No longer needed — `IntentParser` is gone; the agent tools take `PlaceFilters`-shaped input directly from Sonnet's tool call. This helper had no reason to exist post-M4.
 
+### Change — `docs/api-contract.md`
+
+`ConsultResponse` section: drop the `reasoning_steps` row. Add a note that reasoning steps for consult are now agent-level only, surfaced via `ChatResponse.data.reasoning_steps` from M6 onward (or via SSE from M7 onward). No new `metadata` row — primitives are delivered via `emit`, not bundled into the response. `RecallResponse` and `ExtractPlaceResponse` sections unchanged.
+
 ### Tests
 
-- `tests/core/recall/test_service.py` — update fixtures to use nested `attributes`.
+- `tests/core/recall/test_service.py` — update fixtures to use nested `attributes`. Add: pass a spy `emit` callback, assert it receives `("recall.mode", …)` + `("recall.result", …)` in order across each mode branch.
 - `tests/db/repositories/test_recall_repository.py` — WHERE-clause assertions against new JSONB paths.
-- `tests/core/consult/test_service.py` — consult no longer parses intent internally. Pass pre-built `ConsultFilters` + saved_places fixtures. Assert Google discovery + merge + dedup + enrich still work.
+- `tests/core/consult/test_service.py` — consult no longer parses intent internally. Pass pre-built `ConsultFilters` + saved_places fixtures. Assert Google discovery + merge + dedup + enrich still work. Add: spy `emit`, assert expected step-name sequence per branch (geocoded / not, warming / active, chip-filter applied / not). No `response.reasoning_steps` assertions — the field is gone.
+- `tests/core/extraction/test_service.py` — already covered in M1's rewrite; add: spy `emit`, assert expected save.* step sequence per pipeline outcome (`save.deep_enrichment` only when Phase 3 fires).
 - Delete `tests/core/intent/test_intent_parser.py` — moved to M11.
 - Update `tests/api/routes/test_chat.py` consult fixtures.
 
@@ -586,6 +693,81 @@ Wrap `RecallService`, `ExtractionService` (save), `ConsultService` as `@tool`-de
 ### Tool docstring is the contract
 
 Sonnet reads the `@tool` docstring along with the `args_schema` when deciding how to call a tool. Docstrings carry **per-field guidance the LLM must follow** — query-rewriting rules, null-vs-filter-mode semantics, chaining hints. Keep them short, concrete, and example-driven.
+
+### Shared emit infrastructure — `src/totoro_ai/core/agent/tools/_emit.py`
+
+All three tool wrappers share one fan-out pattern: build a `collected` list, build an `emit(step, summary)` closure, pass `emit` into the service, append a `tool.summary` at the end, return a `Command` that extends `AgentState.reasoning_steps`. Factored into two helpers so every wrapper reads the same.
+
+```python
+from datetime import datetime, UTC
+from typing import Literal
+from langgraph.runtime import ToolRuntime
+from totoro_ai.core.reasoning import ReasoningStep
+from totoro_ai.core.emit import EmitFn
+
+ToolName = Literal["recall", "save", "consult"]
+
+def build_emit_closure(
+    runtime: ToolRuntime,
+    tool_name: ToolName,
+) -> tuple[list[ReasoningStep], EmitFn]:
+    """Standard fan-out for tool wrappers.
+
+    Returns (collected, emit):
+      - collected: list accumulating ReasoningStep for Command.update["reasoning_steps"]
+      - emit(step, summary, duration_ms=None): appends debug-visibility step and streams
+        via runtime.stream_writer. If duration_ms is None, wrapper computes it from the
+        delta since the previous emit (or since closure build time for the first emit).
+    """
+    collected: list[ReasoningStep] = []
+    last_ts = datetime.now(UTC)
+
+    def emit(step: str, summary: str, duration_ms: float | None = None) -> None:
+        nonlocal last_ts
+        now = datetime.now(UTC)
+        if duration_ms is None:
+            duration_ms = (now - last_ts).total_seconds() * 1000.0
+        rs = ReasoningStep(
+            step=step, summary=summary,
+            source="tool", tool_name=tool_name, visibility="debug",
+            timestamp=now, duration_ms=duration_ms,
+        )
+        collected.append(rs)
+        if runtime.stream_writer:
+            runtime.stream_writer(rs.model_dump())
+        last_ts = now
+
+    return collected, emit
+
+
+def append_summary(
+    collected: list[ReasoningStep],
+    runtime: ToolRuntime,
+    tool_name: ToolName,
+    summary: str,
+) -> None:
+    """Append the user-visible tool.summary step with identical fan-out.
+
+    duration_ms on tool.summary reflects the total tool-invocation elapsed time —
+    computed from the first emit in `collected` to now.
+    """
+    now = datetime.now(UTC)
+    start = collected[0].timestamp if collected else now
+    rs = ReasoningStep(
+        step="tool.summary",
+        summary=summary,
+        source="tool", tool_name=tool_name, visibility="user",
+        timestamp=now,
+        duration_ms=(now - start).total_seconds() * 1000.0,
+    )
+    collected.append(rs)
+    if runtime.stream_writer:
+        runtime.stream_writer(rs.model_dump())
+```
+
+**Why helpers (not a Protocol):** a Protocol on `EmitFn` adds nothing since it's a one-method interface already expressed as a `Callable`. The actual duplication is the fan-out code (step construction + stream_writer wiring) — that's what gets factored. Single source of truth: add Langfuse spans, metric counters, or change step-field defaults in one place, affects all three tools.
+
+**Catalog enforcement:** `ToolName` Literal means mypy flags `build_emit_closure(runtime, "recal")` at the call site.
 
 ### Add — `src/totoro_ai/core/agent/tools/recall_tool.py`
 
@@ -630,29 +812,19 @@ def build_recall_tool(service):
         into the consult tool automatically (you do not need to pass the places yourself;
         they are stored in agent state and picked up by consult on the next call).
         """
+        collected, emit = build_emit_closure(runtime, "recall")
         state = runtime.state
         response = await service.run(
             query=query, user_id=state["user_id"],
             filters=filters, sort_by=sort_by,
             location=state.get("location"),
+            emit=emit,
         )
         places = [r.place for r in response.results]
-        mode = "filter_only" if query is None else (
-            "text_fallback" if response.fallback_used else "hybrid_search"
-        )
-        steps = [
-            # Debug: granular plumbing.
-            ReasoningStep(step="recall.mode",   summary=f"mode={mode}; limit={limit}; sort_by={sort_by}",
-                          source="tool", tool_name="recall", visibility="debug"),
-            ReasoningStep(step="recall.result", summary=f"{len(places)} places matched",
-                          source="tool", tool_name="recall", visibility="debug"),
-            # User: one human-readable line.
-            ReasoningStep(step="tool.summary",  summary=_recall_summary(query, filters, places),
-                          source="tool", tool_name="recall", visibility="user"),
-        ]
+        append_summary(collected, runtime, "recall", _recall_summary(query, filters, places))
         return Command(update={
             "last_recall_results": places,
-            "reasoning_steps": (state.get("reasoning_steps") or []) + steps,
+            "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
             "messages": [ToolMessage(
                 content=response.model_dump_json(),
                 tool_call_id=runtime.tool_call_id,
@@ -708,7 +880,7 @@ def build_consult_tool(service):
     async def consult_tool(
         query, filters, preference_context,
         runtime: ToolRuntime,
-    ) -> dict:
+    ) -> Command:
         """Recommend a place. Merges the user's saved places (from the previous recall call,
         available automatically via agent state) with externally discovered candidates,
         deduplicates, and returns ranked results.
@@ -716,42 +888,65 @@ def build_consult_tool(service):
         Call recall FIRST in the same turn. If the user has no saved matches, call recall
         anyway — consult will work with the empty list and return discoveries only.
         """
+        collected, emit = build_emit_closure(runtime, "consult")
         state = runtime.state
-        saved_places = state.get("last_recall_results") or []
         response = await service.consult(
-            user_id=state["user_id"],
-            query=query,
-            saved_places=saved_places,
-            filters=filters,
-            location=state.get("location"),
-            preference_context=preference_context,
+            user_id=state["user_id"], query=query,
+            saved_places=state.get("last_recall_results") or [],
+            filters=filters, location=state.get("location"),
+            preference_context=preference_context, emit=emit,
         )
-        return response.model_dump()
+        append_summary(collected, runtime, "consult", _consult_summary(response))
+        return Command(update={
+            "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
+            "messages": [ToolMessage(
+                content=response.model_dump_json(),
+                tool_call_id=runtime.tool_call_id,
+            )],
+        })
     return consult_tool
 ```
 
 ### Add — `src/totoro_ai/core/agent/tools/save_tool.py`
 
-Trivial — `raw_input: str` is the only field. Docstring: "Call when the user shares a URL (TikTok, Instagram, YouTube) or names a specific place they want to save. Pass the raw URL or text — do not reformat."
+`raw_input: str` is the only LLM-visible field. Docstring: "Call when the user shares a URL (TikTok, Instagram, YouTube) or names a specific place they want to save. Pass the raw URL or text — do not reformat."
 
-Save tool emits all pipeline observations (`save.parse_input`, `save.enrich`, `save.validate`, `save.persist`) as `visibility="debug"`, plus one `tool.summary` step (`visibility="user"`) built from the outcome:
+Wrapper uses the same emit-closure pattern as recall/consult. `ExtractionService` emits `save.parse_input`, `save.enrich`, (optional `save.deep_enrichment`), `save.validate`, `save.persist` via the `emit` callback. The wrapper adds one user-visible `tool.summary` step built from the final outcome:
 
 ```python
-def _save_summary(outcome) -> str:
-    name = outcome.place.place_name if outcome.place else "that"
+def build_save_tool(service):
+    @tool("save", args_schema=SaveToolInput)
+    async def save_tool(raw_input, runtime: ToolRuntime) -> Command:
+        """Call when the user shares a URL (TikTok, Instagram, YouTube) or names a
+        specific place they want to save. Pass the raw URL or text — do not reformat.
+        """
+        collected, emit = build_emit_closure(runtime, "save")
+        state = runtime.state
+        response = await service.run(raw_input, state["user_id"], emit=emit)
+        append_summary(collected, runtime, "save", _save_summary(response))
+        return Command(update={
+            "reasoning_steps": (state.get("reasoning_steps") or []) + collected,
+            "messages": [ToolMessage(
+                content=response.model_dump_json(),
+                tool_call_id=runtime.tool_call_id,
+            )],
+        })
+    return save_tool
+
+def _save_summary(response) -> str:
+    # response.results is empty for pending/failed; single item for saved/duplicate/needs_review
+    if response.status == "failed":
+        return "Couldn't extract a place from that"
+    if response.status == "pending":
+        return "Extraction in progress — I'll update you shortly"
+    item = response.results[0]
+    name = item.place.place_name
     return {
         "saved":        f"Saved {name} to your places",
         "duplicate":    f"You already had {name} saved",
         "needs_review": f"Saved {name} — confidence is low, can you confirm?",
-        "failed":       "Couldn't extract a place from that",
-    }[outcome.status]
-```
+    }[item.status]
 
-### Consult tool wrapper
-
-Forwards `ConsultService.consult()`'s existing `ConsultResponse.reasoning_steps` (geocode, discover, merge, dedupe, enrich, tier_blend, chip_filter) upgraded with `source="tool"`, `tool_name="consult"`, `visibility="debug"`. Appends one `tool.summary` step (`visibility="user"`) built from the final result:
-
-```python
 def _consult_summary(response) -> str:
     saved = sum(1 for r in response.results if r.source == "saved")
     discovered = sum(1 for r in response.results if r.source == "discovered")
@@ -764,6 +959,8 @@ def _consult_summary(response) -> str:
         return f"Ranked {saved} from your saves"
     return f"Ranked {total} options ({saved} saved + {discovered} nearby)"
 ```
+
+All three wrappers share the same shape: `collected` list + `emit` closure with tool-specific `source`/`tool_name`/`visibility="debug"`, service call with `emit=emit`, wrapper-authored `tool.summary` (`visibility="user"`), same fan-out to `runtime.stream_writer`. The service owns step names and summary strings; the wrapper owns the agent-layer fields and the streaming channel.
 
 ### Agent-node reasoning emission
 
@@ -1059,34 +1256,26 @@ Add `get_agent_graph` dependency — builds the graph once at startup (cached in
 
 ---
 
-## M7 — SSE reasoning-step streaming
+## M7 — SSE endpoint wiring
 
-ADR-062 requirement 4: stream-writer events emitted from inside tool functions for SSE.
-
-### Change — `src/totoro_ai/core/agent/tools/*`
-
-Inside each tool wrapper, emit via `runtime.stream_writer` (tool-side) at key points:
-```python
-if runtime.stream_writer:
-    runtime.stream_writer({"step": "recall.hybrid_search", "summary": f"searching for '{query}'"})
-```
-
-Inside the agent node, emit via the node-side `get_stream_writer()` helper from `langgraph.config` (see M5 agent_node example — tool-side and node-side APIs differ by design).
+Tool-side emission was already wired in M5 — each wrapper's `emit` closure fans out to `runtime.stream_writer` when set. Agent-node emission uses `get_stream_writer()` from `langgraph.config` (M5 agent_node example). M7 is therefore just the **HTTP route** that opens the stream.
 
 ### Change — `src/totoro_ai/api/routes/chat.py`
 
-Add a separate `POST /v1/chat/stream` route (or query param `?stream=true` on existing route) that uses `StreamingResponse` + `graph.astream_events(...)` to emit SSE frames. The non-streaming `POST /v1/chat` stays intact.
+Add a `POST /v1/chat/stream` route (or query param `?stream=true` on the existing route) that uses FastAPI's `StreamingResponse` + `graph.astream_events(...)` to forward LangGraph stream events as SSE frames. The non-streaming `POST /v1/chat` stays intact.
 
-**Open question:** product repo's existing clients don't consume SSE today. Defer the SSE route to after M10 unless the product repo needs it sooner — flag this back to user at M6 cutover time. For this plan, **ship the `runtime.stream_writer` calls inside tools now** (cheap, harmless when the caller isn't streaming), and **defer the SSE endpoint** until requested.
+Frame format: one SSE `event: reasoning_step` per `runtime.stream_writer` call, payload is the `ReasoningStep.model_dump()` JSON. Final `event: message` carries the agent's final `AIMessage` content (token-streamed via LangGraph's native message streaming).
+
+**Deferred by default.** Product-repo clients don't consume SSE today. Ship the route only when the product repo is ready. Tool-side and agent-node emission calls are already live (harmless when no caller is streaming), so no code change is needed in services or wrappers at the M7 moment — just the route.
 
 ### Tests
 
-- `tests/core/agent/tools/test_streaming.py` — writer attachment and event emission verified with a fake writer.
+- `tests/api/routes/test_chat_stream.py` — connect an SSE client, assert frames arrive in execution order, assert `reasoning_step` frame payload shape matches `ReasoningStep.model_dump()`.
 
 ### Acceptance
 
-- Tool functions emit writer events when a writer is attached, silently no-op otherwise.
-- No new route surface (deferred).
+- SSE route produces per-step frames across a multi-tool turn.
+- Non-streaming `POST /v1/chat` behavior unchanged.
 
 ---
 
@@ -1176,19 +1365,7 @@ async def with_timeout(
 
 Each tool wrapper (M5) wraps its body with `return await with_timeout("recall", runtime, _do_recall(...))`. The tool still returns a `Command`, the agent still composes a response — it just sees a degraded `ToolMessage` indicating timeout. After one timeout the agent can retry; after `max_errors` it falls back.
 
-### Add — streaming heartbeat inside tools (M7 hook)
-
-When a tool is about to do long-running work (deep enrichment, Google Places discovery, etc.), it emits periodic `runtime.stream_writer` events so the client sees activity:
-
-```python
-# inside save_tool's deep-enrichment branch
-if runtime.stream_writer:
-    runtime.stream_writer({"step": "save.progress",
-                           "summary": "still working on the audio transcript...",
-                           "visibility": "debug"})
-```
-
-Doesn't reduce latency but keeps the UI honest during long tool calls. Only useful once M7's SSE endpoint is wired.
+**Heartbeat is no longer a separate mechanism** — the M4 emit pattern already delivers per-step events live via `runtime.stream_writer`. For known-slow paths (e.g. save Phase 3), the service's `emit("save.deep_enrichment", …)` call IS the heartbeat. No separate "progress ping" abstraction needed.
 
 ### Change — `src/totoro_ai/core/agent/graph.py` — fallback_node
 
@@ -1200,6 +1377,7 @@ Returns a user-facing message + sets `ChatResponse.type="error"` via downstream 
 - `tests/core/agent/test_max_steps.py` — force a tool-calling loop, assert max_steps caps execution.
 - `tests/core/agent/test_tool_timeout.py` — stub each tool's service layer to `await asyncio.sleep(timeout + 1)`, assert the wrapper returns a timeout Command with the expected degraded `tool.summary` and increments `error_count`.
 - `tests/core/agent/test_tool_timeout_to_fallback.py` — chain three synthetic timeouts on the same turn, assert fallback fires and the user-visible trace contains three timeout `tool.summary` entries + one `fallback` entry.
+- `tests/core/agent/test_one_tool_call_per_response.py` — run the canary prompt through the agent graph over a representative set of user messages (recall-only, recall→consult, save, save+recall, direct response); for each `AIMessage` produced by `agent_node`, assert `len(ai_msg.tool_calls) <= 1`. Guards the parallel-tool-call caveat — if a future prompt revision lets Sonnet emit multiple tool_calls in one response, this test fails before `reasoning_steps` drops land in prod.
 
 ### Acceptance
 
@@ -1254,6 +1432,7 @@ Remove role blocks:
 - `models.intent_router`
 - `models.intent_parser`
 - `models.chat_assistant`
+- `models.evaluator` — reserved-but-unused since repo inception (no `get_llm("evaluator")` call in `src/` or `tests/`, no `src/totoro_ai/eval/` module exists). Pruning alongside the agent-cutover cleanup. If an eval harness lands later it can re-add the role in the same PR that introduces its first `get_llm` call.
 
 ### Change — `src/totoro_ai/api/deps.py`
 
@@ -1269,7 +1448,7 @@ async def run(self, request: ChatRequest) -> ChatResponse:
 
 Or inline into a route handler if the facade stops justifying a class. Caller's choice — keep the class if it still owns response mapping and error handling.
 
-### Add ADR-064 — `docs/decisions.md`
+### Add ADR-065 — `docs/decisions.md`
 
 Record the cutover and what was deleted. One short entry noting the design doc reference, the three deleted model roles, the Postgres checkpointer backend choice, and the fact that ADR-062 is now implemented.
 
@@ -1277,16 +1456,16 @@ Record the cutover and what was deleted. One short entry noting the design doc r
 
 - Delete Intent Classification section (lines ~232–261).
 - Replace "Data Flow: Consult / Recall / Assistant" sections with a single "Data Flow: Agent Turn" section mirroring the design doc's agent flow diagram.
-- Update Model Assignments table: remove `intent_router`, `intent_parser`, `chat_assistant` rows.
+- Update Model Assignments table: remove `intent_router`, `intent_parser`, `chat_assistant`, `evaluator` rows.
 
 ### Update — `docs/api-contract.md`
 
-External contract unchanged. Add a note that `ChatResponse.type="agent"` may appear (or merge into `assistant` for the product repo's purposes — call this at cutover time).
+External contract's shape is unchanged; the `ChatResponse.type` Literal changes. Document in `api-contract.md` that post-cutover the set is **`"agent" | "extract-place" | "consult" | "recall" | "clarification" | "error"`** — `"assistant"` is deleted because `ChatAssistantService` is deleted in M11. **Do not rename `"agent"` to `"assistant"` at cutover** — the old name is going away entirely; renaming would re-introduce the dead word. Product repo drops its `"assistant"` branch and adds an `"agent"` branch in lockstep with the M10 flag flip.
 
 ### Update — `CLAUDE.md` Recent Changes
 
 ```markdown
-- 024-agent-tool-migration: LangGraph agent (Claude Sonnet) replaces intent-router dispatch (ADR-062, ADR-064). Three tools — recall, save, consult. ConsultService signature changed to take agent-parsed args. ExtractPlaceResponse schema upgraded to two-level status (ADR-063). Deleted: IntentParser, classify_intent, ChatAssistantService, and the intent_router/intent_parser/chat_assistant model roles. `GET /v1/extraction/{request_id}` polling route retained for background extractions.
+- 024-agent-tool-migration: LangGraph agent (Claude Sonnet) replaces intent-router dispatch (ADR-062, ADR-065). Three tools — recall, save, consult. ConsultService signature changed to take agent-parsed args. ExtractPlaceResponse schema upgraded to two-level status (ADR-063). Reasoning traces via service-emit / wrapper-wrap pattern (ADR-064). Deleted: IntentParser, classify_intent, ChatAssistantService, and the intent_router / intent_parser / chat_assistant / evaluator model roles (evaluator was reserved but never wired). `GET /v1/extraction/{request_id}` polling route retained for background extractions.
 ```
 
 ### Update — `src/totoro_ai/core/consult/service.py` docstring

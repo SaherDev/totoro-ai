@@ -28,6 +28,7 @@ from typing import Literal
 
 from totoro_ai.api.schemas.recall import RecallResponse, RecallResult
 from totoro_ai.core.config import RecallConfig
+from totoro_ai.core.emit import EmitFn
 from totoro_ai.core.places import PlacesService
 from totoro_ai.core.places.models import PlaceObject
 from totoro_ai.core.recall.types import RecallFilters
@@ -67,7 +68,11 @@ class RecallService:
         filters: RecallFilters | None = None,
         sort_by: Literal["relevance", "created_at"] = "relevance",
         location: tuple[float, float] | None = None,
+        limit: int | None = None,
+        emit: EmitFn | None = None,
     ) -> RecallResponse:
+        _emit: EmitFn = emit or (lambda _s, _m, _d=None: None)
+
         # Cold-start: zero saved places → empty state before any work.
         saved_count = await self._repo.count_saved_places(user_id)
         if saved_count == 0:
@@ -81,6 +86,13 @@ class RecallService:
         # RRF floor with nothing to contribute (ADR-057 follow-up).
         if query is not None and not query.strip():
             query = None
+
+        mode = "filter" if query is None else "hybrid"
+        effective_limit = limit if limit is not None else self._config.max_results
+        _emit(
+            "recall.mode",
+            f"mode={mode}; limit={effective_limit}; sort_by={sort_by}",
+        )
 
         query_vector: list[float] | None = None
         if query is not None:
@@ -99,13 +111,15 @@ class RecallService:
             query_vector=query_vector,
             filters=filters,
             sort_by=sort_by,
-            limit=self._config.max_results,
+            limit=effective_limit,
             rrf_k=self._config.rrf_k,
             candidate_multiplier=self._config.candidate_multiplier,
             min_rrf_score=self._config.min_rrf_score,
             max_cosine_distance=self._config.max_cosine_distance,
             location=location,
         )
+
+        _emit("recall.result", f"{len(raw_results)} places matched")
 
         places = [r.place for r in raw_results]
         enriched_places = (

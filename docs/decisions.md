@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-064: Reasoning traces via service-emit / wrapper-wrap pattern
+
+**Date:** 2026-04-21\
+**Status:** accepted\
+**Context:** Every agent turn needs a structured trace of what happened and why, serving three audiences: the end user (trust), the dev team (evals, Langfuse), and the live chat UI (progressive feed). The pre-agent `ConsultResponse.reasoning_steps` was untyped (just `step`+`summary`), lived inside the service, and had no live-streaming path. Moving to the agent design requires deciding who emits, what the step schema is, how events reach two channels (SSE live + JSON batch), and how the pattern stays uniform across three tools without copy-paste.\
+**Decision:** Services take an `emit: EmitFn | None` callback (Protocol: `(step, summary, duration_ms=None) -> None`) and call it at each pipeline boundary with primitive strings + optional timing. Services never import `ReasoningStep` or know about `source` / `tool_name` / `visibility`. Tool wrappers own the agent-layer concerns via two helpers in `core/agent/tools/_emit.py` (`build_emit_closure` + `append_summary`) that wrap each emit into a `ReasoningStep(source="tool", tool_name=<given>, visibility="debug")`, fan out live to `runtime.stream_writer`, and accumulate for `Command(update={"reasoning_steps": ...})`. `ReasoningStep` (at `core/reasoning.py`) is the single shared model — typed `source` (tool/agent/fallback), `visibility` (user/debug), `tool_name`, `timestamp`, `duration_ms`. User-visible catalog is three step types only: `agent.tool_decision` (Sonnet's own text, truncated 200 chars), `tool.summary` (wrapper-authored), `fallback`. `ConsultResponse.reasoning_steps` is deleted (not migrated). No reducer on `AgentState.reasoning_steps` — plain overwrite enables simple per-turn reset. One-tool-call-per-response is a prompt-level invariant with a guarding test.\
+**Consequences:** Services stay business-logic only; reasoning narration is centralized in `_emit.py` and per-tool summary helpers — a one-file edit affects all tools. Adding a fourth tool is ~15 wrapper lines. SSE endpoint is deferred until product-repo opt-in, but tool-side `runtime.stream_writer` calls are wired as silent no-ops from M5, so eventual enablement is additive (one route, no service changes). If parallel tool calls are ever intentionally enabled, `reasoning_steps` needs a list-merge reducer and a dedicated `session_init` node for reset.
+
+---
+
 ## ADR-063: Two-level ExtractPlaceResponse status + raw_input rename
 
 **Date:** 2026-04-21\

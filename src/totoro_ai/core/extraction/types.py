@@ -91,5 +91,3 @@ class ValidatedCandidate:
     match_lat: float | None = None
     match_lng: float | None = None
     match_address: str | None = None
-
-

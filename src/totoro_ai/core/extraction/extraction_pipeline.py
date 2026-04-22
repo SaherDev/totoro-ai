@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from totoro_ai.core.config import ExtractionConfig
+from totoro_ai.core.emit import EmitFn
 from totoro_ai.core.extraction.dedup import (
     dedup_candidates,
     dedup_validated_by_provider_id,
@@ -43,7 +44,10 @@ class ExtractionPipeline:
         url: str | None,
         user_id: str,
         supplementary_text: str = "",
+        emit: EmitFn | None = None,
     ) -> list[ValidatedCandidate]:
+        _emit: EmitFn = emit or (lambda _s, _m, _d=None: None)
+
         context = ExtractionContext(
             url=url,
             user_id=user_id,
@@ -52,10 +56,18 @@ class ExtractionPipeline:
 
         # Phase 1: inline enrichment + dedup
         await self._enrichment.run(context)
+        _emit(
+            "save.enrich",
+            f"{len(context.candidates)} candidates from caption + NER",
+        )
 
         # Phase 2: validate candidates, then dedup by provider_id
         results = await self._validator.validate(context.candidates)
         if results:
+            _emit(
+                "save.validate",
+                f"{len(results)} validated via Google Places",
+            )
             return dedup_validated_by_provider_id(
                 results, self._extraction_config.confidence
             )
@@ -63,14 +75,23 @@ class ExtractionPipeline:
         # Phase 3 only fires for URL inputs — background enrichers (subtitle,
         # whisper, vision) all require a video/page URL to process.
         if url is None:
+            _emit("save.validate", "0 validated via Google Places")
             return []
 
         # Phase 3: run background enrichers inline, re-validate
+        enrichers_fired: list[str] = []
         for enricher in self._background_enrichers:
             await enricher.enrich(context)
+            enrichers_fired.append(type(enricher).__name__)
         dedup_candidates(context)
+        _emit(
+            "save.deep_enrichment",
+            f"Phase 3 fired: {'+'.join(enrichers_fired) or 'none'}",
+        )
 
         results = await self._validator.validate(context.candidates)
+        validated_count = len(results) if results else 0
+        _emit("save.validate", f"{validated_count} validated via Google Places")
         if results:
             return dedup_validated_by_provider_id(
                 results, self._extraction_config.confidence

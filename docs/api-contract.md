@@ -126,11 +126,13 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 }
 ```
 
-| Field     | Type             | Notes                                                                               |
-| --------- | ---------------- | ----------------------------------------------------------------------------------- |
-| `type`    | `string`         | One of: `extract-place`, `consult`, `recall`, `assistant`, `clarification`, `error` |
-| `message` | `string`         | Human-readable response text                                                        |
-| `data`    | `object \| null` | Structured payload from downstream service; null for clarification/assistant/error  |
+| Field     | Type             | Notes                                                                                        |
+| --------- | ---------------- | -------------------------------------------------------------------------------------------- |
+| `type`    | `string`         | One of: `extract-place`, `consult`, `recall`, `assistant`, `clarification`, `error`, `agent` |
+| `message` | `string`         | Human-readable response text                                                                 |
+| `data`    | `object \| null` | Structured payload from downstream service; null for clarification/assistant/error           |
+
+> The `"agent"` value (feature 028 M6) only appears when `config.agent.enabled=true`. The flag defaults to off — existing consumers see no change on this feature's deploy; product-repo coordination is deferred until the flag flips (M10). On the agent path, `data` carries `{"reasoning_steps": [<ReasoningStep.model_dump>, ...]}`; only user-visible steps (`agent.tool_decision`, `tool.summary`, `fallback`) survive serialization. Each step includes `duration_ms` for perf observability.
 
 **Response Types by Intent:**
 

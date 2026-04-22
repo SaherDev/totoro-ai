@@ -1,4 +1,4 @@
-"""Unit tests for ConsultService tier-aware behavior (feature 023)."""
+"""Unit tests for ConsultService (feature 028 M4 shape)."""
 
 from __future__ import annotations
 
@@ -8,13 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from totoro_ai.api.schemas.consult import Location
-from totoro_ai.api.schemas.recall import RecallResponse, RecallResult
 from totoro_ai.core.consult.service import ConsultService
-from totoro_ai.core.intent.intent_parser import (
-    ParsedIntent,
-    ParsedIntentPlace,
-    ParsedIntentSearch,
-)
+from totoro_ai.core.consult.types import NoMatchesError
+from totoro_ai.core.places.filters import ConsultFilters
 from totoro_ai.core.places.models import (
     LocationContext,
     PlaceAttributes,
@@ -41,48 +37,12 @@ def _place(place_id: str, provider_id: str | None = None) -> PlaceObject:
     )
 
 
-def _recall_result(place: PlaceObject) -> RecallResult:
-    return RecallResult(place=place, match_reason="filter")
-
-
-def _parsed_intent(lat: float = 13.75, lng: float = 100.5) -> ParsedIntent:
-    return ParsedIntent(
-        place=ParsedIntentPlace(
-            place_type=PlaceType.food_and_drink,
-            subcategory=None,
-            tags=[],
-            attributes=PlaceAttributes(),
-        ),
-        search=ParsedIntentSearch(
-            radius_m=1500,
-            search_location_name=None,
-            search_location={"lat": lat, "lng": lng},
-            enriched_query="Thai food",
-            discovery_filters={},
-        ),
-    )
-
-
 def _build_service(
     *,
-    signal_count: int = 3,
     chips: list[Chip] | None = None,
-    saved_places: list[PlaceObject] | None = None,
     discovered_places: list[PlaceObject] | None = None,
 ) -> tuple[ConsultService, dict[str, Any]]:
-    saved_places = saved_places or []
     discovered_places = discovered_places or []
-
-    intent_parser = AsyncMock()
-    intent_parser.parse = AsyncMock(return_value=_parsed_intent())
-
-    recall_service = AsyncMock()
-    recall_service.run = AsyncMock(
-        return_value=RecallResponse(
-            results=[_recall_result(p) for p in saved_places],
-            total_count=len(saved_places),
-        )
-    )
 
     places_client = AsyncMock()
     places_client.discover = AsyncMock(
@@ -98,7 +58,6 @@ def _build_service(
             for p in discovered_places
         ]
     )
-    places_client.validate = AsyncMock(return_value=True)
     places_client.geocode = AsyncMock(return_value=None)
 
     places_service = AsyncMock()
@@ -106,15 +65,12 @@ def _build_service(
         side_effect=lambda places, **_: list(places)
     )
 
-    memory_service = AsyncMock()
-    memory_service.load_memories = AsyncMock(return_value=[])
-
     taste_service = AsyncMock()
     profile = TasteProfile(
         taste_profile_summary=[],
-        signal_counts={"totals": {"saves": signal_count}},
+        signal_counts={"totals": {"saves": 3}},
         chips=chips or [],
-        generated_from_log_count=signal_count,
+        generated_from_log_count=3,
     )
     taste_service.get_taste_profile = AsyncMock(return_value=profile)
 
@@ -122,27 +78,19 @@ def _build_service(
     recommendation_repo.save = AsyncMock(return_value="rec_id_stub")
 
     service = ConsultService(
-        intent_parser=intent_parser,
-        recall_service=recall_service,
         places_client=places_client,
         places_service=places_service,
-        memory_service=memory_service,
         taste_service=taste_service,
         recommendation_repo=recommendation_repo,
     )
     return service, {
         "places_client": places_client,
-        "recall_service": recall_service,
         "taste_service": taste_service,
     }
 
 
 def _map_google_to_place_object(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub map_google_place_to_place_object to return the raw dict-wrapped object.
-
-    The real mapper calls Google Places API mapping. For these tests we pre-build
-    PlaceObjects and use a 1:1 stub.
-    """
+    """Stub map_google_place_to_place_object to return a simple PlaceObject."""
     from totoro_ai.core.consult import service as svc_module
 
     def _stub(raw: dict[str, Any]) -> PlaceObject:
@@ -166,6 +114,90 @@ def _map_google_to_place_object(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(svc_module, "map_google_place_to_place_object", _stub)
 
 
+# ---------------------------------------------------------------------------
+# Emit-callback contract (FR-035(h))
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_emit_callback_fires_pipeline_steps_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _map_google_to_place_object(monkeypatch)
+
+    service, _ = _build_service(discovered_places=[_place("disc_1")])
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    await service.consult(
+        user_id="u1",
+        query="Thai food",
+        saved_places=[_place("saved_1")],
+        filters=ConsultFilters(),
+        location=Location(lat=13.75, lng=100.5),
+        emit=spy,
+    )
+
+    steps = [s for s, _ in emitted]
+    # No geocode (no search_location_name), then discover → merge → dedupe → enrich.
+    assert "consult.discover" in steps
+    assert steps.index("consult.merge") < steps.index("consult.dedupe")
+    assert steps.index("consult.dedupe") < steps.index("consult.enrich")
+    assert "consult.geocode" not in steps
+
+
+@pytest.mark.asyncio
+async def test_emit_geocode_fires_when_search_location_name_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _map_google_to_place_object(monkeypatch)
+
+    service, deps = _build_service(discovered_places=[_place("disc_1")])
+    deps["places_client"].geocode = AsyncMock(return_value={"lat": 1.0, "lng": 2.0})
+
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    await service.consult(
+        user_id="u1",
+        query="Thai food",
+        saved_places=[],
+        filters=ConsultFilters(search_location_name="Shibuya"),
+        location=None,
+        emit=spy,
+    )
+
+    steps = [s for s, _ in emitted]
+    assert steps[0] == "consult.geocode"
+
+
+@pytest.mark.asyncio
+async def test_no_matches_raises_when_everything_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _map_google_to_place_object(monkeypatch)
+
+    service, _ = _build_service(discovered_places=[])
+
+    with pytest.raises(NoMatchesError):
+        await service.consult(
+            user_id="u1",
+            query="Thai food",
+            saved_places=[],
+            filters=ConsultFilters(),
+            location=Location(lat=13.75, lng=100.5),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tier-specific branches (ADR-061)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_warming_tier_applies_candidate_blend(
     monkeypatch: pytest.MonkeyPatch,
@@ -175,30 +207,32 @@ async def test_warming_tier_applies_candidate_blend(
     saved_places = [_place(f"saved_{i}") for i in range(3)]
     discovered_places = [_place(f"disc_{i}") for i in range(5)]
 
-    service, _ = _build_service(
-        signal_count=3,  # below round_1=5 -> warming
-        saved_places=saved_places,
-        discovered_places=discovered_places,
-    )
+    service, _ = _build_service(discovered_places=discovered_places)
+
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
 
     response = await service.consult(
         user_id="warm_user",
         query="Thai food",
+        saved_places=saved_places,
+        filters=ConsultFilters(),
         location=Location(lat=13.75, lng=100.5),
         signal_tier="warming",
+        emit=spy,
     )
 
-    # total_cap=3, warming_blend 0.8/0.2 → saved_cap=1, discovered_cap=2.
     saved_in_results = [r for r in response.results if r.source == "saved"]
     discovered_in_results = [r for r in response.results if r.source == "discovered"]
     assert len(saved_in_results) == 1
     assert len(discovered_in_results) == 2
 
-    blend_step = next(
-        (s for s in response.reasoning_steps if s.step == "warming_blend"), None
-    )
-    assert blend_step is not None
-    assert blend_step.summary == "discovered=2, saved=1"
+    tier_blend_summaries = [s for step, s in emitted if step == "consult.tier_blend"]
+    assert len(tier_blend_summaries) == 1
+    assert "discovered=2" in tier_blend_summaries[0]
+    assert "saved=1" in tier_blend_summaries[0]
 
 
 @pytest.mark.asyncio
@@ -207,8 +241,6 @@ async def test_active_tier_excludes_rejected_chip_candidates(
 ) -> None:
     _map_google_to_place_object(monkeypatch)
 
-    # Two discovered candidates; one has subcategory=restaurant (should be dropped
-    # by a rejected chip matching that subcategory) and one is a cafe.
     restaurant = PlaceObject(
         place_id="rest_1",
         provider_id="google:rest_1",
@@ -248,33 +280,36 @@ async def test_active_tier_excludes_rejected_chip_candidates(
     )
 
     service, _ = _build_service(
-        signal_count=20,
         chips=[rejected_chip],
-        saved_places=[],
         discovered_places=[restaurant, cafe],
     )
+
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
 
     response = await service.consult(
         user_id="active_user",
         query="food",
+        saved_places=[],
+        filters=ConsultFilters(),
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
+        emit=spy,
     )
 
     place_ids = [r.place.place_id for r in response.results]
     assert "rest_1" not in place_ids
     assert "cafe_1" in place_ids
 
-    filter_step = next(
-        (s for s in response.reasoning_steps if s.step == "active_rejected_filter"),
-        None,
-    )
-    assert filter_step is not None
-    assert "1/" in filter_step.summary
+    chip_filter_summaries = [s for step, s in emitted if step == "consult.chip_filter"]
+    # One filter emit (rejected) — no confirmed chips here.
+    assert any("filtered 1/" in s for s in chip_filter_summaries)
 
 
 @pytest.mark.asyncio
-async def test_active_tier_surfaces_confirmed_chips_in_reasoning_steps(
+async def test_active_tier_surfaces_confirmed_chips(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _map_google_to_place_object(monkeypatch)
@@ -289,59 +324,76 @@ async def test_active_tier_surfaces_confirmed_chips_in_reasoning_steps(
     )
 
     service, _ = _build_service(
-        signal_count=20,
         chips=[confirmed_chip],
-        saved_places=[_place("saved_1")],
         discovered_places=[_place("disc_1")],
     )
 
-    response = await service.consult(
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    await service.consult(
         user_id="active_user",
         query="Ramen nearby",
+        saved_places=[_place("saved_1")],
+        filters=ConsultFilters(),
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
+        emit=spy,
     )
 
-    step = next(
-        (s for s in response.reasoning_steps if s.step == "active_confirmed_signals"),
-        None,
-    )
-    assert step is not None
-    assert "Ramen lover" in step.summary
+    chip_filter_summaries = [s for step, s in emitted if step == "consult.chip_filter"]
+    assert any("confirmed: Ramen lover" in s for s in chip_filter_summaries)
 
 
 @pytest.mark.asyncio
-async def test_active_tier_does_not_add_warming_blend_step(
+async def test_non_warming_tier_skips_blend_emit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _map_google_to_place_object(monkeypatch)
 
-    saved_places = [_place(f"saved_{i}") for i in range(2)]
-    discovered_places = [_place(f"disc_{i}") for i in range(2)]
-
-    chips = [
-        Chip(
-            label="Ramen",
-            source_field="attributes.cuisine",
-            source_value="ramen",
-            signal_count=5,
-            status=ChipStatus.CONFIRMED,
-            selection_round="round_1",
-        )
-    ]
-
     service, _ = _build_service(
-        signal_count=20,  # above round_1 and round_2, no actionable pending -> active
-        chips=chips,
-        saved_places=saved_places,
-        discovered_places=discovered_places,
+        discovered_places=[_place("disc_1"), _place("disc_2")],
     )
 
-    response = await service.consult(
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    await service.consult(
         user_id="active_user",
         query="Ramen nearby",
+        saved_places=[_place("saved_1"), _place("saved_2")],
+        filters=ConsultFilters(),
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
+        emit=spy,
     )
 
-    assert all(s.step != "warming_blend" for s in response.reasoning_steps)
+    assert not any(step == "consult.tier_blend" for step, _ in emitted)
+
+
+# ---------------------------------------------------------------------------
+# ConsultResponse no longer carries reasoning_steps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_response_has_no_reasoning_steps_attribute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _map_google_to_place_object(monkeypatch)
+
+    service, _ = _build_service(discovered_places=[_place("disc_1")])
+
+    response = await service.consult(
+        user_id="u1",
+        query="Thai food",
+        saved_places=[],
+        filters=ConsultFilters(),
+        location=Location(lat=13.75, lng=100.5),
+    )
+
+    assert not hasattr(response, "reasoning_steps")

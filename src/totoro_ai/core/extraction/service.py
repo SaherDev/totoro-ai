@@ -8,6 +8,7 @@ from totoro_ai.api.schemas.extract_place import (
     ExtractPlaceItem,
     ExtractPlaceResponse,
 )
+from totoro_ai.core.emit import EmitFn
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.input_parser import parse_input
 from totoro_ai.core.extraction.persistence import (
@@ -80,6 +81,7 @@ class ExtractionService:
         raw_input: str,
         user_id: str,
         request_id: str | None = None,
+        emit: EmitFn | None = None,
     ) -> ExtractPlaceResponse:
         """Run the extraction pipeline inline and return a terminal envelope.
 
@@ -91,19 +93,32 @@ class ExtractionService:
         optional `request_id` argument lets the caller inject an id
         generated at the route layer so both the envelope and the Redis
         write share one id; when omitted, one is generated here.
+
+        When `emit` is supplied, this service emits `save.parse_input`
+        after input parsing and `save.persist` after persistence; the
+        pipeline emits `save.enrich` / `save.deep_enrichment` /
+        `save.validate` at its own phase boundaries.
         """
+        _emit: EmitFn = emit or (lambda _s, _m, _d=None: None)
+
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
 
         parsed = parse_input(raw_input)
         source = _source_from_url(parsed.url)
         rid = request_id or uuid4().hex
+        _emit(
+            "save.parse_input",
+            f"url={parsed.url or '(none)'}; "
+            f"supplementary_text={len(parsed.supplementary_text)} chars",
+        )
 
         try:
             result = await self._pipeline.run(
                 url=parsed.url,
                 user_id=user_id,
                 supplementary_text=parsed.supplementary_text,
+                emit=emit,
             )
             if not result:
                 response = ExtractPlaceResponse(
@@ -136,5 +151,9 @@ class ExtractionService:
                 request_id=rid,
             )
 
+        _emit(
+            "save.persist",
+            f"status={response.status}; results={len(response.results)}",
+        )
         await self._status_repo.write(rid, response.model_dump(mode="json"))
         return response

@@ -7,7 +7,6 @@ from totoro_ai.api.schemas.consult import (
     ConsultResponse,
     ConsultResult,
     Location,
-    ReasoningStep,
 )
 from totoro_ai.api.schemas.extract_place import (
     ExtractPlaceItem,
@@ -37,19 +36,33 @@ def _make_service(
     intent_parser: AsyncMock | None = None,
     event_dispatcher: AsyncMock | None = None,
     memory_service: AsyncMock | None = None,
+    taste_service: AsyncMock | None = None,
+    agent_enabled: bool = False,
+    agent_graph: AsyncMock | None = None,
 ) -> ChatService:
     """Helper to build a ChatService with all deps mocked.
 
     The intent_parser mock defaults to returning an empty ParsedIntent
     (place_type=None, enriched_query=None) so non-recall tests don't have
     to set up the parse() return value explicitly.
+
+    Feature 028 M6: flag-off by default; set `agent_enabled=True` and pass
+    an `agent_graph` mock to exercise the agent path.
     """
+    from totoro_ai.core.config import get_config
+
     if event_dispatcher is None:
         event_dispatcher = AsyncMock()
         event_dispatcher.dispatch = AsyncMock()
     if intent_parser is None:
         intent_parser = AsyncMock()
         intent_parser.parse = AsyncMock(return_value=ParsedIntent())
+
+    config = get_config()
+    # Copy so we can flip the flag without mutating the singleton.
+    cfg_copy = config.model_copy(deep=True)
+    cfg_copy.agent.enabled = agent_enabled
+
     return ChatService(
         extraction_service=extraction or AsyncMock(),
         consult_service=consult or AsyncMock(),
@@ -58,6 +71,9 @@ def _make_service(
         intent_parser=intent_parser,
         event_dispatcher=event_dispatcher,
         memory_service=memory_service or AsyncMock(),
+        taste_service=taste_service or AsyncMock(),
+        config=cfg_copy,
+        agent_graph=agent_graph,
     )
 
 
@@ -78,18 +94,8 @@ def _consult_response() -> ConsultResponse:
                     geo_fresh=True,
                     enriched=True,
                 ),
-                confidence=0.87,
                 source="saved",
             ),
-        ],
-        reasoning_steps=[
-            ReasoningStep(
-                step="retrieval",
-                summary="Recalled from memory",
-                source="tool",
-                tool_name="consult",
-                visibility="debug",
-            )
         ],
     )
 
@@ -139,14 +145,23 @@ def _recall_response() -> RecallResponse:
 async def test_run_consult_intent(mock_classify: MagicMock) -> None:
     """ChatService routes 'consult' intent to ConsultService and pipes
     the full ConsultResponse through as `data`. Each result carries a
-    full enriched PlaceObject and a source tag (ADR-058: no score)."""
+    full enriched PlaceObject and a source tag (ADR-058: no score).
+
+    Feature 028 M4: the flag-off dispatch loads saved places inline via
+    RecallService and passes pre-built ConsultFilters to the refactored
+    ConsultService.consult(...) signature.
+    """
     mock_classify.return_value = IntentClassification(
         intent="consult", confidence=0.95, clarification_needed=False
     )
     consult_mock = AsyncMock()
     consult_mock.consult.return_value = _consult_response()
+    recall_mock = AsyncMock()
+    recall_mock.run = AsyncMock(
+        return_value=RecallResponse(results=[], total_count=0, empty_state=True)
+    )
 
-    service = _make_service(consult=consult_mock)
+    service = _make_service(consult=consult_mock, recall=recall_mock)
     request = ChatRequest(user_id="user_1", message="cheap dinner nearby")
 
     result = await service.run(request)
@@ -154,7 +169,14 @@ async def test_run_consult_intent(mock_classify: MagicMock) -> None:
     assert result.type == "consult"
     assert result.data is not None
     assert "Nara Eatery" in result.message
-    consult_mock.consult.assert_called_once_with("user_1", "cheap dinner nearby", None)
+
+    # New signature: kwargs, pre-loaded saved_places, pre-built filters.
+    call = consult_mock.consult.call_args
+    assert call.kwargs["user_id"] == "user_1"
+    assert call.kwargs["query"] == "cheap dinner nearby"
+    assert call.kwargs["saved_places"] == []
+    assert call.kwargs["location"] is None
+    assert call.kwargs["preference_context"] is None
 
     # New response shape: list of ConsultResult with full PlaceObject.
     results_payload = result.data["results"]
@@ -486,17 +508,110 @@ async def test_run_clarification_response_no_downstream_call(
 
 @patch("totoro_ai.core.chat.service.classify_intent")
 async def test_run_consult_passes_location(mock_classify: MagicMock) -> None:
-    """ChatService passes location to ConsultService.consult() call."""
+    """ChatService passes location to ConsultService.consult() call (kwargs)."""
     mock_classify.return_value = IntentClassification(
         intent="consult", confidence=0.95, clarification_needed=False
     )
     consult_mock = AsyncMock()
     consult_mock.consult.return_value = _consult_response()
+    recall_mock = AsyncMock()
+    recall_mock.run = AsyncMock(
+        return_value=RecallResponse(results=[], total_count=0, empty_state=True)
+    )
 
-    service = _make_service(consult=consult_mock)
+    service = _make_service(consult=consult_mock, recall=recall_mock)
     loc = Location(lat=13.7563, lng=100.5018)
     request = ChatRequest(user_id="user_1", message="cheap dinner nearby", location=loc)
 
     await service.run(request)
 
-    consult_mock.consult.assert_called_once_with("user_1", "cheap dinner nearby", loc)
+    call = consult_mock.consult.call_args
+    assert call.kwargs["location"] == loc
+
+
+# ---------------------------------------------------------------------------
+# Flag-on agent path (feature 028 M6)
+# ---------------------------------------------------------------------------
+
+
+async def test_run_agent_path_invokes_graph_and_returns_agent_type() -> None:
+    """Flag-on: `ChatService.run` invokes the agent graph once and maps the
+    final state to `ChatResponse(type="agent", ...)` with reasoning_steps
+    filtered to visibility="user".
+    """
+    from totoro_ai.core.agent.reasoning import ReasoningStep
+
+    user_step = ReasoningStep(
+        step="agent.tool_decision",
+        summary="chose recall",
+        source="agent",
+        tool_name=None,
+        visibility="user",
+    )
+    debug_step = ReasoningStep(
+        step="recall.mode",
+        summary="mode=hybrid",
+        source="tool",
+        tool_name="recall",
+        visibility="debug",
+    )
+
+    from langchain_core.messages import AIMessage
+
+    agent_graph = AsyncMock()
+    agent_graph.ainvoke = AsyncMock(
+        return_value={
+            "messages": [AIMessage(content="here's what I found")],
+            "reasoning_steps": [user_step, debug_step],
+        }
+    )
+
+    taste_mock = AsyncMock()
+    taste_mock.get_taste_profile = AsyncMock(return_value=None)
+    memory_mock = AsyncMock()
+    memory_mock.load_memories = AsyncMock(return_value=[])
+
+    service = _make_service(
+        taste_service=taste_mock,
+        memory_service=memory_mock,
+        agent_enabled=True,
+        agent_graph=agent_graph,
+    )
+
+    result = await service.run(
+        ChatRequest(user_id="u-agent", message="show me my saves")
+    )
+
+    assert result.type == "agent"
+    assert result.message == "here's what I found"
+    assert result.data is not None
+    # only the user-visible step survives the filter
+    assert len(result.data["reasoning_steps"]) == 1
+    assert result.data["reasoning_steps"][0]["step"] == "agent.tool_decision"
+
+    # thread_id comes from user_id
+    call = agent_graph.ainvoke.call_args
+    assert call.kwargs["config"]["configurable"]["thread_id"] == "u-agent"
+
+
+async def test_run_agent_path_returns_error_on_graph_exception() -> None:
+    """Flag-on: exception during graph.ainvoke flows through the outer
+    try/except and returns a type="error" response."""
+    agent_graph = AsyncMock()
+    agent_graph.ainvoke = AsyncMock(side_effect=RuntimeError("boom"))
+
+    taste_mock = AsyncMock()
+    taste_mock.get_taste_profile = AsyncMock(return_value=None)
+    memory_mock = AsyncMock()
+    memory_mock.load_memories = AsyncMock(return_value=[])
+
+    service = _make_service(
+        taste_service=taste_mock,
+        memory_service=memory_mock,
+        agent_enabled=True,
+        agent_graph=agent_graph,
+    )
+
+    result = await service.run(ChatRequest(user_id="u", message="hi"))
+
+    assert result.type == "error"
