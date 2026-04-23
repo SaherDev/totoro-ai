@@ -135,7 +135,8 @@ class ConsultService:
             filtered_saved.append(place)
 
         # Phase 2: discover external candidates via places provider.
-        discovered_places: list[PlaceObject] = []
+        keyword_places: list[PlaceObject] = []
+        suggestion_places: list[PlaceObject] = []
         if search_location:
             suggestions = (filters.place_suggestions or [])[:5]
 
@@ -153,25 +154,32 @@ class ConsultService:
                 _keyword_discover(),
                 self._places_client.validate_places(suggestions, location_bias=search_location),
             )
-            discovered_places = list(keyword_places) + list(suggestion_places)
-
+            keyword_places = list(keyword_places)
+            suggestion_places = list(suggestion_places)
             _emit(
-                "consult.discover",
-                f"{len(discovered_places)} candidates from external discovery"
-                if discovered_places
-                else "no candidates from external discovery",
+                "consult.keywords",
+                f"{len(keyword_places)} from keyword search"
+                if keyword_places
+                else "no keyword results",
+            )
+            _emit(
+                "consult.suggestions",
+                f"{len(suggestion_places)} from suggestions"
+                if suggestion_places
+                else "no suggestion results",
             )
         else:
-            _emit("consult.discover", "discovery skipped (no location context)")
+            _emit("consult.keywords", "discovery skipped (no location context)")
+            _emit("consult.suggestions", "discovery skipped (no location context)")
 
-        # Phase 3: merge + dedupe (saved first, discovered second).
+        # Phase 3: merge + dedupe (saved → suggested → discovered priority).
         deduped_places, sources_by_place_id = _dedupe_places(
-            filtered_saved, discovered_places
+            filtered_saved, keyword_places, suggestion_places
         )
         _emit(
             "consult.merge",
-            f"merged {len(filtered_saved)} saved + {len(discovered_places)} discovered"
-            if filtered_saved or discovered_places
+            f"merged {len(filtered_saved)} saved + {len(keyword_places)} discovered + {len(suggestion_places)} suggested"
+            if filtered_saved or keyword_places or suggestion_places
             else "no candidates to merge",
         )
         _emit(
@@ -247,7 +255,7 @@ class ConsultService:
             discovered_pool = [
                 p
                 for p in enriched_places
-                if sources_by_place_id.get(p.place_id) == "discovered"
+                if sources_by_place_id.get(p.place_id) in ("discovered", "suggested")
             ][:discovered_cap]
             top = (saved_pool + discovered_pool)[:total_cap]
             _emit(
@@ -351,11 +359,17 @@ def _place_matches_chip(place: PlaceObject, chip: Chip) -> bool:
 
 
 def _dedupe_places(
-    saved: list[PlaceObject], discovered: list[PlaceObject]
+    saved: list[PlaceObject],
+    discovered: list[PlaceObject],
+    suggested: list[PlaceObject],
 ) -> tuple[list[PlaceObject], dict[str, str]]:
-    """Dedupe saved + discovered places by provider_id, then place_id.
+    """Dedupe places by provider_id, then place_id.
 
-    Returns the ordered deduplicated list and a `place_id → "saved"|"discovered"`
+    Priority order: saved → suggested → discovered. When a place appears in
+    both suggested and discovered, it is tagged "suggested" (named suggestions
+    are more deliberate than keyword search hits).
+
+    Returns the ordered deduplicated list and a `place_id → "saved"|"suggested"|"discovered"`
     map so downstream callers can apply source-specific treatment per place.
     """
     seen_provider_ids: set[str] = set()
@@ -380,6 +394,8 @@ def _dedupe_places(
 
     for place in saved:
         _push(place, "saved")
+    for place in suggested:
+        _push(place, "suggested")
     for place in discovered:
         _push(place, "discovered")
 
