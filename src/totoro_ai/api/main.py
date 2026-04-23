@@ -8,6 +8,31 @@ from importlib.metadata import version as pkg_version
 from fastapi import APIRouter, FastAPI
 from sqlalchemy import text
 
+# Backport of the LangGraph 0.4.x fix for a weak-reference race in the pregel
+# runner: when the PregelRunner is GC'd before uvloop fires its done-callbacks,
+# self.callback() returns None and the call raises TypeError. Guard it so the
+# callback is silently skipped instead of crashing uvloop's Handle._run.
+# Fixed upstream in LangGraph 0.4.x (walrus-operator guard); remove once we
+# upgrade past 0.3.x.
+try:
+    from langgraph.pregel.runner import FuturesDict, _exception, _should_stop_others
+
+    def _safe_on_done(self, task, fut):  # type: ignore[override]
+        try:
+            cb = self.callback()
+            if cb is not None:
+                cb(task, _exception(fut))
+        finally:
+            with self.lock:
+                self.done.add(fut)
+                self.counter -= 1
+                if self.counter == 0 or _should_stop_others(self.done):
+                    self.event.set()
+
+    FuturesDict.on_done = _safe_on_done  # type: ignore[method-assign]
+except Exception:
+    pass
+
 from totoro_ai.api.errors import register_error_handlers
 from totoro_ai.api.routes.chat import router as chat_router
 from totoro_ai.api.routes.extraction import router as extraction_router
