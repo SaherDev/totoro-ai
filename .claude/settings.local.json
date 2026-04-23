@@ -48,7 +48,10 @@
       "Bash(grep -v \"^$\")",
       "Bash(poetry show *)",
       "Bash(pip index *)",
-      "Bash(perl -i -pe 's/^- \\\\[ \\\\] \\(T04[4678]\\) /- [X] $1 /' specs/027-agent-foundation/tasks.md)"
+      "Bash(perl -i -pe 's/^- \\\\[ \\\\] \\(T04[4678]\\) /- [X] $1 /' specs/027-agent-foundation/tasks.md)",
+      "Bash(POST)",
+      "Bash(grep -cE \"\\(src/|tests/|config/|docs/|totoro-config/|poetry run|`POST)",
+      "Bash(@asynccontextmanager)"
     ]
   }
 }
