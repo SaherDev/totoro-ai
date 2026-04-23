@@ -136,8 +136,7 @@ def map_google_place_to_place_object(google_result: dict[str, Any]) -> PlaceObje
 def map_match_result_to_place_object(result: PlacesMatchResult) -> PlaceObject:
     """Build a transient PlaceObject from a validated PlacesMatchResult.
 
-    Used by the place_suggestions path — agent-suggested names that passed
-    EXACT or FUZZY validation. Not persisted; synthetic place_id only.
+    Used by the place_suggestions path. Not persisted; synthetic place_id only.
     """
     provider_id = (
         f"{result.external_provider}:{result.external_id}"

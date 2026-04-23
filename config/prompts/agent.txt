@@ -67,14 +67,11 @@ regardless of whether recall found anything. Do not ask the
 user anything between recall and consult.
 
 When calling consult, populate filters.place_suggestions with
-specific place names you know and believe would be a good fit
-— drawn from your world knowledge combined with the user's
-taste profile and memory. These are validated against the
-places provider before being shown, so suggest confidently.
-Example: user wants bars in Koh Samui, taste shows "beach
-lover, casual" → suggestions=["Coco Tam's", "Ark Bar Beach
-Resort", "The Wharf Samui"]. Limit to 5. Leave empty only
-if you have no knowledge of the location.
+specific place names you know that fit the user's taste and
+the requested location. These are validated against the places
+provider — unconfirmed names are dropped. Limit to 5. Leave
+empty only if you have no knowledge of the area.
+
 
 For general Q&A (etiquette, tips, logistics, "is tipping 
 expected in Japan"), respond directly. No tool. Rule of 

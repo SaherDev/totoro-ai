@@ -35,7 +35,6 @@ from totoro_ai.api.schemas.consult import (
 from totoro_ai.core.consult.types import (
     NoMatchesError,
     map_google_place_to_place_object,
-    map_match_result_to_place_object,
 )
 from totoro_ai.core.emit import EmitFn
 from totoro_ai.core.places import PlacesClient, PlacesService
@@ -138,59 +137,32 @@ class ConsultService:
         # Phase 2: discover external candidates via places provider.
         discovered_places: list[PlaceObject] = []
         if search_location:
-            try:
-                discovery_results = await self._places_client.discover(
-                    search_location,
-                    {"keyword": query, "radius": radius_m},
-                )
-                for google_result in discovery_results:
-                    discovered_places.append(
-                        map_google_place_to_place_object(google_result)
+            suggestions = (filters.place_suggestions or [])[:5]
+
+            async def _keyword_discover() -> list[PlaceObject]:
+                try:
+                    results = await self._places_client.discover(
+                        search_location,
+                        {"keyword": query, "radius": radius_m},
                     )
-                _emit(
-                    "consult.discover",
-                    f"{len(discovered_places)} candidates from external discovery"
-                    if discovered_places
-                    else "no candidates from external discovery",
-                )
-            except RuntimeError:
-                _emit(
-                    "consult.discover",
-                    "external discovery skipped (provider unavailable)",
-                )
+                    return [map_google_place_to_place_object(r) for r in results]
+                except RuntimeError:
+                    return []
+
+            keyword_places, suggestion_places = await asyncio.gather(
+                _keyword_discover(),
+                self._places_client.validate_places(suggestions, location_bias=search_location),
+            )
+            discovered_places = list(keyword_places) + list(suggestion_places)
+
+            _emit(
+                "consult.discover",
+                f"{len(discovered_places)} candidates from external discovery"
+                if discovered_places
+                else "no candidates from external discovery",
+            )
         else:
             _emit("consult.discover", "discovery skipped (no location context)")
-
-        # Phase 2b: validate agent-suggested place names.
-        suggestions = (filters.place_suggestions or [])[:5]
-        if suggestions:
-            from totoro_ai.core.places.places_client import PlacesMatchQuality
-            location_ctx = filters.search_location_name or None
-
-            async def _validate(name: str) -> PlaceObject | None:
-                try:
-                    result = await self._places_client.validate_place(
-                        name,
-                        location=location_ctx,
-                        location_bias=search_location,
-                    )
-                    if result.match_quality in (
-                        PlacesMatchQuality.EXACT, PlacesMatchQuality.FUZZY
-                    ):
-                        return map_match_result_to_place_object(result)
-                except Exception:
-                    pass
-                return None
-
-            validated = await asyncio.gather(*[_validate(n) for n in suggestions])
-            confirmed = [p for p in validated if p is not None]
-            discovered_places.extend(confirmed)
-            _emit(
-                "consult.suggestions",
-                f"{len(confirmed)}/{len(suggestions)} suggested places confirmed"
-                if confirmed
-                else "no suggested places confirmed",
-            )
 
         # Phase 3: merge + dedupe (saved first, discovered second).
         deduped_places, sources_by_place_id = _dedupe_places(

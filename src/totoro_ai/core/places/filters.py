@@ -43,14 +43,12 @@ class ConsultFilters(PlaceFilters):
     place_suggestions: list[str] | None = Field(
         default=None,
         description=(
-            "Specific place names you believe would be a good fit, drawn from "
-            "your world knowledge combined with the user's taste profile and "
-            "memory. The consult service will validate each name against the "
-            "places provider and drop any that cannot be confirmed. "
-            "Examples: ['Coco Tam\\'s', 'The Wharf Samui', 'Ark Bar'] for a "
-            "bar request in Koh Samui; ['Fuji Ramen', 'Ichiran Shibuya'] for "
-            "ramen in Tokyo. Limit to 5 names. Leave None if you have no "
-            "confident suggestions for the location."
+            "Specific place names drawn from your world knowledge that you "
+            "believe would be a good fit given the user's taste and memory. "
+            "Validated against the places provider — unconfirmed names are "
+            "dropped. Limit to 5. Leave None if you have no knowledge of "
+            "the location. Examples: ['Coco Tam\\'s', 'Ark Bar'] for bars "
+            "in Koh Samui; ['Ichiran', 'Fuji Ramen'] for ramen in Tokyo."
         ),
     )
     radius_m: int | None = Field(

@@ -1,5 +1,6 @@
 """Google Places API client for place validation and discovery."""
 
+import asyncio
 import difflib
 import logging
 import re
@@ -10,7 +11,12 @@ import httpx
 from pydantic import BaseModel
 
 from totoro_ai.core.config import get_config, get_env
-from totoro_ai.core.places.models import HoursDict
+from totoro_ai.core.places.models import (
+    HoursDict,
+    PlaceAttributes,
+    PlaceObject,
+    PlaceType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +148,14 @@ class PlacesClient(Protocol):
         """Validate a place name and return match result."""
         ...
 
+    async def validate_places(
+        self,
+        names: list[str],
+        location_bias: dict[str, float] | None = None,
+    ) -> list[PlaceObject]:
+        """Validate a list of place names in parallel and return confirmed PlaceObjects."""
+        ...
+
     async def discover(
         self, search_location: dict[str, float], filters: dict[str, Any]
     ) -> list[dict[str, Any]]:
@@ -230,9 +244,9 @@ class GooglePlacesClient:
 
         Args:
             name: Place name to validate
-            location: Optional location/address context appended to the query
-            location_bias: Optional {"lat": float, "lng": float} — passed as
-                a circle locationbias to pin results to the right area
+            location: Optional location/address context appended to query
+            location_bias: Optional {"lat": float, "lng": float} passed as
+                circle locationbias to pin results to the right area
 
         Returns:
             PlacesMatchResult with match quality and details
@@ -242,9 +256,8 @@ class GooglePlacesClient:
         places_config = config.external_services.google_places
 
         query = f"{name} {location}".strip() if location else name
-
         fields = ",".join(places_config.request_fields)
-        params: dict[str, str | float] = {
+        params: dict[str, str] = {
             "input": query,
             "inputtype": "textquery",
             "fields": fields,
@@ -252,8 +265,9 @@ class GooglePlacesClient:
             "region": places_config.default_region,
         }
         if location_bias:
-            lat, lng = location_bias["lat"], location_bias["lng"]
-            params["locationbias"] = f"circle:50000@{lat},{lng}"
+            params["locationbias"] = (
+                f"circle:50000@{location_bias['lat']},{location_bias['lng']}"
+            )
 
         async with httpx.AsyncClient() as client:
             try:
@@ -304,6 +318,48 @@ class GooglePlacesClient:
             address=first_match.get("formatted_address"),
             place_types=first_match.get("types", []),
         )
+
+    async def validate_places(
+        self,
+        names: list[str],
+        location_bias: dict[str, float] | None = None,
+    ) -> list[PlaceObject]:
+        """Validate a list of place names in parallel, return confirmed PlaceObjects.
+
+        Runs one validate_place call per name concurrently. NONE/CATEGORY_ONLY
+        matches are dropped. Failures are silently skipped.
+        """
+        from uuid import uuid4
+
+        async def _validate_one(name: str) -> PlaceObject | None:
+            try:
+                result = await self.validate_place(name, location_bias=location_bias)
+                if result.match_quality not in (
+                    PlacesMatchQuality.EXACT, PlacesMatchQuality.FUZZY
+                ):
+                    return None
+                provider_id = (
+                    f"{result.external_provider}:{result.external_id}"
+                    if result.external_id
+                    else None
+                )
+                place_type = PlaceType.services
+                return PlaceObject(
+                    place_id=str(uuid4()),
+                    place_name=result.validated_name or name,
+                    place_type=place_type,
+                    attributes=PlaceAttributes(),
+                    provider_id=provider_id,
+                    lat=result.lat,
+                    lng=result.lng,
+                    address=result.address,
+                    geo_fresh=result.lat is not None and result.lng is not None,
+                )
+            except Exception:
+                return None
+
+        results = await asyncio.gather(*[_validate_one(n) for n in names])
+        return [p for p in results if p is not None]
 
     async def discover(
         self, search_location: dict[str, float], filters: dict[str, Any]
