@@ -190,6 +190,13 @@ def _collect_current_turn_tool_results(messages: list[Any]) -> list[dict[str, An
             payload = json.loads(content) if content else None
         except json.JSONDecodeError:
             payload = None
+        if payload is None:
+            logger.warning(
+                "tool_result payload=null: tool=%s content_type=%s content_repr=%r",
+                getattr(m, "name", None),
+                type(m.content).__name__,
+                m.content,
+            )
         raw.append(
             {
                 "tool": getattr(m, "name", None),
