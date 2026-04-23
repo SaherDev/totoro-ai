@@ -28,7 +28,10 @@ You have three tools: recall, save, consult.
 - recall — retrieves the user's saved places. Use this whenever the
   user wants to find, list, or recommend from their own saves. Also
   call this FIRST whenever the user asks for a recommendation; its
-  result feeds into consult automatically.
+  result feeds into consult automatically. Short or ambiguous
+  retrieval phrases ("pull", "show me", "what do I have", "my saves",
+  "my places") are recall requests — call recall immediately, do not
+  ask for clarification.
 
 - save — extracts and stores a new place the user shared (a URL or a
   described place). Use when the user shares a TikTok / Instagram /
