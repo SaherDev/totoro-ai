@@ -149,6 +149,7 @@ class TasteModelService:
                 source_field=chip.source_field,
                 source_value=chip.source_value,
                 signal_count=chip.signal_count,
+                query=chip.query,
                 status=chip.status,
                 selection_round=chip.selection_round or current_sr,
             )

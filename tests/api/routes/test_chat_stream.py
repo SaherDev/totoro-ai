@@ -25,20 +25,6 @@ def _make_mock_service() -> MagicMock:
     return svc
 
 
-def _make_step_event(step: str, summary: str) -> dict[str, Any]:
-    rs = ReasoningStep(
-        step=step,
-        summary=summary,
-        source="tool",
-        tool_name="recall",
-        visibility="debug",
-    )
-    return {
-        "event": "on_custom_event",
-        "name": "stream",
-        "data": rs.model_dump(mode="json"),
-    }
-
 
 @pytest.fixture
 def mock_service() -> MagicMock:
@@ -47,23 +33,32 @@ def mock_service() -> MagicMock:
 
 @pytest.fixture
 def mock_graph() -> MagicMock:
-    """Fake compiled graph with astream_events."""
+    """Fake compiled graph whose astream yields (stream_mode, chunk) tuples."""
     graph = MagicMock()
 
-    async def _stream_events(
-        payload: Any, config: Any, version: str
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        yield _make_step_event("recall.search", "searching saves")
+    async def _astream(
+        payload: Any, config: Any, stream_mode: Any = None
+    ) -> AsyncGenerator[tuple[str, Any], None]:
+        rs = ReasoningStep(
+            step="recall.search",
+            summary="searching saves",
+            source="tool",
+            tool_name="recall",
+            visibility="debug",
+        )
+        yield ("custom", rs.model_dump(mode="json"))
+
         from langchain_core.messages import AIMessage
 
-        yield {
-            "event": "on_chain_end",
-            "data": {
-                "output": {"messages": [AIMessage(content="Here is my recommendation")]}
+        yield (
+            "values",
+            {
+                "messages": [AIMessage(content="Here is my recommendation")],
+                "tool_calls_used": 0,
             },
-        }
+        )
 
-    graph.astream_events = _stream_events
+    graph.astream = _astream
     return graph
 
 
@@ -196,19 +191,17 @@ class TestChatStreamToolCallsUsed:
         graph = MagicMock()
 
         async def _stream_with_tool_calls(
-            payload: Any, config: Any, version: str
-        ) -> AsyncGenerator[dict[str, Any], None]:
-            yield {
-                "event": "on_chain_end",
-                "data": {
-                    "output": {
-                        "messages": [AIMessage(content="Here you go")],
-                        "tool_calls_used": 2,
-                    }
+            payload: Any, config: Any, stream_mode: Any = None
+        ) -> AsyncGenerator[tuple[str, Any], None]:
+            yield (
+                "values",
+                {
+                    "messages": [AIMessage(content="Here you go")],
+                    "tool_calls_used": 2,
                 },
-            }
+            )
 
-        graph.astream_events = _stream_with_tool_calls
+        graph.astream = _stream_with_tool_calls
 
         from totoro_ai.api.deps import get_agent_graph, get_chat_service
 
