@@ -40,6 +40,19 @@ class ConsultFilters(PlaceFilters):
     needs it — can be added later as typed fields on this class.
     """
 
+    place_suggestions: list[str] | None = Field(
+        default=None,
+        description=(
+            "Specific place names you believe would be a good fit, drawn from "
+            "your world knowledge combined with the user's taste profile and "
+            "memory. The consult service will validate each name against the "
+            "places provider and drop any that cannot be confirmed. "
+            "Examples: ['Coco Tam\\'s', 'The Wharf Samui', 'Ark Bar'] for a "
+            "bar request in Koh Samui; ['Fuji Ramen', 'Ichiran Shibuya'] for "
+            "ramen in Tokyo. Limit to 5 names. Leave None if you have no "
+            "confident suggestions for the location."
+        ),
+    )
     radius_m: int | None = Field(
         default=None,
         description=(

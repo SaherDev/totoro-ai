@@ -23,6 +23,7 @@ RankingService deleted per ADR-058 — agent-driven ranking is deferred.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from uuid import uuid4
 
@@ -34,6 +35,7 @@ from totoro_ai.api.schemas.consult import (
 from totoro_ai.core.consult.types import (
     NoMatchesError,
     map_google_place_to_place_object,
+    map_match_result_to_place_object,
 )
 from totoro_ai.core.emit import EmitFn
 from totoro_ai.core.places import PlacesClient, PlacesService
@@ -158,6 +160,32 @@ class ConsultService:
                 )
         else:
             _emit("consult.discover", "discovery skipped (no location context)")
+
+        # Phase 2b: validate agent-suggested place names.
+        suggestions = (filters.place_suggestions or [])[:5]
+        if suggestions:
+            location_ctx = filters.search_location_name or query
+            async def _validate(name: str) -> PlaceObject | None:
+                try:
+                    result = await self._places_client.validate_place(name, location_ctx)
+                    from totoro_ai.core.places.places_client import PlacesMatchQuality
+                    if result.match_quality in (
+                        PlacesMatchQuality.EXACT, PlacesMatchQuality.FUZZY
+                    ):
+                        return map_match_result_to_place_object(result)
+                except Exception:
+                    pass
+                return None
+
+            validated = await asyncio.gather(*[_validate(n) for n in suggestions])
+            confirmed = [p for p in validated if p is not None]
+            discovered_places.extend(confirmed)
+            _emit(
+                "consult.suggestions",
+                f"{len(confirmed)}/{len(suggestions)} suggested places confirmed"
+                if confirmed
+                else "no suggested places confirmed",
+            )
 
         # Phase 3: merge + dedupe (saved first, discovered second).
         deduped_places, sources_by_place_id = _dedupe_places(
