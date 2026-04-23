@@ -349,6 +349,8 @@ class AgentConfig(BaseModel):
     `max_steps` and `max_errors` bound the graph's should_continue loop (M3 reads these).
     `checkpointer_ttl_seconds` is reserved for a future cleanup job
     (Postgres has no native TTL).
+    `prompt_caching_enabled` wraps the system message in an Anthropic
+    `cache_control: ephemeral` block (ADR-067). Disable for non-Anthropic orchestrators.
     """
 
     max_steps: int = 10
@@ -356,6 +358,7 @@ class AgentConfig(BaseModel):
     max_history_messages: int = 40
     checkpointer_ttl_seconds: int = 86400
     tool_timeouts_seconds: ToolTimeoutsConfig = ToolTimeoutsConfig()
+    prompt_caching_enabled: bool = True
 
     @model_validator(mode="after")
     def _positive_integers(self) -> "AgentConfig":

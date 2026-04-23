@@ -15,13 +15,13 @@ Format:
 
 ---
 
-## ADR-067: Claude Haiku 4.5 as agent orchestrator over Claude Sonnet 4.6
+## ADR-067: Claude Sonnet 4.6 as agent orchestrator with prompt caching
 
 **Date:** 2026-04-23\
 **Status:** accepted\
-**Context:** The orchestrator role in the LangGraph agent routes user messages to one of three tools (save, recall, consult) and generates conversational responses. This is a routing and generation task, not deep multi-step reasoning. Claude Sonnet 4.6 at $3/$15 per million input/output tokens is overkill for this workload. Claude Haiku 4.5 matches Sonnet 4's performance on agent tasks, achieves 90% of Sonnet 4.5's performance in agentic evaluation, and handles tool coordination reliably for pipelines with fewer than five tools. The agent has three tools, well inside that boundary.\
-**Decision:** Use Claude Haiku 4.5 as the orchestrator model. `config/app.yaml` orchestrator role maps to `anthropic/claude-haiku-4-5-20251001`. Pricing is $1/$5 per million input/output tokens — 3× cheaper than Sonnet 4.6. If eval data shows routing accuracy degrading on ambiguous save/recall/consult boundaries, revisit with prompt engineering before escalating to a more expensive model.\
-**Consequences:** First recommendation acceptance rate is the signal to watch — if it drops after the swap, the orchestrator is the first suspect. Run Bruno routing boundary tests (ambiguous recall vs consult inputs) before closing any regression investigation.
+**Context:** The orchestrator role in the LangGraph agent routes user messages to one of three tools (save, recall, consult) and generates conversational responses. At portfolio volume (tens of sessions per day), Sonnet 4.6 at $3/$15 per million input/output tokens costs roughly $5-8/month with prompt caching — well inside the $20/month budget. Sonnet 4.6 leads Anthropic's agent benchmarks at its price tier (SWE-bench Verified 79.6%, Terminal-Bench 2.0 59.1%) and handles ambiguous intent boundaries (save vs recall vs consult) and conversational response generation better than cheaper alternatives. Demo and interview quality are a real consideration for a portfolio project. The model ID `claude-sonnet-4-6-20250514` previously in config was invalid — a concatenation of Sonnet 4.6's name with the original Sonnet 4 snapshot date. The correct identifier is the alias `claude-sonnet-4-6`.\
+**Decision:** Use Claude Sonnet 4.6 as the orchestrator. `config/app.yaml` orchestrator role maps to `anthropic/claude-sonnet-4-6`. Prompt caching is enabled on the content block containing the taste profile summary and memory summary — roughly 500 of 800 input tokens per call. Cache hits price cached tokens at $0.30/1M (0.1× standard rate), reducing per-call cost from $0.0069 to $0.00555 (~20% reduction) and improving time-to-first-token on turns 2+ within a session. Output cost is unchanged at $15/1M.\
+**Consequences:** `cache_control: {"type": "ephemeral"}` must appear on the content block containing taste profile summary and memory summary in every agent invocation. Langfuse traces must show `cache_read_input_tokens` after turn 1 of each session — absence means caching is not active. Compare `time_to_first_token` across turn 1 (cold) vs turns 2+ (warm) in Langfuse to measure latency benefit. In Phase 6, evaluate Claude Haiku 4.5 as a cost optimization using real first recommendation acceptance rate data before deciding to downgrade.
 
 ---
 

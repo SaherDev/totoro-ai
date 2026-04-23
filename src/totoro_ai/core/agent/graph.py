@@ -194,7 +194,14 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
     bound = llm.bind_tools(tools)
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
-        system = SystemMessage(content=_render_system_prompt(state))
+        system_text = _render_system_prompt(state)
+        if get_config().agent.prompt_caching_enabled:
+            system_content: str | list[str | dict[str, Any]] = [
+                {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
+            ]
+        else:
+            system_content = system_text
+        system = SystemMessage(content=system_content)
         max_hist = get_config().agent.max_history_messages
         trimmed = state["messages"][-max_hist:]
         trimmed, stripped = _strip_orphaned_tool_results(trimmed)

@@ -16,6 +16,13 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from totoro_ai.core.agent.graph import make_agent_node
 
 
+def _system_text(msg: SystemMessage) -> str:
+    """Extract the text from a SystemMessage regardless of caching format."""
+    if isinstance(msg.content, str):
+        return msg.content
+    return "".join(block["text"] for block in msg.content if block.get("type") == "text")
+
+
 def _base_state(**overrides: object) -> dict:
     state = {
         "messages": [HumanMessage(content="find me ramen")],
@@ -63,12 +70,13 @@ async def test_agent_node_renders_prompt_with_both_slots_substituted(
     sent_messages = captured_llm.ainvoke.call_args.args[0]
     system = sent_messages[0]
     assert isinstance(system, SystemMessage)
+    text = _system_text(system)
     # Both template slot literals must be GONE from the rendered prompt.
-    assert "{taste_profile_summary}" not in system.content
-    assert "{memory_summary}" not in system.content
+    assert "{taste_profile_summary}" not in text
+    assert "{memory_summary}" not in text
     # And both substitution values must be PRESENT.
-    assert "TASTE-SUBSTITUTED" in system.content
-    assert "MEMORY-SUBSTITUTED" in system.content
+    assert "TASTE-SUBSTITUTED" in text
+    assert "MEMORY-SUBSTITUTED" in text
 
 
 async def test_agent_node_sends_system_plus_messages(captured_llm: MagicMock) -> None:
@@ -106,8 +114,9 @@ async def test_agent_node_empty_summaries_still_renders(
     await node(_base_state(taste_profile_summary="", memory_summary=""))
     sent_messages = captured_llm.ainvoke.call_args.args[0]
     system = sent_messages[0]
-    assert "{taste_profile_summary}" not in system.content
-    assert "{memory_summary}" not in system.content
+    text = _system_text(system)
+    assert "{taste_profile_summary}" not in text
+    assert "{memory_summary}" not in text
 
 
 async def test_agent_node_trims_history_to_max_history_messages(
