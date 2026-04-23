@@ -19,7 +19,7 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 │                totoro-ai (this repo)                      │
 │                                                           │
 │  FastAPI HTTP layer                                       │
-│  Intent classification → pipeline dispatch                │
+│  LangGraph agent orchestration (tool dispatch)            │
 │  LangChain chains and document loaders                    │
 │  Pydantic request/response schemas                        │
 │  Provider abstraction (LLM + embedding model switching)   │
@@ -78,7 +78,7 @@ Raw input (URL, plain text, or mixed)
     │
     ▼
 POST /v1/chat
-    │  ChatService classifies intent → "extract-place" → ExtractionService.run()
+    │  Agent selects save tool → ExtractionService.run()
     │  Returns immediately: { status: "pending", request_id }
     │  asyncio.create_task fires the full pipeline in the background
     │
@@ -115,14 +115,14 @@ Natural language query (e.g., "cheap dinner nearby")
     ▼
 POST /v1/chat
     │  Receives: user_id, message, optional location
-    │  ChatService classifies intent → "consult" → dispatches to ConsultService
+    │  Agent selects consult tool → ConsultService.consult() called with agent-parsed args
     │
     ▼
 ConsultService.consult()
     │
     ├── Step 1: Parse intent
-    │   GPT-4o-mini (intent_parser role) extracts cuisine, occasion, price, radius,
-    │   constraints, enriched_query; user memories injected as context
+    │   Agent (Claude Sonnet 4.6) parses intent and passes structured args directly;
+    │   ConsultService receives pre-parsed cuisine, occasion, price, radius, constraints
     │
     ├── Step 2: Retrieve saved places
     │   Hybrid search (pgvector + FTS + RRF) via RecallService
@@ -156,7 +156,7 @@ Natural language query (e.g., "cosy ramen spot")
     │
     ▼
 POST /v1/chat
-    │  ChatService classifies intent → "recall" → dispatches to RecallService
+    │  Agent selects recall tool → RecallService called with agent-parsed query
     │
     ├── Check cold start
     │   count_saved_places(user_id)
@@ -486,8 +486,7 @@ The tier is surfaced on `GET /v1/user/context` (plus the full chip array with `s
 | Agent Framework | LangGraph 0.3                  | Multi-step agent orchestration (deferred for consult — ADR-050)       |
 | Chains          | LangChain 0.3                  | Document loaders, retrievers, chains                                  |
 | LLM Providers   | OpenAI, Anthropic, Groq        | Via provider abstraction layer; roles mapped in `config/app.yaml`     |
-| Intent Router   | llama-3.1-8b-instant (Groq)    | Fast intent classification for all `/v1/chat` traffic                 |
-| Extraction / Q&A / Vision / Evals | GPT-4o-mini (OpenAI) | Structured extraction, chat assistant, vision enricher, evals |
+| Extraction / Vision | GPT-4o-mini (OpenAI)       | Structured extraction, vision enricher                                |
 | Orchestration   | claude-sonnet-4-6 (Anthropic)  | Strong reasoning for agent/orchestration layer                        |
 | Embeddings      | voyage-4-lite (Voyage AI)      | 1024-dimensional vectors; 32k token context window                    |
 | Transcription   | whisper-large-v3-turbo (Groq)  | Multilingual STT for background audio enricher (ADR-047)              |
