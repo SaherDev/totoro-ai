@@ -173,6 +173,47 @@ class TestChatRouteClarification:
         assert data["data"] is None
 
 
+class TestChatRouteToolCallsUsed:
+    """Verify POST /v1/chat response includes tool_calls_used."""
+
+    def test_agent_response_includes_tool_calls_used(
+        self, client: TestClient, mock_chat_service: AsyncMock
+    ) -> None:
+        mock_chat_service.run.return_value = ChatResponse(
+            type="agent",
+            message="Here are some ramen spots.",
+            data={"reasoning_steps": []},
+            tool_calls_used=2,
+        )
+
+        response = client.post(
+            "/v1/chat",
+            json={"user_id": "user_1", "message": "find me ramen"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tool_calls_used"] == 2
+
+    def test_tool_calls_used_defaults_to_zero(
+        self, client: TestClient, mock_chat_service: AsyncMock
+    ) -> None:
+        mock_chat_service.run.return_value = ChatResponse(
+            type="agent",
+            message="No tools needed.",
+            data={"reasoning_steps": []},
+        )
+
+        response = client.post(
+            "/v1/chat",
+            json={"user_id": "user_1", "message": "hello"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tool_calls_used"] == 0
+
+
 class TestChatRouteValidation:
     """Verify request validation for POST /v1/chat."""
 

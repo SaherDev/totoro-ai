@@ -134,6 +134,7 @@ class ChatService:
                 "reasoning_steps": [s.model_dump(mode="json") for s in user_steps],
                 "tool_results": tool_results,
             },
+            tool_calls_used=final_state.get("tool_calls_used", 0),
         )
 
     async def _compose_taste_summary(self, user_id: str) -> str:

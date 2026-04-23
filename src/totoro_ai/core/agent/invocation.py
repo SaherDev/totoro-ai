@@ -48,4 +48,5 @@ def build_turn_payload(
         "location": location,
         "steps_taken": 0,
         "error_count": 0,
+        "tool_calls_used": 0,
     }

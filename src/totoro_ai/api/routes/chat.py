@@ -92,6 +92,7 @@ async def chat_stream(
 
     async def generate() -> AsyncGenerator[str, None]:
         final_message = ""
+        tool_calls_used = 0
         try:
             async for event in agent_graph.astream_events(
                 payload, config=graph_config, version="v2"
@@ -110,6 +111,8 @@ async def chat_stream(
                                 if text:
                                     final_message = text
                                     break
+                        if "tool_calls_used" in output:
+                            tool_calls_used = output["tool_calls_used"]
         except Exception as exc:
             logger.exception("chat_stream graph error: %s", exc)
             yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"
@@ -117,5 +120,7 @@ async def chat_stream(
 
         if final_message:
             yield f"event: message\ndata: {json.dumps({'content': final_message})}\n\n"
+        done_payload = json.dumps({"tool_calls_used": tool_calls_used})
+        yield f"event: done\ndata: {done_payload}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

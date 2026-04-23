@@ -37,6 +37,8 @@ class AgentState(TypedDict):
       steps_taken         — incremented by agent_node; bounds should_continue.
       error_count         — incremented by tool error handlers (M9); bounds
                             should_continue.
+      tool_calls_used     — incremented by each tool node (success or failure);
+                            emitted in the response for NestJS rate limiting.
     """
 
     messages: Annotated[list[BaseMessage], add_messages]
@@ -48,3 +50,4 @@ class AgentState(TypedDict):
     reasoning_steps: list[ReasoningStep]
     steps_taken: int
     error_count: int
+    tool_calls_used: int

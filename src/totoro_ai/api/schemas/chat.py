@@ -48,8 +48,12 @@ class ChatResponse(BaseModel):
           clarification / assistant / error; on the "agent" path carries
           `{"reasoning_steps": [<ReasoningStep.model_dump>, ...]}` —
           only user-visible steps survive the serialization filter.
+    tool_calls_used: Count of tool invocations during this turn (save,
+                     recall, consult). Read by NestJS to increment the
+                     daily tool-call counter.
     """
 
     type: ChatResponseType
     message: str
     data: dict[str, Any] | None = None
+    tool_calls_used: int = 0

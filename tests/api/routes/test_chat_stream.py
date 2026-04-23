@@ -164,6 +164,87 @@ class TestChatStreamHappyPath:
         assert msg_data["content"] == "Here is my recommendation"
 
 
+class TestChatStreamToolCallsUsed:
+    """Verify SSE stream emits a done event with tool_calls_used."""
+
+    def test_stream_contains_done_frame(self, client: TestClient) -> None:
+        response = client.post(
+            "/v1/chat/stream",
+            json={"user_id": "u1", "message": "dinner nearby"},
+        )
+        assert "event: done" in response.text
+
+    def test_done_frame_has_tool_calls_used(self, client: TestClient) -> None:
+        import json
+
+        response = client.post(
+            "/v1/chat/stream",
+            json={"user_id": "u1", "message": "dinner nearby"},
+        )
+        lines = response.text.splitlines()
+        done_data: dict[str, Any] | None = None
+        for i, line in enumerate(lines):
+            if line.startswith("event: done"):
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    if lines[j].startswith("data: "):
+                        done_data = json.loads(lines[j][len("data: ") :])
+                        break
+                break
+
+        assert done_data is not None
+        assert "tool_calls_used" in done_data
+        assert isinstance(done_data["tool_calls_used"], int)
+
+    def test_done_frame_reflects_graph_tool_calls_used(self) -> None:
+        """done event carries tool_calls_used from the final graph state."""
+        import json
+
+        from langchain_core.messages import AIMessage
+
+        svc = _make_mock_service(enabled=True)
+        graph = MagicMock()
+
+        async def _stream_with_tool_calls(
+            payload: Any, config: Any, version: str
+        ) -> AsyncGenerator[dict[str, Any], None]:
+            yield {
+                "event": "on_chain_end",
+                "data": {
+                    "output": {
+                        "messages": [AIMessage(content="Here you go")],
+                        "tool_calls_used": 2,
+                    }
+                },
+            }
+
+        graph.astream_events = _stream_with_tool_calls
+
+        from totoro_ai.api.deps import get_agent_graph, get_chat_service
+
+        app.dependency_overrides[get_chat_service] = lambda: svc
+        app.dependency_overrides[get_agent_graph] = lambda: graph
+        try:
+            tc = TestClient(app)
+            response = tc.post(
+                "/v1/chat/stream",
+                json={"user_id": "u1", "message": "dinner nearby"},
+            )
+            lines = response.text.splitlines()
+            done_data = None
+            for i, line in enumerate(lines):
+                if line.startswith("event: done"):
+                    for j in range(i + 1, min(i + 3, len(lines))):
+                        if lines[j].startswith("data: "):
+                            done_data = json.loads(lines[j][len("data: ") :])
+                            break
+                    break
+            assert done_data is not None
+            assert done_data["tool_calls_used"] == 2
+        finally:
+            app.dependency_overrides.pop(get_chat_service, None)
+            app.dependency_overrides.pop(get_agent_graph, None)
+
+
 class TestChatStreamDisabledAgent:
     """Verify /v1/chat/stream returns 400 when agent is disabled or graph is None."""
 

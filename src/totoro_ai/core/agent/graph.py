@@ -227,6 +227,7 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
         return {
             "messages": [ai_msg],
             "steps_taken": state.get("steps_taken", 0) + 1,
+            "tool_calls_used": state.get("tool_calls_used", 0) + len(tool_calls),
             "reasoning_steps": existing_steps + [step],
         }
 
