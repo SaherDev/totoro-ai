@@ -129,13 +129,15 @@ ConsultService.consult()
     │   Post-filter by price_range and radius if location available
     │
     ├── Step 3: Discover external candidates (parallel)
-    │   ├── Keyword search: Google Places nearby search with query + radius
+    │   ├── Keyword search: Google Places nearby search with query + radius → source="discovered"
     │   └── Suggestion validation: agent-supplied place names validated via
     │       validate_places() — EXACT/FUZZY matches only, anchored to same
-    │       geocoded location_bias. Both results merge into discovered_places.
+    │       geocoded location_bias → source="suggested"
     │   Skipped if no location context
     │
-    ├── Step 4: Deduplicate candidates (by external_id, then place_id)
+    ├── Step 4: Deduplicate candidates (by provider_id, then place_id)
+    │   Order: saved → discovered → suggested
+    │   ConsultResult.source ∈ {"saved", "discovered", "suggested"}
     │
     ├── Step 5: Conditional validation of saved candidates
     │   Validates against live signals only when opennow filter is set

@@ -46,19 +46,20 @@ class ConsultResult(BaseModel):
 
     `place` is the fully enriched `PlaceObject` (`enriched=True`, Tier 2
     geo and Tier 3 details populated). `source` is `"saved"` when the row
-    came from the user's recall set and `"discovered"` when it came from
-    Google Places Nearby Search. No numeric score — ranking is deferred
-    to the agent (ADR-058).
+    came from the user's recall set, `"discovered"` when it came from
+    keyword search, or `"suggested"` when it was an agent-supplied name
+    validated via the places provider. No numeric score — ranking is
+    deferred to the agent (ADR-058).
     """
 
     place: PlaceObject
-    source: str  # "saved" | "discovered"
+    source: str  # "saved" | "discovered" | "suggested"
 
 
 class ConsultResponse(BaseModel):
     """Response body for POST /v1/consult.
 
-    `results` is ordered by source (saved first, discovered second) and
+    `results` is ordered by source (saved first, discovered second, suggested third) and
     capped at `consult.total_cap` entries. Reasoning steps are delivered
     live via the `emit` callback on the agent path (feature 028 M4) —
     the response no longer bundles them.
