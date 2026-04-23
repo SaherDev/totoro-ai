@@ -32,10 +32,20 @@ class ConsultToolInput(BaseModel):
             "-> query='hotel Shibuya'."
         ),
     )
+    place_suggestions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Specific real place names from your world knowledge that fit "
+            "the user's request and location. Validated against the places "
+            "provider — unrecognised names are dropped. Always populate when "
+            "you know the area. Limit 5. Leave empty only if you have no "
+            "knowledge of the area."
+        ),
+    )
     filters: ConsultFilters = Field(
         description=(
-            "Structural + discovery filters. Mirror PlaceObject plus "
-            "radius_m and search_location_name."
+            "Structural + discovery filters: radius_m, search_location_name, "
+            "place_type, price range."
         ),
     )
     preference_context: str | None = Field(
@@ -53,15 +63,17 @@ class ConsultToolInput(BaseModel):
 
 def _consult_summary(response: ConsultResponse) -> str:
     saved = sum(1 for r in response.results if r.source == "saved")
-    discovered = sum(1 for r in response.results if r.source == "discovered")
-    total = saved + discovered
+    external = sum(
+        1 for r in response.results if r.source in ("discovered", "suggested")
+    )
+    total = saved + external
     if total == 0:
         return "Nothing matched nearby"
     if saved == 0:
-        return f"Ranked {discovered} nearby options"
-    if discovered == 0:
+        return f"Ranked {external} nearby options"
+    if external == 0:
         return f"Ranked {saved} from your saves"
-    return f"Ranked {total} options ({saved} saved + {discovered} nearby)"
+    return f"Ranked {total} options ({saved} saved + {external} nearby)"
 
 
 def build_consult_tool(service: ConsultService) -> BaseTool:
@@ -90,15 +102,33 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
             ConsultFilters,
             Field(
                 description=(
-                    "Structural + discovery filters. Mirror PlaceObject plus "
-                    "radius_m and search_location_name."
+                    "Structural + discovery filters: radius_m, "
+                    "search_location_name, place_type, price range."
                 ),
             ),
         ],
+        state: Annotated[AgentState, InjectedState],
+        tool_call_id: Annotated[str, InjectedToolCallId],
+        place_suggestions: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Specific real place names from your world knowledge that "
+                    "fit the user's request and location. These are validated "
+                    "against the places provider — names that don't match a "
+                    "real venue are dropped automatically. Always populate this "
+                    "when you know the area. Limit 5. "
+                    "Examples: ['Rijksmuseum', 'Anne Frank House', 'Vondelpark'] "
+                    "for Amsterdam sightseeing; ['Leidseplein cafes', "
+                    "'Brouwerij 't IJ'] for Amsterdam drinks; "
+                    "['Ichiran', 'Fuji Ramen'] for Tokyo ramen. "
+                    "Leave empty ONLY if you have no knowledge of the area."
+                ),
+            ),
+        ] = None,
         preference_context: Annotated[
             str | None,
             Field(
-                default=None,
                 description=(
                     "One- or two-sentence summary composed from "
                     "taste_profile_summary and memory_summary, limited to "
@@ -109,9 +139,7 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
                     "user.' Omit irrelevant signals."
                 ),
             ),
-        ],
-        state: Annotated[AgentState, InjectedState],
-        tool_call_id: Annotated[str, InjectedToolCallId],
+        ] = None,
     ) -> Command[Any]:
         """Recommend a place.
 
@@ -131,6 +159,8 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
             loc: Location | None = (
                 Location(lat=raw_loc["lat"], lng=raw_loc["lng"]) if raw_loc else None
             )
+            if place_suggestions:
+                filters.place_suggestions = place_suggestions
             try:
                 response = await service.consult(
                     user_id=state["user_id"],
