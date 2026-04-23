@@ -161,6 +161,29 @@ def _last_ai_message(messages: list[Any]) -> AIMessage | None:
     return None
 
 
+def _parse_tool_message_payload(m: ToolMessage) -> dict[str, Any] | None:
+    """Return a dict payload for the tool_result SSE frame.
+
+    Our tool wrappers (consult/recall/save + `with_timeout`) always put
+    a JSON string in `ToolMessage.content`. LangGraph's `ToolNode`, however,
+    returns a plain error-string ToolMessage when the tool's argument
+    schema fails Pydantic validation (that happens before our wrapper
+    runs), producing `status="error"` and non-JSON content. Surface that
+    as a structured error payload so the client sees something actionable
+    instead of a bare `null`.
+    """
+    content = m.content if isinstance(m.content, str) else ""
+    if getattr(m, "status", None) == "error":
+        return {"error": "tool_call_failed", "message": content or "tool error"}
+    if not content:
+        return None
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return {"error": "non_json_content", "message": content[:500]}
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
 def _collect_current_turn_tool_results(messages: list[Any]) -> list[dict[str, Any]]:
     """Extract structured tool-result payloads produced during the current turn.
 
@@ -185,23 +208,11 @@ def _collect_current_turn_tool_results(messages: list[Any]) -> list[dict[str, An
     for m in current_turn:
         if not isinstance(m, ToolMessage):
             continue
-        content = m.content if isinstance(m.content, str) else ""
-        try:
-            payload = json.loads(content) if content else None
-        except json.JSONDecodeError:
-            payload = None
-        if payload is None:
-            logger.warning(
-                "tool_result payload=null: tool=%s content_type=%s content_repr=%r",
-                getattr(m, "name", None),
-                type(m.content).__name__,
-                m.content,
-            )
         raw.append(
             {
                 "tool": getattr(m, "name", None),
                 "tool_call_id": getattr(m, "tool_call_id", None),
-                "payload": payload,
+                "payload": _parse_tool_message_payload(m),
             }
         )
 

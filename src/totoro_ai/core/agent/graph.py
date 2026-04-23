@@ -12,6 +12,7 @@ LLM failure) and debug diagnostic steps in fallback_node.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 
@@ -191,7 +192,7 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
     streaming caller (via `get_stream_writer()`) receives the full,
     untruncated text.
     """
-    bound = llm.bind_tools(tools)
+    bound = llm.bind_tools(tools, parallel_tool_calls=False)
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         system_text = _render_system_prompt(state)
@@ -375,6 +376,26 @@ def fallback_node(state: AgentState) -> dict[str, Any]:
     }
 
 
+def _handle_tool_node_error(exc: Exception) -> str:
+    """Error handler for ToolNode — logs full traceback, returns JSON string.
+
+    ToolNode's default handler stringifies the exception into plain text,
+    which (a) hides the stack trace from the server log and (b) produces
+    non-JSON ToolMessage content that the SSE `tool_result` frame cannot
+    parse. Logging here captures the real cause (usually Pydantic
+    validation on `ConsultFilters` args from the LLM), and returning
+    JSON keeps the client payload structured.
+    """
+    logger.exception("ToolNode caught exception: %s", exc)
+    return json.dumps(
+        {
+            "error": "tool_invocation_failed",
+            "type": type(exc).__name__,
+            "message": str(exc)[:500],
+        }
+    )
+
+
 def build_graph(
     llm: Any,
     tools: list[Any],
@@ -388,7 +409,9 @@ def build_graph(
     """
     graph: StateGraph = StateGraph(AgentState)
     graph.add_node(NODE_AGENT, make_agent_node(llm, tools))
-    graph.add_node(NODE_TOOLS, ToolNode(tools))
+    graph.add_node(
+        NODE_TOOLS, ToolNode(tools, handle_tool_errors=_handle_tool_node_error)
+    )
     graph.add_node(NODE_FALLBACK, fallback_node)
     graph.set_entry_point(NODE_AGENT)
     graph.add_conditional_edges(
