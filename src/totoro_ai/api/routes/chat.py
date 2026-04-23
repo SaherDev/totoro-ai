@@ -93,12 +93,10 @@ async def chat_stream(
     }
 
     async def generate() -> AsyncGenerator[str, None]:
-        final_message = ""
-        tool_calls_used = 0
-        final_state_messages: list[Any] = []
+        final_state: dict[str, Any] = {}
         try:
-            async for event in agent_graph.astream_events(
-                payload, config=graph_config, version="v2"
+            async for stream_mode, chunk in agent_graph.astream(
+                payload, config=graph_config, stream_mode=["custom", "values"]
             ):
                 if await request.is_disconnected():
                     get_tracing_client().capture_message(
@@ -108,33 +106,28 @@ async def chat_stream(
                         user_id=body.user_id,
                     )
                     return
-                event_type = event.get("event", "")
-                if event_type == "on_custom_event":
-                    data = event.get("data", {})
-                    yield f"event: reasoning_step\ndata: {json.dumps(data)}\n\n"
-                elif event_type == "on_chain_end":
-                    output = event.get("data", {}).get("output", {})
-                    if isinstance(output, dict):
-                        messages = output.get("messages", [])
-                        for m in reversed(messages):
-                            if isinstance(m, AIMessage):
-                                text = extract_text_content(m.content)
-                                if text:
-                                    final_message = text
-                                    break
-                        if "tool_calls_used" in output:
-                            tool_calls_used = output["tool_calls_used"]
-                        if messages:
-                            final_state_messages = messages
+                if stream_mode == "custom":
+                    yield f"event: reasoning_step\ndata: {json.dumps(chunk)}\n\n"
+                elif stream_mode == "values":
+                    final_state = chunk
         except Exception as exc:
             logger.exception("chat_stream graph error: %s", exc)
             yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"
             return
 
-        for tool_result in _collect_current_turn_tool_results(final_state_messages):
-            yield (
-                f"event: tool_result\ndata: {json.dumps(tool_result)}\n\n"
-            )
+        messages: list[Any] = final_state.get("messages") or []
+        tool_calls_used: int = final_state.get("tool_calls_used") or 0
+
+        final_message = ""
+        for m in reversed(messages):
+            if isinstance(m, AIMessage):
+                text = extract_text_content(m.content)
+                if text:
+                    final_message = text
+                    break
+
+        for tool_result in _collect_current_turn_tool_results(messages):
+            yield f"event: tool_result\ndata: {json.dumps(tool_result)}\n\n"
         if final_message:
             yield f"event: message\ndata: {json.dumps({'content': final_message})}\n\n"
         done_payload = json.dumps({"tool_calls_used": tool_calls_used})
