@@ -153,7 +153,8 @@ class ExtractionService:
 
         _emit(
             "save.persist",
-            f"status={response.status}; results={len(response.results)}",
+            f"status={response.status}"
+            + (f"; {len(response.results)} saved" if response.results else ""),
         )
         await self._status_repo.write(rid, response.model_dump(mode="json"))
         return response

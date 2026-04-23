@@ -129,7 +129,7 @@ class ConsultService:
                     continue
             filtered_saved.append(place)
 
-        # Phase 2: discover external candidates via Google Places.
+        # Phase 2: discover external candidates via places provider.
         discovered_places: list[PlaceObject] = []
         if search_location:
             try:
@@ -143,7 +143,9 @@ class ConsultService:
                     )
                 _emit(
                     "consult.discover",
-                    f"{len(discovered_places)} candidates from Google Places",
+                    f"{len(discovered_places)} candidates from external discovery"
+                    if discovered_places
+                    else "no candidates from external discovery",
                 )
             except RuntimeError:
                 _emit(
@@ -159,11 +161,15 @@ class ConsultService:
         )
         _emit(
             "consult.merge",
-            f"merged {len(filtered_saved)} saved + {len(discovered_places)} discovered",
+            f"merged {len(filtered_saved)} saved + {len(discovered_places)} discovered"
+            if filtered_saved or discovered_places
+            else "no candidates to merge",
         )
         _emit(
             "consult.dedupe",
-            f"{len(deduped_places)} unique after dedup",
+            f"{len(deduped_places)} unique after dedup"
+            if deduped_places
+            else "no candidates after dedup",
         )
 
         # Phase 4: enrich with Tier 2 + Tier 3 data.
@@ -181,7 +187,9 @@ class ConsultService:
         )
         _emit(
             "consult.enrich",
-            f"enriched {len(enriched_places)} candidates",
+            f"enriched {len(enriched_places)} candidates"
+            if enriched_places
+            else "no candidates to enrich",
         )
 
         # Active-tier chip filter (ADR-061) — ONE remaining taste read on main path.
@@ -203,11 +211,12 @@ class ConsultService:
                             _place_matches_chip(p, chip) for chip in rejected_chips
                         )
                     ]
-                    _emit(
-                        "consult.chip_filter",
-                        f"filtered {before - len(enriched_places)}/{before} "
-                        "matching rejected chips",
-                    )
+                    removed = before - len(enriched_places)
+                    if removed > 0:
+                        _emit(
+                            "consult.chip_filter",
+                            f"filtered {removed}/{before} matching rejected chips",
+                        )
                 if confirmed_chips:
                     _emit(
                         "consult.chip_filter",

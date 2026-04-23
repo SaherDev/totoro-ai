@@ -58,7 +58,9 @@ class ExtractionPipeline:
         await self._enrichment.run(context)
         _emit(
             "save.enrich",
-            f"{len(context.candidates)} candidates from caption + NER",
+            f"{len(context.candidates)} candidates from caption + NER"
+            if context.candidates
+            else "no candidates found",
         )
 
         # Phase 2: validate candidates, then dedup by provider_id
@@ -66,7 +68,7 @@ class ExtractionPipeline:
         if results:
             _emit(
                 "save.validate",
-                f"{len(results)} validated via Google Places",
+                f"{len(results)} validated via place lookup",
             )
             return dedup_validated_by_provider_id(
                 results, self._extraction_config.confidence
@@ -75,7 +77,6 @@ class ExtractionPipeline:
         # Phase 3 only fires for URL inputs — background enrichers (subtitle,
         # whisper, vision) all require a video/page URL to process.
         if url is None:
-            _emit("save.validate", "0 validated via Google Places")
             return []
 
         # Phase 3: run background enrichers inline, re-validate
@@ -91,7 +92,12 @@ class ExtractionPipeline:
 
         results = await self._validator.validate(context.candidates)
         validated_count = len(results) if results else 0
-        _emit("save.validate", f"{validated_count} validated via Google Places")
+        _emit(
+            "save.validate",
+            f"{validated_count} validated via place lookup"
+            if validated_count
+            else "not validated",
+        )
         if results:
             return dedup_validated_by_provider_id(
                 results, self._extraction_config.confidence

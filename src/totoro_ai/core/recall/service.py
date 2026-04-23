@@ -119,7 +119,10 @@ class RecallService:
             location=location,
         )
 
-        _emit("recall.result", f"{len(raw_results)} places matched")
+        _emit(
+            "recall.result",
+            f"{len(raw_results)} places matched" if raw_results else "no places matched",  # noqa: E501
+        )
 
         places = [r.place for r in raw_results]
         enriched_places = (
