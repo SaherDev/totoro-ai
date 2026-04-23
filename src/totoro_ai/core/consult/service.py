@@ -24,6 +24,7 @@ RankingService deleted per ADR-058 — agent-driven ranking is deferred.
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 
 from totoro_ai.api.schemas.consult import (
     ConsultResponse,
@@ -262,6 +263,10 @@ class ConsultService:
         try:
             from totoro_ai.db.models import Recommendation
 
+            # Pre-generate UUID so we never access rec.id after commit()
+            # (async SQLAlchemy expiry makes post-commit PK reads unreliable).
+            rec_id = uuid4()
+
             # Persist only Tier 1 place fields — Tier 2 (geo) and Tier 3
             # (enrichment) live in Redis and are re-fetched on demand, so
             # storing them here would duplicate mutable cache state.
@@ -279,12 +284,13 @@ class ConsultService:
             ).model_dump(mode="json")
 
             rec = Recommendation(
+                id=rec_id,
                 user_id=user_id,
                 query=query,
                 response=response_data,
             )
             await self._recommendation_repo.save(rec)
-            return str(rec.id)
+            return str(rec_id)
         except Exception as exc:
             logger.warning(
                 "Failed to persist recommendation for user %s: %s", user_id, exc
