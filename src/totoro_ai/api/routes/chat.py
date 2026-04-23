@@ -17,6 +17,7 @@ from totoro_ai.core.agent.invocation import build_turn_payload
 from totoro_ai.core.agent.messages import extract_text_content
 from totoro_ai.core.chat.service import ChatService, _collect_current_turn_tool_results
 from totoro_ai.core.config import get_env
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,14 @@ async def chat_stream(
             async for event in agent_graph.astream_events(
                 payload, config=graph_config, version="v2"
             ):
+                if await request.is_disconnected():
+                    get_tracing_client().capture_message(
+                        message="chat_stream client disconnected",
+                        level="info",
+                        metadata={"user_id": body.user_id},
+                        user_id=body.user_id,
+                    )
+                    return
                 event_type = event.get("event", "")
                 if event_type == "on_custom_event":
                     data = event.get("data", {})
