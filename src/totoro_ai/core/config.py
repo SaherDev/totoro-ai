@@ -214,6 +214,7 @@ class ConsultConfig(BaseModel):
     default_radius_m: int = 1500
     nearby_radius_m: int = 500
     walking_radius_m: int = 1000
+    named_location_radius_m: int = 10000
     total_cap: int = 3
 
 

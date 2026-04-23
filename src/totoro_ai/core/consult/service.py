@@ -113,7 +113,11 @@ class ConsultService:
         if search_location is None and location:
             search_location = {"lat": location.lat, "lng": location.lng}
 
-        radius_m = filters.radius_m or config.consult.default_radius_m
+        radius_m = filters.radius_m or (
+            config.consult.named_location_radius_m
+            if filters.search_location_name
+            else config.consult.default_radius_m
+        )
 
         # Pre-filter saved places by distance if we have a search_location.
         filtered_saved: list[PlaceObject] = []

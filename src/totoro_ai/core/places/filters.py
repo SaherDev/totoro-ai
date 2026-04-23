@@ -11,7 +11,7 @@ sibling of `PlaceFilters`.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from totoro_ai.core.places.models import (
     PlaceAttributes,
@@ -40,8 +40,25 @@ class ConsultFilters(PlaceFilters):
     needs it — can be added later as typed fields on this class.
     """
 
-    radius_m: int | None = None
-    search_location_name: str | None = None
+    radius_m: int | None = Field(
+        default=None,
+        description=(
+            "Search radius in metres. Leave None to use the service default "
+            "(1500 m). Use a larger value (e.g. 5000) when the user says "
+            "'nearby' or 'around here' without specifying a tight area."
+        ),
+    )
+    search_location_name: str | None = Field(
+        default=None,
+        description=(
+            "Named location to search around — populate this whenever the "
+            "user names a place they are NOT currently at. Examples: "
+            "'find me something in Koh Samui' -> search_location_name='Koh Samui'; "
+            "'restaurants in Shibuya' -> search_location_name='Shibuya Tokyo'; "
+            "'what to do in Berlin' -> search_location_name='Berlin'. "
+            "Leave None only when the user is asking about their current location."
+        ),
+    )
 
 
 __all__ = ["PlaceFilters", "ConsultFilters"]
