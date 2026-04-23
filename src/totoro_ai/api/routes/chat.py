@@ -107,7 +107,8 @@ async def chat_stream(
                     )
                     return
                 if stream_mode == "custom":
-                    yield f"event: reasoning_step\ndata: {json.dumps(chunk)}\n\n"
+                    data = json.dumps(chunk, default=str)
+                    yield f"event: reasoning_step\ndata: {data}\n\n"
                 elif stream_mode == "values":
                     final_state = chunk
         except Exception as exc:
