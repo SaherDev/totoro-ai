@@ -29,15 +29,17 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
 
     # A1. Map onboarding_explicit rows to confirm / dismiss
+    # CASE returns text; cast to signaltype so the SET assignment matches
+    # the enum column type (Postgres does not implicitly coerce text → enum).
     op.execute(
         """
         UPDATE interaction_log
-        SET signal_type = CASE
+        SET signal_type = (CASE
             WHEN context->>'confirmed' = 'true'
                 THEN 'onboarding_confirm'
             ELSE 'onboarding_dismiss'
-        END
-        WHERE signal_type = 'onboarding_explicit'
+        END)::signaltype
+        WHERE signal_type = 'onboarding_explicit'::signaltype
         """
     )
 
