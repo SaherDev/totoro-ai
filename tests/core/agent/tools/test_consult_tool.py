@@ -28,7 +28,7 @@ def _place(pid: str) -> PlaceObject:
 def test_llm_visible_schema_hides_saved_places_user_id_location() -> None:
     schema = ConsultToolInput.model_json_schema()
     props = set(schema["properties"].keys())
-    assert props == {"query", "filters", "preference_context"}
+    assert props == {"query", "filters", "preference_context", "place_suggestions"}
 
 
 def test_consult_summary_nothing_matched() -> None:

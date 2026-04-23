@@ -141,8 +141,10 @@ async def test_emit_callback_fires_pipeline_steps_in_order(
     )
 
     steps = [s for s, _ in emitted]
-    # No geocode (no search_location_name), then discover → merge → dedupe → enrich.
-    assert "consult.discover" in steps
+    # No geocode (no search_location_name). Discovery is split into
+    # parallel keyword + suggestion emits, then merge → dedupe → enrich.
+    assert "consult.keywords" in steps
+    assert "consult.suggestions" in steps
     assert steps.index("consult.merge") < steps.index("consult.dedupe")
     assert steps.index("consult.dedupe") < steps.index("consult.enrich")
     assert "consult.geocode" not in steps

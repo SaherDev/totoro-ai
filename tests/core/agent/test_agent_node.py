@@ -57,7 +57,7 @@ async def test_agent_node_binds_tools_via_injected_llm(
 ) -> None:
     tools: list[Any] = []
     make_agent_node(captured_llm, tools)
-    captured_llm.bind_tools.assert_called_once_with(tools)
+    captured_llm.bind_tools.assert_called_once_with(tools, parallel_tool_calls=False)
 
 
 async def test_agent_node_renders_prompt_with_both_slots_substituted(
