@@ -134,7 +134,10 @@ class PlacesClient(Protocol):
     """Protocol for place validation, discovery, and validation against external database."""
 
     async def validate_place(
-        self, name: str, location: str | None = None
+        self,
+        name: str,
+        location: str | None = None,
+        location_bias: dict[str, float] | None = None,
     ) -> PlacesMatchResult:
         """Validate a place name and return match result."""
         ...
@@ -217,14 +220,19 @@ class GooglePlacesClient:
         self.api_key: str = api_key
 
     async def validate_place(
-        self, name: str, location: str | None = None
+        self,
+        name: str,
+        location: str | None = None,
+        location_bias: dict[str, float] | None = None,
     ) -> PlacesMatchResult:
         """
         Validate place name against Google Places using Text Search API.
 
         Args:
             name: Place name to validate
-            location: Optional location/address context
+            location: Optional location/address context appended to the query
+            location_bias: Optional {"lat": float, "lng": float} — passed as
+                a circle locationbias to pin results to the right area
 
         Returns:
             PlacesMatchResult with match quality and details
@@ -233,24 +241,25 @@ class GooglePlacesClient:
         config = get_config()
         places_config = config.external_services.google_places
 
-        query = f"{name}"
-        if location:
-            query = f"{name} {location}"
+        query = f"{name} {location}".strip() if location else name
 
-        # Build fields parameter from config
         fields = ",".join(places_config.request_fields)
+        params: dict[str, str | float] = {
+            "input": query,
+            "inputtype": "textquery",
+            "fields": fields,
+            "key": self.api_key,
+            "region": places_config.default_region,
+        }
+        if location_bias:
+            lat, lng = location_bias["lat"], location_bias["lng"]
+            params["locationbias"] = f"circle:50000@{lat},{lng}"
 
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(
                     places_config.base_url,
-                    params={
-                        "input": query,
-                        "inputtype": "textquery",
-                        "fields": fields,
-                        "key": self.api_key,
-                        "region": places_config.default_region,
-                    },
+                    params=params,
                     timeout=places_config.timeout_seconds,
                 )
                 response.raise_for_status()

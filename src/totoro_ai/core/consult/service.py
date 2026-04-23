@@ -164,11 +164,16 @@ class ConsultService:
         # Phase 2b: validate agent-suggested place names.
         suggestions = (filters.place_suggestions or [])[:5]
         if suggestions:
-            location_ctx = filters.search_location_name or query
+            from totoro_ai.core.places.places_client import PlacesMatchQuality
+            location_ctx = filters.search_location_name or None
+
             async def _validate(name: str) -> PlaceObject | None:
                 try:
-                    result = await self._places_client.validate_place(name, location_ctx)
-                    from totoro_ai.core.places.places_client import PlacesMatchQuality
+                    result = await self._places_client.validate_place(
+                        name,
+                        location=location_ctx,
+                        location_bias=search_location,
+                    )
                     if result.match_quality in (
                         PlacesMatchQuality.EXACT, PlacesMatchQuality.FUZZY
                     ):
