@@ -35,7 +35,7 @@ models:
     max_tokens: 512
     temperature: 0
 
-  intent_parser:
+  extractor:
     provider: openai
     model: gpt-4o-mini
     max_tokens: 512
@@ -48,35 +48,16 @@ models:
     dimensions: 1024
 
   orchestrator:
-    provider: anthropic
-    model: claude-sonnet-4-6
+    provider: openai
+    model: gpt-4o-mini
     max_tokens: 1024
     temperature: 0.7
-
-  evaluator:
-    provider: openai
-    model: gpt-4o-mini
-    max_tokens: 256
-    temperature: 0
-  # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
-
-  chat_assistant:
-    provider: openai
-    model: gpt-4o-mini
-    max_tokens: 1024
-    temperature: 0.9
 
   taste_regen:
     provider: openai
     model: gpt-4o-mini
     max_tokens: 512
     temperature: 0.3
-
-  intent_router:
-    provider: groq
-    model: llama-3.1-8b-instant
-    max_tokens: 256
-    temperature: 0
 
 # ---------------------------------------------------------------------------
 # Extraction pipeline — confidence weights and decision thresholds
@@ -180,6 +161,7 @@ consult:
   response_timeout_seconds: 10
   default_radius_m: 1500
   nearby_radius_m: 500
+  named_location_radius_m: 10000
   walking_radius_m: 1000
   total_cap: 3
 
@@ -212,6 +194,26 @@ embeddings:
 # ---------------------------------------------------------------------------
 prompts:
   taste_regen: taste_regen.txt
+  agent: agent.txt
+
+# ---------------------------------------------------------------------------
+# Agent Configuration (feature 027 M2, ADR-062)
+# enabled is controlled by AGENT_ENABLED env var (EnvConfig), default true.
+# max_steps / max_errors bound the graph's should_continue loop (M3).
+# tool_timeouts_seconds consumed by tool wrappers (M5) and timeout guard (M9).
+# checkpointer_ttl_seconds reserved for a future cleanup job (Postgres has
+# no native TTL; periodic cleanup is deferred).
+# ---------------------------------------------------------------------------
+agent:
+  max_steps: 10
+  max_errors: 3
+  max_history_messages: 40
+  checkpointer_ttl_seconds: 86400
+  prompt_caching_enabled: false  # ADR-067: Anthropic-only (ephemeral cache_control). Re-enable when orchestrator returns to Anthropic.
+  tool_timeouts_seconds:
+    recall: 5
+    consult: 10
+    save: 25
 
 # ---------------------------------------------------------------------------
 # Taste Model Configuration

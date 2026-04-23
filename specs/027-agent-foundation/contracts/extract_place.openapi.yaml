@@ -1,0 +1,135 @@
+openapi: 3.1.0
+info:
+  title: Extract Place — v2 envelope (ADR-063)
+  version: "2.0.0"
+  description: |
+    Fragment contract for `ExtractPlaceResponse` and `ExtractPlaceItem` after
+    the M0.5 schema cleanup. This file is NOT a standalone service contract —
+    it documents only the shape used by `POST /v1/chat` (extract-place dispatch
+    path) and `GET /v1/extraction/{request_id}`.
+
+    Pre-M0.5 shape had `source_url` + item-level `pending`/`failed` statuses
+    with nullable `place`/`confidence`. This version:
+      - moves pipeline status (pending/completed/failed) to the envelope
+      - removes item-level pending/failed
+      - makes item place/confidence required (non-nullable)
+      - renames source_url -> raw_input (verbatim echo)
+      - bumps Redis key prefix to `extraction:v2:` (operational note, not API)
+
+    Binding ADR: ADR-063 (to be added in docs/decisions.md as part of this
+    feature). Coordinated with the product repo (NestJS) per FR-036.
+
+components:
+  schemas:
+    ExtractPlaceResponse:
+      type: object
+      required: [status, results]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [pending, completed, failed]
+          description: |
+            Pipeline-level status.
+            - `pending`: route-layer create_task has been scheduled; real
+              outcome will land in Redis under `extraction:v2:{request_id}`
+              within the pipeline's usual budget. Only returned by the
+              HTTP dispatch path, never by `ExtractionService.run()` directly.
+            - `completed`: at least one above-threshold outcome; `results`
+              is non-empty.
+            - `failed`: pipeline returned nothing OR every candidate fell
+              below the save threshold; `results` is empty.
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExtractPlaceItem"
+          description: |
+            Empty iff `status != "completed"`. Below-threshold outcomes
+            are filtered out — they contribute only to the envelope-level
+            `failed` decision.
+        raw_input:
+          type: [string, "null"]
+          description: |
+            Verbatim echo of the user-supplied input that triggered this
+            extraction. NOT trimmed, NOT URL-canonicalized, NOT case-folded.
+            Any normalization happens internally on a private copy. Replaces
+            the pre-M0.5 `source_url` field.
+        request_id:
+          type: [string, "null"]
+          description: |
+            Hex UUID. Present on `pending` (for polling) and on terminal
+            envelopes returned by `ExtractionService.run()`.
+
+    ExtractPlaceItem:
+      type: object
+      required: [place, confidence, status]
+      additionalProperties: false
+      properties:
+        place:
+          $ref: "#/components/schemas/PlaceObject"
+          description: |
+            Non-null. The extracted place. Schema defined elsewhere
+            (`src/totoro_ai/core/places/models.py` per ADR-056).
+        confidence:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Non-null. Extraction confidence per ADR-057.
+        status:
+          type: string
+          enum: [saved, needs_review, duplicate]
+          description: |
+            Per-place outcome. Never `pending` or `failed` — pipeline-level
+            states live on the envelope only.
+
+    PlaceObject:
+      description: |
+        Reference only — defined in the AI repo under
+        `src/totoro_ai/core/places/models.py`. Not redefined here to avoid
+        drift. Unified return shape across services (ADR-056, feature 019).
+      type: object
+
+paths:
+  /v1/chat:
+    post:
+      summary: Unified chat entry (ADR-052)
+      description: |
+        When the dispatched intent is extract-place, the response's
+        `data` field is an `ExtractPlaceResponse` with `status="pending"`
+        (inline return) and a `request_id` for polling.
+      x-contract-note: |
+        Only documented here for the extract-place dispatch path. The full
+        /v1/chat contract lives in `docs/api-contract.md`.
+
+  /v1/extraction/{request_id}:
+    get:
+      summary: Poll extraction status (ADR-048)
+      parameters:
+        - in: path
+          name: request_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Envelope with current pipeline status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractPlaceResponse"
+        "404":
+          description: |
+            `request_id` not found under the `extraction:v2:` Redis prefix.
+            Same response as TTL expiry — the product repo already handles
+            this state. No legacy `extraction:v1:` keys are read; operators
+            must avoid mid-extraction redeploys (solo-dev / Railway context).
+
+x-coordination:
+  product-repo: |
+    NestJS TypeScript `ExtractPlaceResponse` must ship a lockstep schema
+    update before this AI-repo change deploys. Callsites that read
+    `results[0].status` must flip to `response.status`. Callsites that read
+    `source_url` must rename to `raw_input`. FR-036 makes this coordination
+    a binding constraint, not a soft dependency.
+  redis-prefix: "extraction:v2:{request_id}; 3600s TTL; no v1 read fallback."

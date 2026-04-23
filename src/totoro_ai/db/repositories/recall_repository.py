@@ -356,26 +356,34 @@ class SQLAlchemyRecallRepository:
         if filters.created_before is not None:
             clauses.append("p.created_at <= :created_before")
             params["created_before"] = filters.created_before
-        if filters.cuisine is not None:
-            clauses.append("p.attributes->>'cuisine' = :cuisine")
-            params["cuisine"] = filters.cuisine
-        if filters.price_hint is not None:
-            clauses.append("p.attributes->>'price_hint' = :price_hint")
-            params["price_hint"] = filters.price_hint
-        if filters.ambiance is not None:
-            clauses.append("p.attributes->>'ambiance' = :ambiance")
-            params["ambiance"] = filters.ambiance
-        if filters.neighborhood is not None:
-            clauses.append(
-                "p.attributes->'location_context'->>'neighborhood' = :neighborhood"
-            )
-            params["neighborhood"] = filters.neighborhood
-        if filters.city is not None:
-            clauses.append("p.attributes->'location_context'->>'city' = :city")
-            params["city"] = filters.city
-        if filters.country is not None:
-            clauses.append("p.attributes->'location_context'->>'country' = :country")
-            params["country"] = filters.country
+        # Attribute-level signals nest under filters.attributes to mirror
+        # PlaceObject.attributes (ADR-056 + feature 027 pulled-forward M4).
+        attrs = filters.attributes
+        if attrs is not None:
+            if attrs.cuisine is not None:
+                clauses.append("p.attributes->>'cuisine' = :cuisine")
+                params["cuisine"] = attrs.cuisine
+            if attrs.price_hint is not None:
+                clauses.append("p.attributes->>'price_hint' = :price_hint")
+                params["price_hint"] = attrs.price_hint
+            if attrs.ambiance is not None:
+                clauses.append("p.attributes->>'ambiance' = :ambiance")
+                params["ambiance"] = attrs.ambiance
+            loc = attrs.location_context
+            if loc is not None:
+                if loc.neighborhood is not None:
+                    clauses.append(
+                        "p.attributes->'location_context'->>'neighborhood' = :neighborhood"
+                    )
+                    params["neighborhood"] = loc.neighborhood
+                if loc.city is not None:
+                    clauses.append("p.attributes->'location_context'->>'city' = :city")
+                    params["city"] = loc.city
+                if loc.country is not None:
+                    clauses.append(
+                        "p.attributes->'location_context'->>'country' = :country"
+                    )
+                    params["country"] = loc.country
         if filters.tags_include is not None:
             clauses.append("p.tags @> :tags_include::jsonb")
             # sqlalchemy will serialize the list; we pass JSON via json.dumps

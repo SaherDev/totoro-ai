@@ -77,7 +77,7 @@ def test_get_llm_returns_openai_client_for_ollama_provider() -> None:
     cfg = _mock_config("ollama", "gemma4:e2b")
     with (
         patch("totoro_ai.providers.llm.get_config", return_value=cfg),
-        patch("totoro_ai.providers.llm.get_secrets"),
+        patch("totoro_ai.providers.llm.get_env"),
     ):
         client = get_llm("intent_parser")
     assert isinstance(client, OpenAILLMClient)
@@ -91,7 +91,7 @@ def test_get_instructor_client_returns_instructor_for_ollama_provider() -> None:
     cfg = _mock_config("ollama", "gemma4:e2b")
     with (
         patch("totoro_ai.providers.llm.get_config", return_value=cfg),
-        patch("totoro_ai.providers.llm.get_secrets"),
+        patch("totoro_ai.providers.llm.get_env"),
     ):
         client = get_instructor_client("intent_parser")
     assert isinstance(client, InstructorClient)

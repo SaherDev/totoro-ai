@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import subprocess
@@ -18,7 +19,7 @@ from totoro_ai.core.extraction.types import (
 )
 from totoro_ai.core.places import PlaceAttributes, PlaceCreate, PlaceType
 from totoro_ai.providers.llm import InstructorClient
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +84,12 @@ class SubtitleCheckEnricher:
         self._instructor_client = instructor_client
         self._config = config
 
-    async def enrich(self, context: ExtractionContext) -> None:
-        if not context.url:
-            return
+    def _download_subtitles(self, url: str, subtitle_dir: Path) -> str | None:
+        """Download subtitles via yt-dlp and return cleaned transcript text.
 
-        subtitle_dir = Path(self._config.output_dir)
+        Runs synchronously — must be called via run_in_executor.
+        """
         subtitle_dir.mkdir(parents=True, exist_ok=True)
-
         subprocess.run(
             [
                 "yt-dlp",
@@ -100,21 +100,31 @@ class SubtitleCheckEnricher:
                 self._config.format,
                 "-o",
                 str(subtitle_dir / "%(id)s"),
-                context.url,
+                url,
             ],
             capture_output=True,
             text=True,
         )
-
         vtt_files = list(subtitle_dir.glob(f"*.{self._config.format}"))
         if not vtt_files:
-            return
-
+            return None
         vtt_path = vtt_files[0]
         try:
-            raw_vtt = vtt_path.read_text(encoding="utf-8")
+            return vtt_path.read_text(encoding="utf-8")
         finally:
             vtt_path.unlink(missing_ok=True)
+
+    async def enrich(self, context: ExtractionContext) -> None:
+        if not context.url:
+            return
+
+        subtitle_dir = Path(self._config.output_dir)
+        loop = asyncio.get_running_loop()
+        raw_vtt = await loop.run_in_executor(
+            None, self._download_subtitles, context.url, subtitle_dir
+        )
+        if not raw_vtt:
+            return
 
         clean_text = _strip_vtt(raw_vtt)
         if not clean_text:
@@ -126,14 +136,12 @@ class SubtitleCheckEnricher:
         await self._extract_places(clean_text, context)
 
     async def _extract_places(self, text: str, context: ExtractionContext) -> None:
-        langfuse = get_langfuse_client()
-        generation = None
-        if langfuse:
-            generation = langfuse.generation(
-                name="subtitle_check_enricher",
-                input={"text_length": len(text)},
-                model="gpt-4o-mini",
-            )
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="subtitle_check_enricher",
+            input={"text_length": len(text)},
+            model="gpt-4o-mini",
+        )
 
         try:
             response = cast(
@@ -153,8 +161,7 @@ class SubtitleCheckEnricher:
                 ),
             )
 
-            if generation:
-                generation.end(output={"place_count": len(response.places)})
+            span.end(output={"place_count": len(response.places)})
 
             for ner in response.places:
                 if not ner.place_name:
@@ -173,6 +180,5 @@ class SubtitleCheckEnricher:
                 )
 
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             logger.warning("SubtitleCheckEnricher NER failed: %s", exc, exc_info=True)

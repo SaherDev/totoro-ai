@@ -4,13 +4,13 @@
 
 ## Project Context
 
-Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: intent parsing, place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, Instructor, pgvector, Redis, Langfuse. Models: llama-3.1-8b-instant/Groq (intent routing), GPT-4o-mini/OpenAI (intent parsing, chat assistant, vision, evals), claude-sonnet-4-6/Anthropic (orchestration), voyage-4-lite/Voyage AI (embeddings), whisper-large-v3-turbo/Groq (transcription). SDKs: OpenAI SDK, Anthropic SDK, Groq SDK, Voyage AI SDK. Deployed on Railway.
+Totoro-ai is the AI engine behind Totoro — an AI-native place decision engine. Users share places over time, the system builds a taste model, and returns one confident recommendation from natural language intent. This repo is pure Python: place extraction, embeddings, ranking, taste modeling, agent orchestration, and evaluations. The product repo (`totoro`) calls this repo over HTTP only. Stack: Python 3.11, Poetry, FastAPI, LangGraph, LangChain, Pydantic, Instructor, pgvector, Redis, Langfuse. Models: claude-sonnet-4-6/Anthropic (orchestration), GPT-4o-mini/OpenAI (taste regen, vision), voyage-4-lite/Voyage AI (embeddings), whisper-large-v3-turbo/Groq (transcription). SDKs: OpenAI SDK, Anthropic SDK, Groq SDK, Voyage AI SDK. Deployed on Railway.
 
 ## Key Directories
 
 - `src/totoro_ai/` — main package (src layout)
   - `api/` — FastAPI routes and request/response schemas
-  - `core/` — domain modules: intent/, extraction/, memory/, ranking/, taste/, agent/ (intent parsing, place extraction, memory and retrieval, ranking, taste modeling, agent orchestration)
+  - `core/` — domain modules: extraction/, memory/, ranking/, taste/, agent/ (place extraction, memory and retrieval, ranking, taste modeling, agent orchestration)
   - `providers/` — LLM/embedding provider abstraction (config-driven via YAML)
   - `eval/` — evaluation harnesses and datasets
 - `tests/` — pytest tests mirroring src structure
@@ -42,7 +42,7 @@ docker compose down -v                # stop services and remove volumes
 - **Naming**: snake_case everywhere. Pydantic models are PascalCase. Files match module name.
 - **Types**: All function signatures typed. Pydantic models for all LLM input/output schemas. `mypy --strict` is the target.
 - **Secrets management** (ADR-051): `.env` in the project root (gitignored symlink → `totoro-config/secrets/ai.env.local`). Copy `config/.env.example`, fill in your secrets — never committed. CI/CD injects secrets as environment variables at deploy time.
-- **Provider abstraction**: `config/app.yaml` under `models:` maps logical roles (intent_router, intent_parser, chat_assistant, orchestrator, embedder, etc.) to provider + model + params. Code never hardcodes model names — always reads from config.
+- **Provider abstraction**: `config/app.yaml` under `models:` maps logical roles (orchestrator, extractor, embedder, taste_regen, vision_frames, transcriber) to provider + model + params. Code never hardcodes model names — always reads from config.
 - **API versioning**: All FastAPI routes live under `/v1/` prefix to match the product repo convention.
 - **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via `POST /v1/chat` (unified conversational entry — ADR-052) and `GET /v1/health` (see `docs/api-contract.md`). Never import from or depend on the product repo.
 - **Pydantic everywhere**: Request/response schemas, LLM output parsing, internal data transfer — all Pydantic. No raw dicts crossing function boundaries.
@@ -82,12 +82,12 @@ See @.claude/rules/git.md for branch naming, commit format, and merge flow.
 - **API testing**: Bruno collection at `totoro-config/bruno/`. New endpoints should have a corresponding `.bru` request file added there.
 
 ## Recent Changes
+- 024-agent-tool-migration: LangGraph agent (Claude Sonnet) replaces intent-router dispatch (ADR-062, ADR-065). Three tools — recall, save, consult. ConsultService signature changed to take agent-parsed args. ExtractPlaceResponse schema upgraded to two-level status (ADR-063). Reasoning traces via service-emit / wrapper-wrap pattern (ADR-064). SSE streaming at `POST /v1/chat/stream`. NodeInterrupt on `needs_review` saves (M8). Per-tool timeouts + failure-budget guard (M9). Deleted: IntentParser, classify_intent, ChatAssistantService, and the intent_router / intent_parser / chat_assistant / evaluator model roles (evaluator was reserved but never wired). `GET /v1/extraction/{request_id}` polling route retained for background extractions.
 - 023-onboarding-signal-tier: Signal tier (cold/warming/chip_selection/active) derived from config-driven `chip_selection_stages` (ADR-061). `GET /v1/user/context` returns `signal_tier` + chips with `status`/`selection_round`. Product repo gates tier routing — it reads `/v1/user/context` and forwards `signal_tier` on `/v1/chat` + `/v1/consult` requests; `ConsultResponse` is NOT extended with an envelope. New `chip_confirm` variant on `POST /v1/signal` writes a CHIP_CONFIRM interaction row with metadata, merges chip statuses (confirmed immutable; rejected may resurface when signal grows), and dispatches `ChipConfirmed` which forces an immediate taste-profile rewrite. Warming tier applies a config-driven 80/20 discovered/saved candidate-count blend.
-- 022-recommendations-context-signals: Renamed `consult_logs` → `recommendations` (ADR-060). ConsultService returns `recommendation_id`. New `GET /v1/user/context` (taste chips + saved count). Replaced `POST /v1/feedback` with `POST /v1/signal` (recommendation_id validation, discriminated union).
-- 021-taste-profile-memory: Replaced EMA taste model with signal_counts + LLM summary + chips (ADR-058). Deleted RankingService. Simplified interactions table (InteractionType enum, append-only, no gain/context). Debounced regen via asyncio. Unified `on_taste_signal` handler. ConsultService returns candidates unranked (agent-driven ranking deferred).
 
 
 ## Active Technologies
-- Python 3.11, FastAPI, SQLAlchemy async + asyncpg, Pydantic 2, Instructor, pgvector, Redis, Langfuse, Alembic. Voyage embeddings; Claude Opus orchestrator; GPT-4o-mini for taste regen + chat assistant.
-- PostgreSQL on Railway (this repo writes `places`, `embeddings`, `taste_model`, `interactions`, `recommendations`, `user_memories`). TypeORM in the product repo owns `users`, `user_settings`.
+- `PlaceFilters` / `RecallFilters` / `ConsultFilters` family in `core/places/filters.py` + `core/recall/types.py` (Pydantic extensions of a shared base mirroring `PlaceObject` per ADR-056)
+- `EmitFn` primitive callback pattern in `core/emit.py`; recall/consult/extraction services gain optional `emit` parameter; `ConsultResponse.reasoning_steps` removed
+- `core/agent/tools/` module (LangGraph 0.3 tools via `@tool` + `Annotated[..., InjectedState]`; `saved_places` threaded tool→tool via `state["last_recall_results"]`; `_emit.py` helpers fan out to `langgraph.config.get_stream_writer()`; `_timeout.py` wraps each tool in `asyncio.wait_for`); SSE at `POST /v1/chat/stream`; compiled graph warmed eagerly in `api/main.py` lifespan
 

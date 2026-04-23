@@ -8,10 +8,42 @@ from importlib.metadata import version as pkg_version
 from fastapi import APIRouter, FastAPI
 from sqlalchemy import text
 
+# Backport of the LangGraph 0.4.x fix for a weak-reference race in the pregel
+# runner: when the PregelRunner is GC'd before uvloop fires its done-callbacks,
+# self.callback() returns None and the call raises TypeError. Guard it so the
+# callback is silently skipped instead of crashing uvloop's Handle._run.
+# Fixed upstream in LangGraph 0.4.x (walrus-operator guard); remove once we
+# upgrade past 0.3.x.
+try:
+    from langgraph.pregel.runner import FuturesDict, _exception, _should_stop_others
+
+    def _safe_on_done(self, task, fut):  # type: ignore[override]
+        try:
+            cb = self.callback()
+            if cb is not None:
+                cb(task, _exception(fut))
+        finally:
+            with self.lock:
+                self.done.add(fut)
+                self.counter -= 1
+                if self.counter == 0 or _should_stop_others(self.done):
+                    self.event.set()
+
+    FuturesDict.on_done = _safe_on_done  # type: ignore[method-assign]
+except Exception:
+    pass
+
 from totoro_ai.api.errors import register_error_handlers
 from totoro_ai.api.routes.chat import router as chat_router
+from totoro_ai.api.routes.extraction import router as extraction_router
 from totoro_ai.api.routes.signal import router as signal_router
 from totoro_ai.api.routes.user_context import router as user_context_router
+
+# Agent checkpointer warmup (feature 028 M6). The compiled StateGraph is
+# built per-request in `get_agent_graph` so its tools see request-scoped
+# DB sessions; only the checkpointer (which owns its own psycopg pool) is
+# process-scoped.
+from totoro_ai.core.agent.checkpointer import build_checkpointer
 from totoro_ai.core.config import get_config
 from totoro_ai.db.session import _get_session_factory
 
@@ -64,16 +96,48 @@ except PackageNotFoundError:
     _version = "0.1.0"
 
 
+async def _warm_agent_checkpointer(app: FastAPI) -> None:
+    """Build and stash the process-scoped agent checkpointer (feature 028 M6).
+
+    The checkpointer owns its own psycopg connection pool and is safely
+    reused across requests. The compiled StateGraph itself is built
+    per-request via `get_agent_graph` so its tools see request-scoped
+    SQLAlchemy sessions and the real EventDispatcher.
+    """
+    app.state.agent_checkpointer = await build_checkpointer()
+    logger.info("Agent checkpointer warmed (feature 028 M6)")
+
+
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _validate_embedding_fts_alignment()
     # ADR-059: prompts are already loaded during get_config() at module scope
     logger.info("Loaded %d prompt templates", len(get_config().prompts))
+
+    try:
+        await _warm_agent_checkpointer(app)
+    except Exception:
+        logger.exception(
+            "Agent checkpointer warmup failed; agent path will surface errors."
+        )
+        app.state.agent_checkpointer = None
+
     yield
+
     # ADR-058: cancel in-flight taste regen debounce tasks on shutdown
     from totoro_ai.core.taste.debounce import regen_debouncer
 
     await regen_debouncer.cancel_all()
+
+    # Close the checkpointer connection pool gracefully.
+    checkpointer = getattr(app.state, "agent_checkpointer", None)
+    if checkpointer is not None:
+        try:
+            pool = getattr(checkpointer, "conn", None)
+            if pool is not None:
+                await pool.close()
+        except Exception:
+            logger.exception("Error closing checkpointer pool on shutdown")
 
 
 app = FastAPI(
@@ -106,6 +170,7 @@ async def health() -> dict[str, str]:
 
 # Include routers (ADR-052: /v1/chat handles conversational traffic)
 router.include_router(chat_router, prefix="")
+router.include_router(extraction_router, prefix="")
 router.include_router(signal_router, prefix="")
 router.include_router(user_context_router, prefix="")
 app.include_router(router)

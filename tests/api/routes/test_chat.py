@@ -96,14 +96,14 @@ class TestChatRouteHappyPath:
         data = response.json()
         assert data["type"] == "recall"
 
-    def test_assistant_intent_returns_200_with_type(
+    def test_agent_intent_returns_200_with_type(
         self, client: TestClient, mock_chat_service: AsyncMock
     ) -> None:
-        """Response shape for assistant intent."""
+        """Response shape for agent response (ADR-065: replaces legacy assistant)."""
         mock_chat_service.run.return_value = ChatResponse(
-            type="assistant",
+            type="agent",
             message="Tipping is not expected in Japan.",
-            data=None,
+            data={"reasoning_steps": []},
         )
 
         response = client.post(
@@ -113,8 +113,7 @@ class TestChatRouteHappyPath:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["type"] == "assistant"
-        assert data["data"] is None
+        assert data["type"] == "agent"
 
     def test_chat_with_location_passes_through(
         self, client: TestClient, mock_chat_service: AsyncMock
@@ -172,6 +171,47 @@ class TestChatRouteClarification:
         data = response.json()
         assert data["type"] == "clarification"
         assert data["data"] is None
+
+
+class TestChatRouteToolCallsUsed:
+    """Verify POST /v1/chat response includes tool_calls_used."""
+
+    def test_agent_response_includes_tool_calls_used(
+        self, client: TestClient, mock_chat_service: AsyncMock
+    ) -> None:
+        mock_chat_service.run.return_value = ChatResponse(
+            type="agent",
+            message="Here are some ramen spots.",
+            data={"reasoning_steps": []},
+            tool_calls_used=2,
+        )
+
+        response = client.post(
+            "/v1/chat",
+            json={"user_id": "user_1", "message": "find me ramen"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tool_calls_used"] == 2
+
+    def test_tool_calls_used_defaults_to_zero(
+        self, client: TestClient, mock_chat_service: AsyncMock
+    ) -> None:
+        mock_chat_service.run.return_value = ChatResponse(
+            type="agent",
+            message="No tools needed.",
+            data={"reasoning_steps": []},
+        )
+
+        response = client.post(
+            "/v1/chat",
+            json={"user_id": "user_1", "message": "hello"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["tool_calls_used"] == 0
 
 
 class TestChatRouteValidation:

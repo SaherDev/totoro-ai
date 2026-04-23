@@ -13,8 +13,8 @@ from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
 from pydantic import BaseModel, ValidationError
 
-from totoro_ai.core.config import get_config, get_secrets
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.core.config import get_config, get_env
+from totoro_ai.providers.tracing import get_tracing_client
 
 # --- Protocols ---
 
@@ -51,15 +51,11 @@ class OpenAIVisionExtractor:
             for frame in frames
         ]
 
-        langfuse = get_langfuse_client()
-        generation = (
-            langfuse.generation(
-                name="vision_frames_enricher",
-                input={"frame_count": len(frames)},
-                model=self._model,
-            )
-            if langfuse
-            else None
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="vision_frames_enricher",
+            input={"frame_count": len(frames)},
+            model=self._model,
         )
 
         messages: list[Any] = [
@@ -91,12 +87,10 @@ class OpenAIVisionExtractor:
                 for line in text.splitlines()
                 if line.strip()
             ]
-            if generation:
-                generation.end(output={"name_count": len(names)})
+            span.end(output={"name_count": len(names)})
             return names
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             raise
 
 
@@ -291,7 +285,7 @@ def get_llm(role: str) -> LLMClientProtocol:
         ValueError: If provider is unsupported
     """
     role_config = get_config().models[role]
-    secrets = get_secrets()
+    secrets = get_env()
 
     provider = role_config.provider
     model = role_config.model
@@ -335,6 +329,56 @@ def get_llm(role: str) -> LLMClientProtocol:
     raise ValueError(f"Unsupported provider: {provider}")
 
 
+def get_langchain_chat_model(role: str) -> Any:
+    """Return a LangChain-compatible chat model for the given logical role.
+
+    LangGraph's agent graph requires a chat model with `.bind_tools()` and
+    `.ainvoke(messages)`. The totoro `LLMClientProtocol` returned by
+    `get_llm(...)` is a simpler `complete`/`stream` client — it does not
+    satisfy LangChain's runnable protocol. This helper reads the same
+    `config/app.yaml` entries under `models.<role>` and constructs the
+    matching LangChain `Chat*` model. Feature 028 M6 uses this for the
+    orchestrator.
+
+    Raises:
+        ValueError: If the configured provider has no LangChain adapter yet.
+    """
+    role_config = get_config().models[role]
+    secrets = get_env()
+
+    provider = role_config.provider
+    model = role_config.model
+    max_tokens = role_config.max_tokens
+    temperature = role_config.temperature
+
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(
+            model=model,
+            max_tokens_to_sample=max_tokens,
+            temperature=temperature,
+            api_key=secrets.ANTHROPIC_API_KEY,
+            timeout=None,
+            stop=None,
+        )
+
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            api_key=secrets.OPENAI_API_KEY,
+        )
+
+    raise ValueError(
+        f"Unsupported provider for LangChain chat model: {provider!r}. "
+        "Add an adapter here when a new provider is configured for the agent path."
+    )
+
+
 def get_instructor_client(role: str) -> InstructorClient:
     """Get Instructor-patched client for structured extraction.
 
@@ -368,7 +412,7 @@ def get_instructor_client(role: str) -> InstructorClient:
 
     return InstructorClient(
         model=role_config.model,
-        api_key=get_secrets().OPENAI_API_KEY,
+        api_key=get_env().OPENAI_API_KEY,
     )
 
 
@@ -378,7 +422,7 @@ def get_vision_extractor(role: str = "vision_frames") -> VisionExtractorProtocol
     Resolves provider and model from config/app.yaml under the 'models' key.
     """
     role_config = get_config().models[role]
-    secrets = get_secrets()
+    secrets = get_env()
 
     if role_config.provider == "openai":
         return OpenAIVisionExtractor(

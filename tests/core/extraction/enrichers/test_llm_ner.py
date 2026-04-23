@@ -252,3 +252,47 @@ class TestLLMNEREnricher:
         ctx = ExtractionContext(url=None, user_id="u1", caption="text")
         result = await enricher_two_places.enrich(ctx)
         assert result is None
+
+    async def test_food_market_classified_as_food_and_drink(self) -> None:
+        """Tsukiji Outer Market is a food destination → food_and_drink/market.
+
+        This was rejected before 'market' was added to the food_and_drink
+        subcategory vocabulary. Regression guard.
+        """
+        client = _mock_instructor(
+            [
+                _ner_place(
+                    "Tsukiji Outer Market",
+                    place_type=PlaceType.food_and_drink,
+                    subcategory="market",
+                    city="Tokyo",
+                )
+            ]
+        )
+        enricher = LLMNEREnricher(instructor_client=client)
+        ctx = ExtractionContext(
+            url=None,
+            user_id="u1",
+            caption="Amazing street food at Tsukiji Outer Market in Tokyo",
+        )
+        await enricher.enrich(ctx)
+        assert len(ctx.candidates) == 1
+        place = ctx.candidates[0].place
+        assert place.place_name == "Tsukiji Outer Market"
+        assert place.place_type == PlaceType.food_and_drink
+        assert place.subcategory == "market"
+
+    async def test_market_subcategory_prompt_guidance_present(self) -> None:
+        """System prompt must contain the market classification rule with examples."""
+        client = _mock_instructor([])
+        enricher = LLMNEREnricher(instructor_client=client)
+        ctx = ExtractionContext(url=None, user_id="u1", caption="some text")
+        await enricher.enrich(ctx)
+        messages = client.extract.call_args.kwargs["messages"]
+        system_content = next(
+            m["content"] for m in messages if m["role"] == "system"
+        )
+        assert "Tsukiji" in system_content
+        assert "Borough Market" in system_content
+        assert "food_and_drink" in system_content
+        assert "shopping" in system_content

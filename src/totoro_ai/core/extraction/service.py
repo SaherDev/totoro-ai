@@ -1,33 +1,27 @@
 """Extraction service orchestrating the cascade pipeline."""
 
 import logging
+from typing import Any
 from uuid import uuid4
 
 from totoro_ai.api.schemas.extract_place import (
     ExtractPlaceItem,
     ExtractPlaceResponse,
 )
+from totoro_ai.core.emit import EmitFn
 from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.input_parser import parse_input
 from totoro_ai.core.extraction.persistence import (
     ExtractionPersistenceService,
     PlaceSaveOutcome,
 )
-from totoro_ai.core.extraction.types import ProvisionalResponse
+from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.places import PlaceSource
 
 logger = logging.getLogger(__name__)
 
 
 def _source_from_url(url: str | None) -> PlaceSource | None:
-    """Map a URL to the canonical `PlaceSource` value.
-
-    - tiktok.com        → PlaceSource.tiktok
-    - instagram.com     → PlaceSource.instagram
-    - youtube.com/youtu.be → PlaceSource.youtube
-    - any other http(s) → PlaceSource.link
-    - None (plain text) → None (the save tool leaves source unset)
-    """
     if url is None:
         return None
     lowered = url.lower()
@@ -40,103 +34,127 @@ def _source_from_url(url: str | None) -> PlaceSource | None:
     return PlaceSource.link
 
 
-def _outcome_to_item(outcome: PlaceSaveOutcome) -> ExtractPlaceItem:
-    """Project one `PlaceSaveOutcome` into an `ExtractPlaceItem`.
+def _is_real(outcome: PlaceSaveOutcome) -> bool:
+    """Filter below-threshold outcomes — they never appear in `results` (FR-005).
 
-    Below-threshold outcomes carry the validator confidence (so the caller
-    can see how close the cascade got) but `place` stays `None` and status
-    collapses to "failed" — the row was never written to the permanent
-    store.
-
-    "needs_review" passes through unchanged: the row was written and the
-    place is set, but the UI should prompt the user to confirm the match
-    (ADR-057).
+    Below-threshold outcomes contribute only to the envelope-level `failed`
+    determination (ADR-063).
     """
-    if outcome.status == "below_threshold":
-        return ExtractPlaceItem(
-            place=None,
-            confidence=outcome.metadata.confidence,
-            status="failed",
-        )
-    return ExtractPlaceItem(
-        place=outcome.place,
-        confidence=outcome.metadata.confidence,
-        status=outcome.status,
+    return (
+        outcome.status in ("saved", "needs_review", "duplicate")
+        and outcome.place is not None
     )
 
 
+def _outcome_to_item_dict(outcome: PlaceSaveOutcome) -> dict[str, Any]:
+    """Map a real outcome to an ExtractPlaceItem dict. Caller must `_is_real` first."""
+    assert outcome.place is not None  # enforced by _is_real
+    return {
+        "place": outcome.place.model_dump(mode="json"),
+        "confidence": outcome.metadata.confidence,
+        "status": outcome.status,
+    }
+
+
 class ExtractionService:
-    """Orchestrate place extraction cascade pipeline (ADR-008, ADR-034)."""
+    """Orchestrate place extraction cascade pipeline (ADR-008, ADR-034, ADR-063).
+
+    M1 (feature 027): `run()` awaits the pipeline inline and returns a
+    terminal envelope (`completed` or `failed`) synchronously. The Save
+    tool (M5) consumes this inline outcome. HTTP callers that want the
+    fire-and-return `pending` behavior wrap `run()` in `asyncio.create_task`
+    at the route layer (see `ChatService._dispatch` extract-place branch).
+    """
 
     def __init__(
         self,
         pipeline: ExtractionPipeline,
         persistence: ExtractionPersistenceService,
+        status_repo: ExtractionStatusRepository,
     ) -> None:
         self._pipeline = pipeline
         self._persistence = persistence
+        self._status_repo = status_repo
 
-    async def run(self, raw_input: str, user_id: str) -> ExtractPlaceResponse:
-        """Extract places from raw input and persist them.
+    async def run(
+        self,
+        raw_input: str,
+        user_id: str,
+        request_id: str | None = None,
+        emit: EmitFn | None = None,
+    ) -> ExtractPlaceResponse:
+        """Run the extraction pipeline inline and return a terminal envelope.
 
-        Generates a `request_id` at the top so every response — saved,
-        pending, or failed — carries the same correlation id. The ID is
-        used for Langfuse traces, log joins, and the pending-status polling
-        cache. Pending responses inherit the pipeline's own request_id when
-        present (the background handler keyed the status cache on it) and
-        fall back to the freshly-generated one otherwise.
+        Returns `status ∈ {completed, failed}` — never `pending`. Writes
+        the final envelope to the Redis status store under
+        `extraction:v2:{request_id}`.
 
-        Returns an `ExtractPlaceResponse` whose `results` list has one
-        `ExtractPlaceItem` per outcome of the cascade:
+        The `raw_input` is echoed verbatim on the envelope (ADR-063). The
+        optional `request_id` argument lets the caller inject an id
+        generated at the route layer so both the envelope and the Redis
+        write share one id; when omitted, one is generated here.
 
-        - one "saved" / "needs_review" / "duplicate" item per successful
-          validation
-        - one "failed" item when nothing resolves or confidence is below
-          `save_threshold`
-        - one "pending" item when the pipeline dispatched background
-          enrichers (caller polls via `request_id`)
+        When `emit` is supplied, this service emits `save.parse_input`
+        after input parsing and `save.persist` after persistence; the
+        pipeline emits `save.enrich` / `save.deep_enrichment` /
+        `save.validate` at its own phase boundaries.
         """
+        _emit: EmitFn = emit or (lambda _s, _m, _d=None: None)
+
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
 
         parsed = parse_input(raw_input)
         source = _source_from_url(parsed.url)
-        request_id = uuid4().hex
-
-        result = await self._pipeline.run(
-            url=parsed.url,
-            user_id=user_id,
-            supplementary_text=parsed.supplementary_text,
+        rid = request_id or uuid4().hex
+        _emit(
+            "save.parse_input",
+            f"url={parsed.url or '(none)'}; "
+            f"supplementary_text={len(parsed.supplementary_text)} chars",
         )
 
-        if isinstance(result, ProvisionalResponse):
-            return ExtractPlaceResponse(
-                results=[
-                    ExtractPlaceItem(place=None, confidence=None, status="pending")
-                ],
-                source_url=parsed.url,
-                request_id=result.request_id or request_id,
+        try:
+            result = await self._pipeline.run(
+                url=parsed.url,
+                user_id=user_id,
+                supplementary_text=parsed.supplementary_text,
+                emit=emit,
+            )
+            if not result:
+                response = ExtractPlaceResponse(
+                    status="failed",
+                    results=[],
+                    raw_input=raw_input,
+                    request_id=rid,
+                )
+            else:
+                outcomes = await self._persistence.save_and_emit(
+                    result, user_id, source_url=parsed.url, source=source
+                )
+                items = [
+                    ExtractPlaceItem(**_outcome_to_item_dict(o))
+                    for o in outcomes
+                    if _is_real(o)
+                ]
+                response = ExtractPlaceResponse(
+                    status="completed" if items else "failed",
+                    results=items,
+                    raw_input=raw_input,
+                    request_id=rid,
+                )
+        except Exception:
+            logger.exception("Extraction pipeline failed for request %s", rid)
+            response = ExtractPlaceResponse(
+                status="failed",
+                results=[],
+                raw_input=raw_input,
+                request_id=rid,
             )
 
-        if not result:
-            return ExtractPlaceResponse(
-                results=[
-                    ExtractPlaceItem(place=None, confidence=None, status="failed")
-                ],
-                source_url=parsed.url,
-                request_id=request_id,
-            )
-
-        outcomes = await self._persistence.save_and_emit(
-            result,
-            user_id,
-            source_url=parsed.url,
-            source=source,
+        _emit(
+            "save.persist",
+            f"status={response.status}"
+            + (f"; {len(response.results)} saved" if response.results else ""),
         )
-        items = [_outcome_to_item(o) for o in outcomes]
-
-        return ExtractPlaceResponse(
-            results=items,
-            source_url=parsed.url,
-            request_id=request_id,
-        )
+        await self._status_repo.write(rid, response.model_dump(mode="json"))
+        return response

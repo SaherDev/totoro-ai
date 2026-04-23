@@ -7,8 +7,6 @@ Per ADR-043, failures are logged and traced but never propagated.
 import logging
 from typing import TYPE_CHECKING
 
-from langfuse import Langfuse
-
 from totoro_ai.core.events.events import (
     ChipConfirmed,
     DomainEvent,
@@ -19,6 +17,7 @@ from totoro_ai.core.events.events import (
     RecommendationRejected,
 )
 from totoro_ai.db.models import InteractionType
+from totoro_ai.providers.tracing import TracingClient, get_tracing_client
 
 if TYPE_CHECKING:
     from totoro_ai.core.memory.service import UserMemoryService
@@ -40,11 +39,11 @@ class EventHandlers:
         self,
         taste_service: "TasteModelService",
         memory_service: "UserMemoryService",
-        langfuse: Langfuse | None = None,
+        tracer: TracingClient | None = None,
     ) -> None:
         self.taste_service = taste_service
         self.memory_service = memory_service
-        self.langfuse = langfuse
+        self._tracer = tracer or get_tracing_client()
 
     async def on_taste_signal(self, event: DomainEvent) -> None:
         """Unified handler for all taste-related events.
@@ -75,12 +74,11 @@ class EventHandlers:
                     place_id=place_id,
                 )
 
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message=f"{event.event_type} handled",
-                    level="info",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
+            self._tracer.capture_message(
+                message=f"{event.event_type} handled",
+                level="info",
+                metadata={"event_id": event.event_id, "user_id": event.user_id},
+            )
         except Exception as exc:
             logger.error(
                 "Failed to handle taste signal (%s): %s",
@@ -89,35 +87,33 @@ class EventHandlers:
                 exc_info=True,
                 extra={"user_id": event.user_id, "event_type": event.event_type},
             )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message=f"{event.event_type} handler error: {exc}",
-                    level="error",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
-                self.langfuse.flush()
+            self._tracer.capture_message(
+                message=f"{event.event_type} handler error: {exc}",
+                level="error",
+                metadata={"event_id": event.event_id, "user_id": event.user_id},
+            )
+            self._tracer.flush()
 
     async def on_chip_confirmed(self, event: DomainEvent) -> None:
         """Handle ChipConfirmed — force an immediate taste-profile rewrite.
 
         Chip confirmation is an explicit user action; debouncing would make
         the summary rewrite feel disconnected from the action. Bypasses the
-        debouncer via run_regen_now. Failures are logged via Langfuse per
+        debouncer via run_regen_now. Failures are logged via tracing per
         ADR-025 but never re-raised (ADR-043).
         """
         if not isinstance(event, ChipConfirmed):
             return
         try:
             await self.taste_service.run_regen_now(event.user_id)
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message="chip_confirmed_regen handled",
-                    level="info",
-                    metadata={
-                        "event_id": event.event_id,
-                        "user_id": event.user_id,
-                    },
-                )
+            self._tracer.capture_message(
+                message="chip_confirmed_regen handled",
+                level="info",
+                metadata={
+                    "event_id": event.event_id,
+                    "user_id": event.user_id,
+                },
+            )
         except Exception as exc:
             logger.error(
                 "Failed chip_confirmed_regen for user %s: %s",
@@ -126,19 +122,18 @@ class EventHandlers:
                 exc_info=True,
                 extra={"user_id": event.user_id, "event_type": event.event_type},
             )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message=f"chip_confirmed_regen error: {exc}",
-                    level="error",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
-                self.langfuse.flush()
+            self._tracer.capture_message(
+                message=f"chip_confirmed_regen error: {exc}",
+                level="error",
+                metadata={"event_id": event.event_id, "user_id": event.user_id},
+            )
+            self._tracer.flush()
 
     async def on_personal_facts_extracted(self, event: PersonalFactsExtracted) -> None:
         """Handle personal facts extracted event - persist to user_memories.
 
         Skips if personal_facts is empty. Catches and logs all exceptions
-        via Langfuse; never raises (per ADR-043: failures don't block responses).
+        via tracing; never raises (per ADR-043: failures don't block responses).
         """
         if not event.personal_facts:
             return
@@ -153,16 +148,15 @@ class EventHandlers:
                 confidence_config=config.memory.confidence,
             )
 
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message="PersonalFactsExtracted event handled",
-                    level="info",
-                    metadata={
-                        "event_id": event.event_id,
-                        "user_id": event.user_id,
-                        "facts_count": len(event.personal_facts),
-                    },
-                )
+            self._tracer.capture_message(
+                message="PersonalFactsExtracted event handled",
+                level="info",
+                metadata={
+                    "event_id": event.event_id,
+                    "user_id": event.user_id,
+                    "facts_count": len(event.personal_facts),
+                },
+            )
         except Exception as exc:
             logger.error(
                 "Failed to save personal facts: %s",
@@ -173,10 +167,9 @@ class EventHandlers:
                     "facts_count": len(event.personal_facts),
                 },
             )
-            if self.langfuse:
-                self.langfuse.capture_message(
-                    message=f"PersonalFactsExtracted handler error: {exc}",
-                    level="error",
-                    metadata={"event_id": event.event_id, "user_id": event.user_id},
-                )
-                self.langfuse.flush()
+            self._tracer.capture_message(
+                message=f"PersonalFactsExtracted handler error: {exc}",
+                level="error",
+                metadata={"event_id": event.event_id, "user_id": event.user_id},
+            )
+            self._tracer.flush()

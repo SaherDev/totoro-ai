@@ -10,6 +10,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# Feature 027 FR-024: ReasoningStep is re-exported from the agent module
+# so ConsultResponse.reasoning_steps carries the richer schema
+# (source / tool_name / visibility / timestamp). The M5 consult tool
+# wrapper stamps source="tool", tool_name="consult", visibility="debug"
+# on every step; ConsultService builds them with those kwargs set directly.
+from totoro_ai.core.agent.reasoning import ReasoningStep as ReasoningStep
 from totoro_ai.core.places.models import PlaceObject
 
 
@@ -35,34 +41,28 @@ class ConsultRequest(BaseModel):
     )
 
 
-class ReasoningStep(BaseModel):
-    """A step in the recommendation reasoning process."""
-
-    step: str
-    summary: str
-
-
 class ConsultResult(BaseModel):
     """One recommendation in the consult response.
 
     `place` is the fully enriched `PlaceObject` (`enriched=True`, Tier 2
     geo and Tier 3 details populated). `source` is `"saved"` when the row
-    came from the user's recall set and `"discovered"` when it came from
-    Google Places Nearby Search. No numeric score — ranking is deferred
-    to the agent (ADR-058).
+    came from the user's recall set, `"discovered"` when it came from
+    keyword search, or `"suggested"` when it was an agent-supplied name
+    validated via the places provider. No numeric score — ranking is
+    deferred to the agent (ADR-058).
     """
 
     place: PlaceObject
-    source: str  # "saved" | "discovered"
+    source: str  # "saved" | "discovered" | "suggested"
 
 
 class ConsultResponse(BaseModel):
     """Response body for POST /v1/consult.
 
-    `results` is ordered by `confidence` descending (the ranker sorts
-    internally) and capped at 3 entries. `reasoning_steps` is a flat
-    trace of the six-step pipeline — useful for eval/debug, not required
-    for the UI.
+    `results` is ordered by source (saved first, discovered second, suggested third) and
+    capped at `consult.total_cap` entries. Reasoning steps are delivered
+    live via the `emit` callback on the agent path (feature 028 M4) —
+    the response no longer bundles them.
     """
 
     recommendation_id: str | None = Field(
@@ -70,4 +70,3 @@ class ConsultResponse(BaseModel):
         description="UUID from recommendations table. Null if persist failed.",
     )
     results: list[ConsultResult]
-    reasoning_steps: list[ReasoningStep]

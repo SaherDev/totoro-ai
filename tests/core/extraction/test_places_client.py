@@ -29,10 +29,10 @@ def _fake_response(name: str, place_id: str = "place_123") -> MagicMock:
 def _patched_client() -> GooglePlacesClient:
     """Return a GooglePlacesClient with secrets + config mocked out."""
     with (
-        patch("totoro_ai.core.places.places_client.get_secrets") as mock_secrets,
+        patch("totoro_ai.core.places.places_client.get_env") as mock_env,
         patch("totoro_ai.core.places.places_client.get_config") as mock_config,
     ):
-        mock_secrets.return_value.GOOGLE_API_KEY = "fake-key"
+        mock_env.return_value.GOOGLE_API_KEY = "fake-key"
         cfg = MagicMock()
         cfg.external_services.google_places.base_url = (
             "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"

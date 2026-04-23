@@ -6,8 +6,8 @@ Resolves configured embedder clients by role (ADR-020, ADR-038, ADR-040).
 import logging
 from typing import Protocol, cast, runtime_checkable
 
-from totoro_ai.core.config import get_config, get_secrets
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.core.config import get_config, get_env
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -70,23 +70,17 @@ class VoyageEmbedder:
         if not texts:
             raise ValueError("texts cannot be empty")
 
-        lf = get_langfuse_client()
-        generation = (
-            lf.generation(name="voyage_embed", model=self._model, input=texts)
-            if lf
-            else None
-        )
+        tracer = get_tracing_client()
+        span = tracer.generation(name="voyage_embed", model=self._model, input=texts)
 
         try:
             result = await self._client.embed(
                 texts, model=self._model, input_type=input_type
             )
-            if generation:
-                generation.end()
+            span.end()
             return cast(list[list[float]], result.embeddings)
         except Exception as e:
-            if generation:
-                generation.end(level="ERROR")
+            span.end(output={"error": str(e)}, level="ERROR")
             logger.error("Embedding failed: %s", e)
             raise RuntimeError(f"Failed to embed texts: {e}") from e
 
@@ -107,7 +101,7 @@ def get_embedder() -> EmbedderProtocol:
         ValueError: If provider is unsupported
     """
     role_config = get_config().models["embedder"]
-    secrets = get_secrets()
+    secrets = get_env()
 
     provider = role_config.provider
     model = role_config.model

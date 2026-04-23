@@ -21,6 +21,7 @@ from totoro_ai.core.places.models import (
     PlaceObject,
     PlaceType,
 )
+from totoro_ai.core.places.places_client import PlacesMatchResult
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,29 @@ def map_google_place_to_place_object(google_result: dict[str, Any]) -> PlaceObje
         rating=rating if isinstance(rating, int | float) else None,
         popularity=popularity,
         geo_fresh=lat is not None and lng is not None,
+    )
+
+
+def map_match_result_to_place_object(result: PlacesMatchResult) -> PlaceObject:
+    """Build a transient PlaceObject from a validated PlacesMatchResult.
+
+    Used by the place_suggestions path. Not persisted; synthetic place_id only.
+    """
+    provider_id = (
+        f"{result.external_provider}:{result.external_id}"
+        if result.external_id
+        else None
+    )
+    return PlaceObject(
+        place_id=str(uuid4()),
+        place_name=result.validated_name or "",
+        place_type=PlaceType.services,
+        attributes=PlaceAttributes(),
+        provider_id=provider_id,
+        lat=result.lat,
+        lng=result.lng,
+        address=result.address,
+        geo_fresh=result.lat is not None and result.lng is not None,
     )
 
 

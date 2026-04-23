@@ -2,7 +2,7 @@
 
 Two singletons:
 - get_config()   → AppConfig    from config/app.yaml (committed, non-secret)
-- get_secrets()  → SecretsConfig from .env → env vars (never committed)
+- get_env()  → EnvConfig from .env → env vars (never committed)
 
 All other modules import from here. Nobody calls load_yaml_config() directly.
 """
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
-# Low-level YAML loader (internal — use get_config / get_secrets instead)
+# Low-level YAML loader (internal — use get_config / get_env instead)
 # ---------------------------------------------------------------------------
 
 
@@ -214,6 +214,7 @@ class ConsultConfig(BaseModel):
     default_radius_m: int = 1500
     nearby_radius_m: int = 500
     walking_radius_m: int = 1000
+    named_location_radius_m: int = 10000
     total_cap: int = 3
 
 
@@ -279,13 +280,13 @@ class MemoryConfig(BaseModel):
 
 
 class ProviderEndpointConfig(BaseModel):
-    """Non-secret provider config (base URL, etc.). API keys live in SecretsConfig."""
+    """Non-secret provider config (base URL, etc.). API keys live in EnvConfig."""
 
     base_url: str
 
 
 class AppProvidersConfig(BaseModel):
-    """Non-secret provider endpoints (base URLs). API keys live in SecretsConfig."""
+    """Non-secret provider endpoints (base URLs). API keys live in EnvConfig."""
 
     groq: ProviderEndpointConfig = ProviderEndpointConfig(
         base_url="https://api.groq.com"
@@ -322,6 +323,62 @@ class PromptConfig(BaseModel):
     content: str
 
 
+class ToolTimeoutsConfig(BaseModel):
+    """Per-tool asyncio.wait_for budgets in seconds (feature 027 M2, M9).
+
+    Consumed by the agent tool wrappers (M5) and the timeout guard (M9).
+    Not read in this feature — presence + type is the only requirement.
+    """
+
+    recall: int = 5
+    consult: int = 10
+    save: int = 25
+
+    @model_validator(mode="after")
+    def _positive_integers(self) -> "ToolTimeoutsConfig":
+        if self.recall < 1 or self.consult < 1 or self.save < 1:
+            raise ValueError(
+                "agent.tool_timeouts_seconds fields must be >= 1 "
+                f"(got recall={self.recall}, consult={self.consult}, save={self.save})"
+            )
+        return self
+
+
+class AgentConfig(BaseModel):
+    """Typed configuration for the agent path (feature 027 M2, ADR-062).
+
+    `max_steps` and `max_errors` bound the graph's should_continue loop (M3 reads these).
+    `checkpointer_ttl_seconds` is reserved for a future cleanup job
+    (Postgres has no native TTL).
+    `prompt_caching_enabled` wraps the system message in an Anthropic
+    `cache_control: ephemeral` block (ADR-067). Disable for non-Anthropic orchestrators.
+    """
+
+    max_steps: int = 10
+    max_errors: int = 3
+    max_history_messages: int = 40
+    checkpointer_ttl_seconds: int = 86400
+    tool_timeouts_seconds: ToolTimeoutsConfig = ToolTimeoutsConfig()
+    prompt_caching_enabled: bool = True
+
+    @model_validator(mode="after")
+    def _positive_integers(self) -> "AgentConfig":
+        if (
+            self.max_steps < 1
+            or self.max_errors < 1
+            or self.max_history_messages < 1
+            or self.checkpointer_ttl_seconds < 1
+        ):
+            raise ValueError(
+                "agent.max_steps / max_errors / max_history_messages / "
+                "checkpointer_ttl_seconds must be >= 1 "
+                f"(got max_steps={self.max_steps}, max_errors={self.max_errors}, "
+                f"max_history_messages={self.max_history_messages}, "
+                f"checkpointer_ttl_seconds={self.checkpointer_ttl_seconds})"
+            )
+        return self
+
+
 class AppConfig(BaseModel):
     app: AppMeta
     models: dict[str, LLMRoleConfig]
@@ -335,21 +392,41 @@ class AppConfig(BaseModel):
     taste_model: TasteModelConfig = TasteModelConfig()
     memory: MemoryConfig = MemoryConfig()
     places: PlacesConfig = PlacesConfig()
+    agent: AgentConfig = AgentConfig()
     prompts: dict[str, PromptConfig] = {}
 
 
+# Per-prompt required template-slot registry (feature 027 FR-018a).
+# Eager validation at _load_prompts() ensures any missing slot aborts boot.
+_REQUIRED_PROMPT_SLOTS: dict[str, list[str]] = {
+    "agent": ["{taste_profile_summary}", "{memory_summary}"],
+}
+
+
 def _load_prompts(raw: dict[str, str]) -> dict[str, PromptConfig]:
-    """Read prompt files from disk and return loaded PromptConfig objects."""
+    """Read prompt files from disk and return loaded PromptConfig objects.
+
+    Validates that each prompt contains all required template slots for
+    its logical name (feature 027 FR-018a). Missing slot aborts boot
+    with a clear error.
+    """
     prompts_dir = find_project_root() / "config" / "prompts"
     loaded: dict[str, PromptConfig] = {}
     for name, filename in raw.items():
         path = prompts_dir / filename
         if not path.exists():
             raise FileNotFoundError(f"Prompt '{name}' file not found: {path}")
+        content = path.read_text()
+        for slot in _REQUIRED_PROMPT_SLOTS.get(name, []):
+            if slot not in content:
+                raise ValueError(
+                    f"Prompt {name!r} ({path}) is missing required "
+                    f"template slot {slot!r}"
+                )
         loaded[name] = PromptConfig(
             name=name,
             file=filename,
-            content=path.read_text(),
+            content=content,
         )
     return loaded
 
@@ -387,13 +464,13 @@ def get_prompt(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# SecretsConfig — flat secrets from .env or environment variables
+# EnvConfig — env vars and secrets from .env or environment variables
 # ---------------------------------------------------------------------------
 
 _ENV_FILE = find_project_root() / ".env"
 
 
-class SecretsConfig(BaseSettings):
+class EnvConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
@@ -410,18 +487,19 @@ class SecretsConfig(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str | None = None
     LANGFUSE_SECRET_KEY: str | None = None
     LANGFUSE_HOST: str | None = None
+    AGENT_ENABLED: bool = True
 
 
-_secrets: SecretsConfig | None = None
+_env: EnvConfig | None = None
 
 
-def get_secrets() -> SecretsConfig:
-    """Return the SecretsConfig singleton.
+def get_env() -> EnvConfig:
+    """Return the EnvConfig singleton.
 
     Reads from .env (local dev) and environment variables (Railway).
     Environment variables take precedence over .env values.
     """
-    global _secrets
-    if _secrets is None:
-        _secrets = SecretsConfig()
-    return _secrets
+    global _env
+    if _env is None:
+        _env = EnvConfig()
+    return _env

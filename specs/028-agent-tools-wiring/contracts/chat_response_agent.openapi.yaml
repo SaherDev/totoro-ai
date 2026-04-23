@@ -1,0 +1,150 @@
+openapi: 3.1.0
+info:
+  title: POST /v1/chat — agent-path response (feature 028)
+  version: "028"
+  description: |
+    When `config.agent.enabled=true`, every /v1/chat request returns the
+    agent-path response. Flag-off behavior is unchanged and not documented here.
+
+    Added to the existing ChatResponse.type Literal: `"agent"`. All other
+    values remain valid on the flag-off path.
+
+paths:
+  /v1/chat:
+    post:
+      summary: Unified conversational entry (ADR-052)
+      description: |
+        Flag-off path: existing behavior — `type` is one of
+        "extract-place"|"consult"|"recall"|"assistant"|"clarification"|"error".
+        Flag-on path: `type` is always `"agent"` and the response carries the
+        shape documented under `AgentChatResponse` below.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatRequest" }
+      responses:
+        "200":
+          description: Flag-on agent response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentChatResponse" }
+
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required: [user_id, message]
+      properties:
+        user_id: { type: string }
+        message: { type: string }
+        location:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Location"
+        signal_tier:
+          oneOf:
+            - type: "null"
+            - { type: string, enum: [cold, warming, chip_selection, active] }
+
+    Location:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number }
+        lng: { type: number }
+
+    AgentChatResponse:
+      type: object
+      required: [type, message, data]
+      properties:
+        type:
+          type: string
+          enum: [agent]
+          description: Always `"agent"` on the flag-on path.
+        message:
+          type: string
+          description: |
+            The agent's final `AIMessage.content` — the user-facing natural-
+            language reply composed by the orchestrator LLM. On fallback-node
+            termination, this is the fallback reply string.
+        data:
+          type: object
+          required: [reasoning_steps]
+          properties:
+            reasoning_steps:
+              type: array
+              description: |
+                User-visible subset of the turn's reasoning trace. Each entry
+                has `visibility="user"` — debug sub-steps are filtered out of
+                this payload and only surface in Langfuse and (once M7 lands)
+                the SSE debug stream.
+              items: { $ref: "#/components/schemas/ReasoningStep" }
+
+    ReasoningStep:
+      type: object
+      required: [step, summary, source, visibility, timestamp, duration_ms]
+      properties:
+        step:
+          type: string
+          description: |
+            One of `"agent.tool_decision"`, `"tool.summary"`, `"fallback"`
+            on the user-visible subset. Debug entries are filtered out of
+            this payload.
+          enum:
+            - agent.tool_decision
+            - tool.summary
+            - fallback
+        summary:
+          type: string
+          description: |
+            Human-readable one-line summary. `agent.tool_decision` entries
+            are truncated to 200 chars in the JSON payload (full text
+            reaches SSE in M7).
+        source:
+          type: string
+          enum: [agent, tool, fallback]
+          description: |
+            Who emitted the step. `agent` = agent_node decision; `tool` =
+            tool wrapper; `fallback` = fallback_node terminal.
+        tool_name:
+          description: |
+            Required when `source="tool"`; forbidden otherwise (enforced by
+            a model validator).
+          oneOf:
+            - type: "null"
+            - { type: string, enum: [recall, save, consult] }
+        visibility:
+          type: string
+          enum: [user]
+          description: |
+            On this payload, always `"user"` — the `"debug"` subset is
+            filtered out before serialization.
+        timestamp:
+          type: string
+          format: date-time
+        duration_ms:
+          type: number
+          minimum: 0
+          description: |
+            Elapsed time attributed to this step, in milliseconds.
+            Populated either by the service (when it measured the
+            operation directly) or by the wrapper's emit closure from
+            timestamp deltas. For `tool.summary` entries, this is the
+            total tool-invocation elapsed time.
+
+x-invariants:
+  - Every `type="agent"` response populates `data.reasoning_steps` (possibly empty).
+  - Every turn's `data.reasoning_steps` begins with exactly one `agent.tool_decision`.
+  - Every tool invocation produces exactly one `tool.summary`.
+  - `tool_name` is set on `tool.summary`; null on `agent.tool_decision` and `fallback`.
+  - Direct-response turns (no tool call) produce exactly one user-visible step.
+
+x-feature-flag:
+  name: agent.enabled
+  default: false
+  scope: per-request read
+  note: |
+    Flipping the default to true happens in a later feature (M10). Product-
+    repo coordination is minimal until then because legacy response types
+    are still the default.

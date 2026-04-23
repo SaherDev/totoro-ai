@@ -96,6 +96,7 @@ def merge_chips_after_regen(
                             "status": ChipStatus.PENDING,
                             "selection_round": None,
                             "signal_count": fresh_chip.signal_count,
+                            "query": fresh_chip.query,
                         }
                     )
                 )
@@ -106,7 +107,12 @@ def merge_chips_after_regen(
         # pending
         if fresh_chip is not None:
             merged.append(
-                chip.model_copy(update={"signal_count": fresh_chip.signal_count})
+                chip.model_copy(
+                    update={
+                        "signal_count": fresh_chip.signal_count,
+                        "query": fresh_chip.query,
+                    }
+                )
             )
         else:
             merged.append(chip)

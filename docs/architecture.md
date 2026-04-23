@@ -19,7 +19,7 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 │                totoro-ai (this repo)                      │
 │                                                           │
 │  FastAPI HTTP layer                                       │
-│  Intent classification → pipeline dispatch                │
+│  LangGraph agent orchestration (tool dispatch)            │
 │  LangChain chains and document loaders                    │
 │  Pydantic request/response schemas                        │
 │  Provider abstraction (LLM + embedding model switching)   │
@@ -71,26 +71,36 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
-extract-place is a three-phase deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. Enrichers run unconditionally in Step 1. The validator gates results in Step 2. Background dispatch fires in Step 3 only when Step 2 finds nothing.
+extract-place is a three-phase deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. The full pipeline always runs as a background task — the HTTP response returns immediately with `status="pending"` and a `request_id`. The caller polls `GET /v1/extraction/{request_id}` for the final result.
 
 ```
 Raw input (URL, plain text, or mixed)
     │
     ▼
 POST /v1/chat
-    │  ChatService classifies intent → "extract-place" → dispatches to ExtractionService
+    │  Agent selects save tool → ExtractionService.run()
+    │  Returns immediately: { status: "pending", request_id }
+    │  asyncio.create_task fires the full pipeline in the background
     │
-    ├── Step 1: Enrich candidates
-    │   Parallel caption fetch (TikTok oEmbed, yt-dlp), regex extraction, LLM NER
-    │   Deduplicate by name; corroborated candidates receive a confidence bonus
-    │
-    ├── Step 2: Validate candidates
-    │   Google Places API validates each candidate in parallel
-    │   Confidence scored per match quality; results saved and returned if any pass
-    │
-    └── Step 3: Background dispatch (only when Step 2 returns nothing)
-        ExtractionPending event dispatched → ProvisionalResponse returned immediately
-        Background: subtitle, audio (Whisper), vision enrichers → re-validate → save
+    └── Background task: ExtractionPipeline.run()
+        │
+        ├── Phase 1: Enrich candidates
+        │   Parallel caption fetch (TikTok oEmbed, yt-dlp), LLM NER
+        │   Deduplicate by name; corroborated candidates receive a confidence bonus
+        │
+        ├── Phase 2: Validate candidates
+        │   Google Places API validates each candidate in parallel
+        │   Confidence scored per match quality; skip Phase 3 if any pass
+        │
+        ├── Phase 3: Deep enrichment (only when Phase 2 returns nothing + URL present)
+        │   Subtitle check, audio transcription (Whisper), vision frame extraction
+        │   Deduplicate → re-validate against Google Places
+        │
+        └── Persist + write status to Redis at extraction:{request_id}
+
+GET /v1/extraction/{request_id}
+    Reads Redis → returns ExtractPlaceResponse (same shape as chat data payload)
+    404 while still running or after TTL (1 hour) expires
 ```
 
 The pipeline runs the full cascade deterministically. No mid-pipeline callbacks to NestJS.
@@ -105,24 +115,29 @@ Natural language query (e.g., "cheap dinner nearby")
     ▼
 POST /v1/chat
     │  Receives: user_id, message, optional location
-    │  ChatService classifies intent → "consult" → dispatches to ConsultService
+    │  Agent selects consult tool → ConsultService.consult() called with agent-parsed args
     │
     ▼
 ConsultService.consult()
     │
     ├── Step 1: Parse intent
-    │   GPT-4o-mini (intent_parser role) extracts cuisine, occasion, price, radius,
-    │   constraints, enriched_query; user memories injected as context
+    │   Agent (Claude Sonnet 4.6) parses intent and passes structured args directly;
+    │   ConsultService receives pre-parsed cuisine, occasion, price, radius, constraints
     │
     ├── Step 2: Retrieve saved places
     │   Hybrid search (pgvector + FTS + RRF) via RecallService
     │   Post-filter by price_range and radius if location available
     │
-    ├── Step 3: Discover external candidates
-    │   Call Google Places API with enriched_query + radius filters
+    ├── Step 3: Discover external candidates (parallel)
+    │   ├── Keyword search: Google Places nearby search with query + radius → source="discovered"
+    │   └── Suggestion validation: agent-supplied place names validated via
+    │       validate_places() — EXACT/FUZZY matches only, anchored to same
+    │       geocoded location_bias → source="suggested"
     │   Skipped if no location context
     │
-    ├── Step 4: Deduplicate candidates (by external_id, then place_id)
+    ├── Step 4: Deduplicate candidates (by provider_id, then place_id)
+    │   Order: saved → discovered → suggested
+    │   ConsultResult.source ∈ {"saved", "discovered", "suggested"}
     │
     ├── Step 5: Conditional validation of saved candidates
     │   Validates against live signals only when opennow filter is set
@@ -146,7 +161,7 @@ Natural language query (e.g., "cosy ramen spot")
     │
     ▼
 POST /v1/chat
-    │  ChatService classifies intent → "recall" → dispatches to RecallService
+    │  Agent selects recall tool → RecallService called with agent-parsed query
     │
     ├── Check cold start
     │   count_saved_places(user_id)
@@ -192,70 +207,105 @@ POST /v1/chat
 - Graceful fallback: text-only path exists; embedding failure does not crash
 - Deterministic match_reason: reflects actual search behavior; no guessing
 
-## Data Flow: Assistant (General Food/Dining Q&A)
+## Agent Orchestration (ADR-062, ADR-065)
 
-assistant is a single-LLM-call service with no vector search, no ranking, and no database reads beyond user memories. It handles general food and dining questions that don't map to a specific saved place or recommendation request.
+All conversational traffic routes through the LangGraph agent (Claude Sonnet 4.6 via the `orchestrator` model role). The agent selects from three tools per turn — recall, save, consult — and returns a `ChatResponse(type="agent")`. The legacy intent-router / intent-parser / chat_assistant dispatch path was deleted (ADR-065).
+
+### Graph Structure
 
 ```
-General question (e.g., "is tipping expected in Japan?")
+POST /v1/chat  (or /v1/chat/stream)
     │
     ▼
-POST /v1/chat
-    │  ChatService classifies intent → "assistant" → dispatches to ChatAssistantService
+ChatService
+    │  build_turn_payload(message, user_id, taste_summary, memory_summary, location)
+    │  graph.ainvoke(payload, config={"configurable": {"thread_id": user_id}})
     │
     ▼
-ChatAssistantService.run()
-    │
-    ├── Load user memories (UserMemoryService.load_memories)
-    │   Injected into user message as context (ADR-010)
-    │
-    └── Single LLM call (chat_assistant role: GPT-4o-mini)
-        System prompt: food/dining advisor persona
-        User message: optional memory context + question
-        Returns: conversational response string
+┌─────────────────────────────────────────────────────────┐
+│                    LangGraph StateGraph                  │
+│                                                          │
+│   ┌──────────┐   tool_calls?  ┌──────────┐              │
+│   │  agent   │ ─────────────► │  tools   │              │
+│   │  (node)  │ ◄────────────  │  (node)  │              │
+│   └────┬─────┘                └──────────┘              │
+│        │ max_steps / max_errors exceeded?               │
+│        ▼                                                 │
+│   ┌──────────┐                                           │
+│   │ fallback │ ──────────────────────────────► END       │
+│   │  (node)  │                                           │
+│   └──────────┘                                           │
+│        │ no tool calls?                                  │
+│        └─────────────────────────────────────► END       │
+└─────────────────────────────────────────────────────────┘
 ```
 
-No tools, no retrieval, no branching. Falls back to assistant for any unrecognized intent.
+**Nodes:**
+- `agent` — renders system prompt (taste + memory summaries substituted), trims history to `max_history_messages`, sanitizes orphaned tool calls, calls the LLM, emits one `agent.tool_decision` reasoning step per turn.
+- `tools` — LangGraph `ToolNode`; dispatches to whichever tool(s) the LLM selected.
+- `fallback` — fires when `steps_taken >= max_steps` or `error_count >= max_errors`; emits a graceful terminal message and a debug diagnostic step.
 
----
+**Routing (`should_continue`):** `error_count >= max_errors` → fallback; `steps_taken >= max_steps` → fallback; last message has tool_calls → tools; otherwise → END.
 
-## Intent Classification
+### Per-Turn State
 
-NestJS sends all conversational traffic to `POST /v1/chat`. Classification happens
-inside FastAPI's `ChatService` as the first step of request handling, using the
-`intent_router` LLM role (Groq llama-3.1-8b-instant). NestJS never sees the intent —
-it only receives the final `ChatResponse`.
+State is a `TypedDict` (`AgentState`). LangGraph persists it via the Postgres checkpointer after every node execution.
 
-Intent types:
+| Field | Reducer | Reset per turn? | Notes |
+|---|---|---|---|
+| `messages` | `add_messages` (append) | No — accumulates | Trimmed to `max_history_messages` (default 40) before each LLM call |
+| `taste_profile_summary` | overwrite | Yes — refreshed from DB | Injected by ChatService each turn |
+| `memory_summary` | overwrite | Yes — refreshed from DB | Injected by ChatService each turn |
+| `user_id` | overwrite | Yes | Used as checkpointer `thread_id`; isolates history per user |
+| `location` | overwrite | Yes | `{lat, lng}` or None |
+| `last_recall_results` | overwrite | Yes — reset to None | Set by `recall_tool`; read by `consult_tool` in the same turn |
+| `reasoning_steps` | overwrite | Yes — reset to `[]` | Accumulated within a turn; returned to caller |
+| `steps_taken` | overwrite | Yes — reset to 0 | Incremented by `agent_node`; bounds the loop |
+| `error_count` | overwrite | Yes — reset to 0 | Incremented by tool error handlers; bounds the loop |
 
-- extract-place — user is sharing or recommending a specific place, including URLs and
-  plain-text named places ("RAMEN KAISUGI Bangkok is incredible", TikTok links, etc.)
-- consult — user wants a recommendation but has not named a specific place
-  ("cheap dinner nearby", "where should I eat tonight?")
-- recall — user wants to retrieve a place they previously saved
-  ("that ramen place I saved", "show me saved Thai restaurants")
-- assistant — general food/dining question with no save or retrieve intent
-  ("is tipping expected in Japan?")
+### Conversation History
 
-Classification rules (LLM-driven, not regex):
+The Postgres checkpointer (`AsyncPostgresSaver` backed by `AsyncConnectionPool`) persists the full `AgentState` keyed by `thread_id = user_id`. Conversation history accumulates across sessions. Before each LLM call, `agent_node` trims to the last `max_history_messages` messages (default 40, configurable in `app.yaml`). Trim runs **before** `_sanitize_orphaned_tool_calls` — this ordering ensures a `ToolMessage` never lands at position 0 of the trimmed slice, which would cause a 400 from Anthropic.
 
-- Confidence ≥ 0.7 → dispatch by intent
-- Confidence < 0.7 → return `type="clarification"` with a single short question
-- Default when uncertain → consult
+### Tools
 
-Personal facts are also extracted from each message (e.g., "I'm vegetarian") and
-persisted asynchronously via `PersonalFactsExtracted` event.
+All three tools are `@tool`-decorated async functions built by factory functions (`build_recall_tool`, `build_consult_tool`, `build_save_tool`). Each tool uses `Annotated[AgentState, InjectedState]` and `Annotated[str, InjectedToolCallId]` for LangGraph injection — no `args_schema=` passed to `@tool` (that short-circuits LangGraph's injection inspection).
 
-Empty state rule: the system always returns something. At zero saves, a consult
-query returns nearby popular options. A recall with no matches returns an assistant
-response noting nothing was found. Never return a zero-result response.
+Every tool wraps its body in `with_timeout(tool_name, ...)` which enforces the per-tool timeout from `app.yaml` (`tool_timeouts_seconds.recall/consult/save`) and returns a degraded `Command` on timeout or unhandled exception (increments `error_count`, emits a user-visible `tool.summary` step). `NodeInterrupt` and `GraphInterrupt` are re-raised — they are LangGraph control-flow signals.
+
+| Tool | Trigger | Reads from state | Writes to state | Writes to DB |
+|---|---|---|---|---|
+| `recall` | User references their saves, or consult precondition | `user_id`, `location`, `last_recall_results` (none) | `last_recall_results` (list of PlaceObjects) | Nothing |
+| `save` | User shares a URL or names a place | `user_id` | `reasoning_steps`, `messages` | `places` + `embeddings` (via ExtractionService) |
+| `consult` | User asks for a recommendation | `user_id`, `location`, `last_recall_results` (from prior recall in same turn) | `reasoning_steps`, `messages` | `recommendations` table (via ConsultService — ADR-060) |
+
+**recall → consult handoff:** When the agent calls both in one turn, `recall_tool` sets `state["last_recall_results"]`. `consult_tool` reads it from state directly — the LLM does not need to pass the list explicitly; LangGraph threads it automatically.
+
+**save + NodeInterrupt:** When extraction returns a `needs_review` result, `save_tool` raises `NodeInterrupt`. LangGraph checkpoints the state and suspends the graph. The caller receives `type="interrupt"` and the low-confidence candidates for user confirmation. Resuming with confirmation re-enters the graph at the interrupted node.
+
+### Reasoning Steps
+
+Every tool wrapper uses the `build_emit_closure(tool_name)` / `append_summary(...)` helpers from `core/agent/tools/_emit.py`. The pattern:
+
+1. Each service-internal milestone calls `emit(step, summary)` — appends a `debug`-visibility `ReasoningStep` to a local `collected` list and forwards it to `get_stream_writer()` for SSE fan-out.
+2. After the service returns, `append_summary(collected, tool_name, summary)` appends one `user`-visible `tool.summary` step.
+3. The full `collected` list is merged into `state["reasoning_steps"]` via the `Command` update.
+
+`agent_node` emits one `agent.tool_decision` step per LLM call (visibility `user`). `fallback_node` emits one `fallback` step (visibility `user`) plus one debug diagnostic step (`max_steps_detail` or `max_errors_detail`).
+
+Callers filter `reasoning_steps` by `visibility` to decide what reaches the product-facing JSON payload vs what stays in Langfuse/SSE debug streams.
+
+### Streaming
+
+`POST /v1/chat/stream` runs the same graph via `graph.astream(payload, config, stream_mode="custom")`. The `get_stream_writer()` writer acquired inside each node/tool fans out `ReasoningStep` dicts as SSE events in real time. The final `ChatResponse` is emitted as the last SSE event.
 
 ## API Contract
 
-| Endpoint               | Request                               | Response                                              |
-| ---------------------- | ------------------------------------- | ----------------------------------------------------- |
-| POST /v1/chat          | user_id, message, optional location   | type, message, optional data payload (ADR-052)        |
-| GET /v1/health         | —                                     | status, db connectivity                               |
+| Endpoint                          | Request                               | Response                                              |
+| --------------------------------- | ------------------------------------- | ----------------------------------------------------- |
+| POST /v1/chat                     | user_id, message, optional location   | type, message, optional data payload (ADR-052)        |
+| GET /v1/extraction/{request_id}   | —                                     | ExtractPlaceResponse (results, source_url, request_id); 404 while pending or after TTL |
+| GET /v1/health                    | —                                     | status, db connectivity                               |
 
 All requests come from NestJS after auth verification. This repo never receives requests directly from the frontend.
 
@@ -263,12 +313,10 @@ All requests come from NestJS after auth verification. This repo never receives 
 
 | Logical Role  | Model                   | Why                                                                  |
 | ------------- | ----------------------- | -------------------------------------------------------------------- |
-| intent_router | llama-3.1-8b-instant (Groq) | Fast, cheap LLM-based intent classification for all `/v1/chat` traffic |
-| intent_parser | GPT-4o-mini             | Structured extraction for consult intent (cuisine, price, radius, constraints) |
-| chat_assistant | GPT-4o-mini            | General food/dining Q&A for assistant intent                         |
-| orchestrator  | claude-sonnet-4-6       | Strong reasoning for tool calling (used by agent/orchestration layer) |
+| orchestrator  | claude-sonnet-4-6       | Strong reasoning for tool calling (LangGraph agent) |
+| extractor     | GPT-4o-mini             | NER and subtitle/audio extraction enrichers in the save pipeline |
 | embedder      | Voyage 4-lite           | 9.25% better retrieval quality than OpenAI; 1024-dimensional vectors |
-| evaluator     | GPT-4o-mini             | Cost-effective for batch evals                                       |
+| taste_regen   | GPT-4o-mini             | Cost-effective for taste profile summarization |
 | vision_frames | GPT-4o-mini             | Frame-level vision extraction for background enricher                |
 | transcriber   | whisper-large-v3-turbo (Groq) | Fast multilingual STT; 216x real-time; background audio enricher only (ADR-047) |
 
@@ -335,7 +383,7 @@ Used for:
 
 ## Design Principles
 
-- extract-place is a three-phase workflow (Enrichment → Validation → Background), not an agent. No LangGraph. Enrichers populate ExtractionContext unconditionally. The validator gates results. Background dispatch fires only when inline validation finds nothing.
+- extract-place is a three-phase workflow (Enrichment → Validation → Deep enrichment), not an agent. No LangGraph. The full pipeline runs as a background asyncio task; the HTTP response returns `pending` immediately. Phase 3 (subtitle/whisper/vision) runs inline inside the pipeline — no domain event dispatch, no separate handler.
 - consult is currently a sequential 6-step Python pipeline in `ConsultService` (ADR-050: LangGraph parallelization deferred). If LangGraph is added in the future, Steps 2 (retrieve) and 3 (discover) are the candidates for parallel branches — they are independent and their results merge before validation.
 - Each pipeline step passes only the data the next step needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
 
@@ -443,8 +491,7 @@ The tier is surfaced on `GET /v1/user/context` (plus the full chip array with `s
 | Agent Framework | LangGraph 0.3                  | Multi-step agent orchestration (deferred for consult — ADR-050)       |
 | Chains          | LangChain 0.3                  | Document loaders, retrievers, chains                                  |
 | LLM Providers   | OpenAI, Anthropic, Groq        | Via provider abstraction layer; roles mapped in `config/app.yaml`     |
-| Intent Router   | llama-3.1-8b-instant (Groq)    | Fast intent classification for all `/v1/chat` traffic                 |
-| Extraction / Q&A / Vision / Evals | GPT-4o-mini (OpenAI) | Structured extraction, chat assistant, vision enricher, evals |
+| Extraction / Vision | GPT-4o-mini (OpenAI)       | Structured extraction, vision enricher                                |
 | Orchestration   | claude-sonnet-4-6 (Anthropic)  | Strong reasoning for agent/orchestration layer                        |
 | Embeddings      | voyage-4-lite (Voyage AI)      | 1024-dimensional vectors; 32k token context window                    |
 | Transcription   | whisper-large-v3-turbo (Groq)  | Multilingual STT for background audio enricher (ADR-047)              |

@@ -10,17 +10,19 @@ from totoro_ai.providers.cache import CacheBackend
 
 logger = logging.getLogger(__name__)
 
-_KEY_PREFIX = "extraction"
+# ADR-063: bumped to v2 alongside the two-level ExtractPlaceResponse shape.
+# Legacy `extraction:*` keys are intentionally unread — polling returns 404
+# for them (same path as TTL expiry).
+_KEY_PREFIX = "extraction:v2"
 _DEFAULT_TTL = 3600
 
 
 class ExtractionStatusRepository:
-    """Read/write extraction status from a CacheBackend (ADR-038).
+    """Read/write extraction status from a CacheBackend (ADR-038, ADR-063).
 
-    Key format: extraction:{request_id}
+    Key format: extraction:v2:{request_id}
     TTL: 3600s (1 hour) by default.
-    Value: JSON-serialized dict — either a full ExtractPlaceResponse-compatible
-    payload or {"extraction_status": "failed"}.
+    Value: JSON-serialized `ExtractPlaceResponse` envelope per ADR-063.
     """
 
     def __init__(self, cache: CacheBackend) -> None:

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import BackgroundTasks, Depends
+from typing import Any
+
+from fastapi import BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from totoro_ai.core.chat.chat_assistant_service import ChatAssistantService
 from totoro_ai.core.chat.service import ChatService
-from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
+from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_env
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
@@ -16,7 +17,6 @@ from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
-from totoro_ai.core.intent.intent_parser import IntentParser
 from totoro_ai.core.memory.repository import SQLAlchemyUserMemoryRepository
 from totoro_ai.core.memory.service import UserMemoryService
 from totoro_ai.core.places import GooglePlacesClient, PlacesService
@@ -53,7 +53,7 @@ def get_taste_service() -> TasteModelService:
 
 def get_cache_backend() -> CacheBackend:
     """FastAPI dependency providing CacheBackend (RedisCacheBackend by default)."""
-    return RedisCacheBackend(url=get_secrets().REDIS_URL)
+    return RedisCacheBackend(url=get_env().REDIS_URL)
 
 
 def get_status_repo(
@@ -72,7 +72,7 @@ def _build_places_cache() -> PlacesCache:
     """
     from redis.asyncio import Redis
 
-    redis_client = Redis.from_url(get_secrets().REDIS_URL, decode_responses=True)
+    redis_client = Redis.from_url(get_env().REDIS_URL, decode_responses=True)
     return PlacesCache(redis_client)
 
 
@@ -110,16 +110,6 @@ def get_user_memory_service() -> UserMemoryService:
     )
 
 
-def get_chat_assistant_service(
-    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
-) -> ChatAssistantService:
-    """FastAPI dependency providing ChatAssistantService.
-
-    Injects UserMemoryService for context injection (ADR-010, ADR-038).
-    """
-    return ChatAssistantService(memory_service=memory_service)
-
-
 def get_extraction_config(
     config: AppConfig = Depends(get_config),  # noqa: B008
 ) -> ExtractionConfig:
@@ -151,7 +141,6 @@ async def get_event_dispatcher(
     handlers = EventHandlers(
         taste_service=taste_service,
         memory_service=memory_service,
-        langfuse=None,
     )
 
     dispatcher = EventDispatcher(background_tasks=background_tasks)
@@ -161,7 +150,7 @@ async def get_event_dispatcher(
         "recommendation_rejected",
         "onboarding_signal",
     ):
-        dispatcher.register_handler(event_type, handlers.on_taste_signal)  # type: ignore[arg-type]
+        dispatcher.register_handler(event_type, handlers.on_taste_signal)
     dispatcher.register_handler(
         "personal_facts_extracted",
         handlers.on_personal_facts_extracted,  # type: ignore[arg-type]
@@ -169,53 +158,6 @@ async def get_event_dispatcher(
     dispatcher.register_handler(
         "chip_confirmed",
         handlers.on_chip_confirmed,
-    )
-
-    # Register ExtractionPendingHandler (Run 3 — inline construction, no circular dep)
-    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
-    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
-    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
-    from totoro_ai.core.extraction.handlers.extraction_pending import (
-        ExtractionPendingHandler,
-    )
-    from totoro_ai.core.extraction.validator import GooglePlacesValidator
-    from totoro_ai.core.places import GooglePlacesClient
-
-    pending_cache = _build_places_cache()
-    pending_persistence = ExtractionPersistenceService(
-        places_service=PlacesService(
-            repo=PlacesRepository(db_session), cache=pending_cache, client=None
-        ),
-        places_cache=pending_cache,
-        embedding_repo=SQLAlchemyEmbeddingRepository(db_session),
-        embedder=get_embedder(),
-        event_dispatcher=dispatcher,
-    )
-    pending_handler = ExtractionPendingHandler(
-        background_enrichers=[
-            SubtitleCheckEnricher(
-                instructor_client=get_instructor_client("intent_parser"),
-            ),
-            WhisperAudioEnricher(
-                groq_client=GroqWhisperClient(api_key=get_secrets().GROQ_API_KEY or ""),
-                instructor_client=get_instructor_client("intent_parser"),
-            ),
-            VisionFramesEnricher(
-                vision_extractor=get_vision_extractor("vision_frames")
-            ),
-        ],
-        validator=GooglePlacesValidator(
-            places_client=GooglePlacesClient(),
-            confidence_config=get_config().extraction.confidence,
-        ),
-        persistence=pending_persistence,
-        status_repo=ExtractionStatusRepository(
-            cache=RedisCacheBackend(url=get_secrets().REDIS_URL)
-        ),
-    )
-    dispatcher.register_handler(
-        "extraction_pending",
-        pending_handler.handle,  # type: ignore[arg-type]
     )
 
     return dispatcher
@@ -268,7 +210,7 @@ def _make_enrichment_pipeline() -> EnrichmentPipeline:
                     CircuitBreakerEnricher(YtDlpMetadataEnricher()),
                 ]
             ),
-            LLMNEREnricher(instructor_client=get_instructor_client("intent_parser")),
+            LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         ]
     )
 
@@ -285,7 +227,6 @@ def _get_enrichment_pipeline() -> EnrichmentPipeline:
 
 
 def get_extraction_pipeline(
-    event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
     extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
 ) -> ExtractionPipeline:
     """FastAPI dependency providing ExtractionPipeline with all enrichers wired."""
@@ -303,11 +244,11 @@ def get_extraction_pipeline(
     )
     background_enrichers: list[Enricher] = [
         SubtitleCheckEnricher(
-            instructor_client=get_instructor_client("intent_parser"),
+            instructor_client=get_instructor_client("extractor"),
         ),
         WhisperAudioEnricher(
-            groq_client=GroqWhisperClient(api_key=get_secrets().GROQ_API_KEY or ""),
-            instructor_client=get_instructor_client("intent_parser"),
+            groq_client=GroqWhisperClient(api_key=get_env().GROQ_API_KEY or ""),
+            instructor_client=get_instructor_client("extractor"),
         ),
         VisionFramesEnricher(vision_extractor=get_vision_extractor()),
     ]
@@ -315,7 +256,6 @@ def get_extraction_pipeline(
         enrichment=enrichment,
         validator=validator,
         background_enrichers=background_enrichers,
-        event_dispatcher=event_dispatcher,
         extraction_config=extraction_config,
     )
 
@@ -325,9 +265,12 @@ def get_extraction_service(
     persistence: ExtractionPersistenceService = Depends(  # noqa: B008
         get_extraction_persistence
     ),
+    status_repo: ExtractionStatusRepository = Depends(get_status_repo),  # noqa: B008
 ) -> ExtractionService:
-    """FastAPI dependency providing ExtractionService (2 deps replacing 7)."""
-    return ExtractionService(pipeline=pipeline, persistence=persistence)
+    """FastAPI dependency providing ExtractionService."""
+    return ExtractionService(
+        pipeline=pipeline, persistence=persistence, status_repo=status_repo
+    )
 
 
 async def get_recall_service(
@@ -370,16 +313,16 @@ def get_signal_service(
 
 async def get_consult_service(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
-    config: AppConfig = Depends(get_config),  # noqa: B008
     recommendation_repo: RecommendationRepository = Depends(get_recommendation_repo),  # noqa: B008
-    memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
 ) -> ConsultService:
-    """FastAPI dependency providing a fully wired ConsultService.
+    """FastAPI dependency providing a fully wired ConsultService (feature 028 M4).
 
-    Wires the 6-step pipeline dependencies: intent parser, recall service,
-    places client, taste model service, and ranking service.
-    Also injects RecommendationRepository for persistence (ADR-060) and
-    UserMemoryService for context injection (ADR-010, ADR-038).
+    Wires the 4-phase pipeline dependencies: places client, places service,
+    taste model service (active-tier chip filter only, ADR-061), and
+    recommendation repository (ADR-060). IntentParser, RecallService, and
+    UserMemoryService are no longer held by the consult service — the
+    caller supplies pre-parsed `query`, pre-loaded `saved_places`, and an
+    optional `preference_context`.
     """
     places_service = PlacesService(
         repo=PlacesRepository(db_session),
@@ -387,44 +330,69 @@ async def get_consult_service(
         client=GooglePlacesClient(),
     )
     return ConsultService(
-        intent_parser=IntentParser(),
-        recall_service=RecallService(
-            embedder=get_embedder(),
-            recall_repo=SQLAlchemyRecallRepository(db_session),
-            config=config.recall,
-            places_service=places_service,
-        ),
         places_client=GooglePlacesClient(),
         places_service=places_service,
-        memory_service=memory_service,
         taste_service=TasteModelService(session_factory=_get_session_factory()),
         recommendation_repo=recommendation_repo,
     )
+
+
+def get_agent_checkpointer(request: Request) -> Any:
+    """Return the process-scoped `AsyncPostgresSaver` warmed at startup.
+
+    Populated by `api/main.py::_warm_agent_checkpointer`. Returns `None`
+    when the lifespan hasn't run (test clients) or warmup failed.
+    """
+    return getattr(request.app.state, "agent_checkpointer", None)
+
+
+def get_agent_graph(
+    recall_service: RecallService = Depends(get_recall_service),  # noqa: B008
+    extraction_service: ExtractionService = Depends(get_extraction_service),  # noqa: B008
+    consult_service: ConsultService = Depends(get_consult_service),  # noqa: B008
+    checkpointer: Any = Depends(get_agent_checkpointer),  # noqa: B008
+) -> Any:
+    """Build the agent StateGraph per-request.
+
+    Compiling per-request keeps tool-bound services request-scoped (fresh
+    SQLAlchemy sessions, real EventDispatcher) while reusing the
+    process-scoped checkpointer that owns its own psycopg pool.
+    Compilation is cheap compared to the LLM call it shepherds, so the
+    latency cost is negligible.
+    """
+    if checkpointer is None:
+        return None
+    from totoro_ai.core.agent.graph import build_graph
+    from totoro_ai.core.agent.tools import build_tools
+    from totoro_ai.providers.llm import get_langchain_chat_model
+
+    tools = build_tools(recall_service, extraction_service, consult_service)
+    llm = get_langchain_chat_model("orchestrator")
+    return build_graph(llm, tools, checkpointer)
 
 
 async def get_chat_service(
     extraction_service: ExtractionService = Depends(get_extraction_service),  # noqa: B008
     consult_service: ConsultService = Depends(get_consult_service),  # noqa: B008
     recall_service: RecallService = Depends(get_recall_service),  # noqa: B008
-    assistant_service: ChatAssistantService = Depends(  # noqa: B008
-        get_chat_assistant_service
-    ),
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
     memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
+    taste_service: TasteModelService = Depends(get_taste_service),  # noqa: B008
+    config: AppConfig = Depends(get_config),  # noqa: B008
+    agent_graph: Any = Depends(get_agent_graph),  # noqa: B008
 ) -> ChatService:
     """FastAPI dependency providing a fully wired ChatService (ADR-019, ADR-052).
 
-    Injects all four downstream services plus event dispatcher and memory service.
-    ConsultService is responsible for consult log persistence — ChatService holds
-    no DB repository. PersonalFactsExtracted events fire after intent classification
-    to enable asynchronous memory persistence (ADR-043).
+    Feature 028 M11 (ADR-065): legacy intent_parser and assistant_service
+    removed — all traffic routed to the agent pipeline.
     """
     return ChatService(
         extraction_service=extraction_service,
         consult_service=consult_service,
         recall_service=recall_service,
-        intent_parser=IntentParser(),
-        assistant_service=assistant_service,
         event_dispatcher=event_dispatcher,
         memory_service=memory_service,
+        taste_service=taste_service,
+        config=config,
+        agent_graph=agent_graph,
     )

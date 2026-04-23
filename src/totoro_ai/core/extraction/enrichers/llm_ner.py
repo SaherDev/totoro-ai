@@ -19,7 +19,7 @@ from totoro_ai.core.extraction.types import (
 )
 from totoro_ai.core.places import PlaceAttributes, PlaceCreate, PlaceType
 from totoro_ai.providers.llm import InstructorClient
-from totoro_ai.providers.tracing import get_langfuse_client
+from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,18 @@ If the venue is a food place but no specific dish is mentioned (e.g. a
 generic "food tour", "food court", or a place name with no dish context),
 set cuisine to null rather than guessing from the country. Never default
 to the country's dominant cuisine when the dish type is unknown — null is
-correct, invented values are not.\
+correct, invented values are not.
+
+Markets — use place_type + subcategory to distinguish:
+  - Food markets (you go there to eat or buy food to eat):
+      Tsukiji Outer Market, Borough Market, Mahane Yehuda, Mercado de San Miguel
+      → place_type: food_and_drink, subcategory: market
+  - Non-food markets (general retail, flea, crafts, produce for home cooking):
+      Chatuchak Weekend Market, Portobello Road Market, farmers market, flea market
+      → place_type: shopping, subcategory: market
+  The deciding factor is primary intent: if people go there to eat on-site or
+  graze street food stalls, it is food_and_drink. If the primary intent is
+  browsing and buying goods, it is shopping.\
 """
 
 _CUISINE_VOCAB = (
@@ -87,12 +98,15 @@ For each venue, emit a strict JSON object matching this schema:
 
 Allowed subcategory values by place_type:
   - food_and_drink: restaurant, cafe, bar, bakery, food_truck, brewery,
-                    dessert_shop
+                    dessert_shop, market
   - things_to_do:   nature, cultural_site, museum, nightlife, experience,
                     wellness, event_venue
   - shopping:       market, boutique, mall, bookstore, specialty_store
   - services:       coworking, laundry, pharmacy, atm, car_rental, barbershop
   - accommodation:  hotel, hostel, rental, unique_stay
+
+Note: "market" appears in both food_and_drink and shopping. See the market
+classification rule in the system prompt to pick the right one.
 
 If a field is unknown, set it to null (or [] for the list fields). Do not invent values.
 """
@@ -161,14 +175,12 @@ class LLMNEREnricher:
             f"{_VOCAB_INSTRUCTION}"
         )
 
-        langfuse = get_langfuse_client()
-        generation = None
-        if langfuse:
-            generation = langfuse.generation(
-                name="llm_ner_enricher",
-                input={"text_length": len(text_to_use)},
-                model="gpt-4o-mini",
-            )
+        tracer = get_tracing_client()
+        span = tracer.generation(
+            name="llm_ner_enricher",
+            input={"text_length": len(text_to_use)},
+            model="gpt-4o-mini",
+        )
 
         try:
             response = cast(
@@ -182,8 +194,7 @@ class LLMNEREnricher:
                 ),
             )
 
-            if generation:
-                generation.end(output={"place_count": len(response.places)})
+            span.end(output={"place_count": len(response.places)})
 
             for ner in response.places:
                 if not ner.place_name:
@@ -205,6 +216,5 @@ class LLMNEREnricher:
                 )
 
         except Exception as exc:
-            if generation:
-                generation.end(output={"error": str(exc)})
+            span.end(output={"error": str(exc)})
             logger.warning("LLMNEREnricher failed: %s", exc, exc_info=True)

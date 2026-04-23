@@ -38,7 +38,6 @@ class PlaceSource(str, Enum):
     youtube = "youtube"
     manual = "manual"
     link = "link"
-    consult = "consult"
 
 
 class PlaceProvider(str, Enum):
@@ -61,6 +60,7 @@ _SUBCATEGORIES: dict[PlaceType, frozenset[str]] = {
             "food_truck",
             "brewery",
             "dessert_shop",
+            "market",
         }
     ),
     PlaceType.things_to_do: frozenset(

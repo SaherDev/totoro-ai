@@ -15,6 +15,80 @@ Format:
 
 ---
 
+## ADR-067: Claude Sonnet 4.6 as agent orchestrator with prompt caching
+
+**Date:** 2026-04-23\
+**Status:** accepted\
+**Context:** The orchestrator role in the LangGraph agent routes user messages to one of three tools (save, recall, consult) and generates conversational responses. At portfolio volume (tens of sessions per day), Sonnet 4.6 at $3/$15 per million input/output tokens costs roughly $5-8/month with prompt caching — well inside the $20/month budget. Sonnet 4.6 leads Anthropic's agent benchmarks at its price tier (SWE-bench Verified 79.6%, Terminal-Bench 2.0 59.1%) and handles ambiguous intent boundaries (save vs recall vs consult) and conversational response generation better than cheaper alternatives. Demo and interview quality are a real consideration for a portfolio project. The model ID `claude-sonnet-4-6-20250514` previously in config was invalid — a concatenation of Sonnet 4.6's name with the original Sonnet 4 snapshot date. The correct identifier is the alias `claude-sonnet-4-6`.\
+**Decision:** Use Claude Sonnet 4.6 as the orchestrator. `config/app.yaml` orchestrator role maps to `anthropic/claude-sonnet-4-6`. Prompt caching is enabled on the content block containing the taste profile summary and memory summary — roughly 500 of 800 input tokens per call. Cache hits price cached tokens at $0.30/1M (0.1× standard rate), reducing per-call cost from $0.0069 to $0.00555 (~20% reduction) and improving time-to-first-token on turns 2+ within a session. Output cost is unchanged at $15/1M.\
+**Consequences:** `cache_control: {"type": "ephemeral"}` must appear on the content block containing taste profile summary and memory summary in every agent invocation. Langfuse traces must show `cache_read_input_tokens` after turn 1 of each session — absence means caching is not active. Compare `time_to_first_token` across turn 1 (cold) vs turns 2+ (warm) in Langfuse to measure latency benefit. In Phase 6, evaluate Claude Haiku 4.5 as a cost optimization using real first recommendation acceptance rate data before deciding to downgrade.
+
+---
+
+## ADR-066: Agent reliability parameters and acceptable failure rate
+
+**Date:** 2026-04-22\
+**Status:** accepted\
+**Context:** The LangGraph agent has five numeric dials that bound cost, latency, and reliability. Without documented rationale these become magic numbers. Langfuse spans on `agent_node` (llm_retry_exhausted), `fallback_node` (max_steps, max_errors), and `with_timeout` (tool_timeout, tool_crash) provide per-failure-type visibility to measure against these targets.\
+**Decision:**
+
+**Session failure rate: under 10%**
+Percentage of `/v1/chat` sessions that hit `fallback_node`. 5% is too strict given combined external API flake rate (Google Places, TikTok/Instagram oEmbed, Groq Whisper, LLM providers) which runs 3–5% on a good day — demanding under 5% means chasing false alarms. 15% is too loose; every seventh interaction broken means the product doesn't work. 10% leaves room for unavoidable upstream failures while flagging systemic problems. Measured via Langfuse `agent_fallback` spans tagged `error_type`. Review cadence: weekly during active development, monthly after stabilisation.
+
+**max_errors: 3**
+Failure budget within a single turn. Each tool crash, LLM retry exhaustion, or timeout increments `error_count`. 1 means a single transient network blip kills the turn. 5+ lets the agent keep trying after things are clearly broken — users wait 30+ seconds for a fallback that should arrive at 10. 3 covers transient issues and bails when systemically broken. Tuning lever: raise if Langfuse shows high `llm_retry_exhausted` under normal conditions; lower if tail latency spikes.
+
+**max_steps: 10**
+Maximum `agent_node` loops per turn. Typical turns use 3–6 steps (recall → consult → respond = 3; save → recall → consult = 4–5). 10 gives 2× headroom for unusual chains without allowing infinite loops on ambiguous queries. Below 10 caps legitimate multi-tool chains. Above 10 burns tokens on queries that genuinely confuse the model.
+
+**LLM retries: 3 with exponential backoff (0.5s, 1s, 2s)**
+Within a single `agent_node` call, retry on any exception up to 3 times. 1 retry means any transient Anthropic API hiccup kills the turn. 5+ retries means 30+ second user wait. Exponential backoff (0.5s base, ×2) gives upstream systems room to recover rather than hammering a struggling endpoint. Covers 99%+ of transient issues without long waits.
+
+**max_history_messages: 40**
+Conversation history trimmed to the last 40 messages before each LLM call. Older messages stay in the Postgres checkpoint but do not go to Claude. 40 = 20 back-and-forth turns, covering typical usage while leaving room for system prompt, taste/memory summaries, and tool schemas within Claude Sonnet's 200k context. Below 40, long conversations lose context ("what about that wine bar from earlier?" breaks). Above 40, token costs and latency grow without adding user value.
+
+**Consequences:** If the 10% session failure threshold is exceeded: group Langfuse failures by `error_type`, then tune the relevant parameter — raise `tool_timeouts_seconds` for `tool_timeout` spikes, raise `max_errors` for `llm_retry_exhausted` under normal load, inspect prompt/tool design for `max_steps` saturation. All five values live in `config/app.yaml` and require no code changes to adjust. Langfuse spans must be present on every failure exit path; adding a new failure mode requires a span before this ADR's threshold applies to it.
+
+## ADR-065: Agent cutover — legacy intent pipeline deleted
+
+**Date:** 2026-04-22\
+**Status:** accepted\
+**Context:** `agent_enabled` flag (M6) was flipped to `true` (M10) and has been stable. The legacy intent-router-based dispatch path (`classify_intent`, `ChatAssistantService`, `IntentParser`) is dead code. The three deleted model roles (`intent_router`, `intent_parser`, `chat_assistant`) have no remaining callers in `src/` or `tests/`. `evaluator` was reserved-but-unused since repo inception — pruned alongside the agent-cutover cleanup.\
+**Decision:** Delete the legacy pipeline: `core/chat/router.py`, `core/chat/chat_assistant_service.py`, `core/intent/` (entire module). Remove `_run_legacy` from `ChatService.run`. Remove four model roles from `config/app.yaml`. ADR-062 is now fully implemented. Postgres checkpointer (`AsyncPostgresSaver`) is the confirmed backend (not Redis — Railway's default Redis lacks the modules required by `langgraph-checkpoint-redis`).\
+**Consequences:** `ChatService.run` is a one-liner delegating to `_run_agent`. No regression path exists — rollback requires reintroducing the legacy code from git history. `GET /v1/extraction/{request_id}` polling route (ADR-048) is retained for background extractions. The `agent.enabled` flag stays in config for potential future use but the flag-off path is gone.
+
+---
+
+## ADR-064: Reasoning traces via service-emit / wrapper-wrap pattern
+
+**Date:** 2026-04-21\
+**Status:** accepted\
+**Context:** Every agent turn needs a structured trace of what happened and why, serving three audiences: the end user (trust), the dev team (evals, Langfuse), and the live chat UI (progressive feed). The pre-agent `ConsultResponse.reasoning_steps` was untyped (just `step`+`summary`), lived inside the service, and had no live-streaming path. Moving to the agent design requires deciding who emits, what the step schema is, how events reach two channels (SSE live + JSON batch), and how the pattern stays uniform across three tools without copy-paste.\
+**Decision:** Services take an `emit: EmitFn | None` callback (Protocol: `(step, summary, duration_ms=None) -> None`) and call it at each pipeline boundary with primitive strings + optional timing. Services never import `ReasoningStep` or know about `source` / `tool_name` / `visibility`. Tool wrappers own the agent-layer concerns via two helpers in `core/agent/tools/_emit.py` (`build_emit_closure` + `append_summary`) that wrap each emit into a `ReasoningStep(source="tool", tool_name=<given>, visibility="debug")`, fan out live to `runtime.stream_writer`, and accumulate for `Command(update={"reasoning_steps": ...})`. `ReasoningStep` (at `core/reasoning.py`) is the single shared model — typed `source` (tool/agent/fallback), `visibility` (user/debug), `tool_name`, `timestamp`, `duration_ms`. User-visible catalog is three step types only: `agent.tool_decision` (Sonnet's own text, truncated 200 chars), `tool.summary` (wrapper-authored), `fallback`. `ConsultResponse.reasoning_steps` is deleted (not migrated). No reducer on `AgentState.reasoning_steps` — plain overwrite enables simple per-turn reset. One-tool-call-per-response is a prompt-level invariant with a guarding test.\
+**Consequences:** Services stay business-logic only; reasoning narration is centralized in `_emit.py` and per-tool summary helpers — a one-file edit affects all tools. Adding a fourth tool is ~15 wrapper lines. SSE endpoint is deferred until product-repo opt-in, but tool-side `runtime.stream_writer` calls are wired as silent no-ops from M5, so eventual enablement is additive (one route, no service changes). If parallel tool calls are ever intentionally enabled, `reasoning_steps` needs a list-merge reducer and a dedicated `session_init` node for reset.
+
+---
+
+## ADR-063: Two-level ExtractPlaceResponse status + raw_input rename
+
+**Date:** 2026-04-21\
+**Status:** accepted\
+**Context:** `ExtractPlaceItem.status` conflated two concerns — per-place outcomes (`saved` / `duplicate` / `needs_review`) and pipeline-level states (`pending` / `failed`). The pipeline states had no place, so extractions faked an item with `place=None, confidence=None` just to carry the status. Multi-place extractions (one saved + one duplicate) fought the pipeline-wide status on the item level. The envelope field `source_url` was also a misnomer for the general-purpose `raw_input` case — it stored the parsed URL where applicable, but the user-supplied input may also be plain text or a URL with supplementary text, and downstream consumers (the agent Save tool in M5, the product-repo UI) benefit from seeing the original string verbatim.
+**Decision:** Split status into two levels. `ExtractPlaceResponse.status ∈ {pending, completed, failed}` on the envelope; `ExtractPlaceItem.status ∈ {saved, needs_review, duplicate}` on each item. `ExtractPlaceItem.place` and `ExtractPlaceItem.confidence` become required (non-nullable) — no null placeholders. `results` is empty iff `status != "completed"`. Below-threshold outcomes never appear in `results` — they contribute only to the envelope-level `failed` determination. Rename `source_url → raw_input` on the envelope; `raw_input` carries the user-supplied string verbatim (no trimming, URL canonicalization, or case-folding). Bump the Redis key prefix from `extraction:` to `extraction:v2:` so post-deploy reads cannot misinterpret legacy payloads; the polling route returns 404 for any `request_id` not found under the new prefix (same code path as TTL expiry).
+**Consequences:** Cleaner contract downstream — multi-outcome extractions represent naturally, the agent Save tool (M5) gets real per-place status inline, and product-repo consumers no longer reason about nullable place/confidence fields. Breaking change requiring product-repo (NestJS) TypeScript schema update in lockstep (feature 027 FR-036). Legacy `extraction:v1:*` keys TTL out within 1 hour of deploy; no backwards-compat read path is maintained. `PlaceObject.source_url` (the per-place field capturing where a place was extracted from) is unrelated and unchanged — only the envelope field renames.
+
+---
+
+## ADR-062: LangGraph over LangChain agent abstractions for the Totoro agent
+
+**Date:** 2026-04-19\
+**Status:** accepted\
+**Context:** The Totoro agent requires a conversational loop where Claude Sonnet selects and calls tools (recall, save, consult) based on user intent. Two implementation paths were available: LangChain's high-level agent abstractions (create_react_agent, AgentExecutor) or LangGraph's StateGraph directly. LangChain abstractions offer a working agent in fewer lines but hide the loop internals. Five specific requirements made the abstraction unsuitable: (1) session state carrying taste_profile_summary, memory_summary, conversation history, user_id, and location must persist across multiple HTTP requests via a Redis-backed checkpointer; (2) NodeInterrupt is required to pause execution mid-loop when save extraction confidence is below threshold and resume after user confirmation; (3) user_id and location must be injected into every tool call from state without appearing in the LLM-visible tool schema; (4) get_stream_writer() must emit reasoning step events from inside tool service functions via SSE throughout execution; (5) the failure budget guard must route to a fallback node when steps_taken or error_count hit their limits, which requires custom routing logic beyond max_iterations.\
+**Decision:** Use LangGraph StateGraph directly. LangGraph is built on top of LangChain and is fully interoperable with it — the graph uses LangChain components throughout: @tool decorator, ChatAnthropic, bind_tools(), and message types. The decision is specifically to avoid LangChain's agent abstractions (AgentExecutor, create_react_agent), not LangChain itself. One graph, one agent node (Claude Sonnet), one tool node (ToolNode), a should_continue routing function that checks steps and errors, and a fallback node. No AgentExecutor, no create_react_agent().\
+**Consequences:** More boilerplate than create_react_agent() — the graph, nodes, edges, and checkpointer must be wired explicitly. This is the correct tradeoff: the boilerplate is the control. Any future change to routing logic, state shape, tool injection, or streaming behavior is a targeted edit to one explicit part of the graph rather than a workaround against an abstraction. LangGraph is the current production standard for agentic systems — LangChain's own team now recommends LangGraph over AgentExecutor for any new agent work. Working with StateGraph directly means operating at the level of the underlying primitives — nodes, edges, state, checkpointers, and interrupt/resume — rather than working around an abstraction that no longer reflects how production agents are built. LangChain agent abstractions remain available if a simpler throwaway agent is ever needed outside the main loop.
+
+---
+
 ## ADR-061: Config-driven signal tier derivation and chip status lifecycle
 
 **Date:** 2026-04-18\
@@ -408,7 +482,7 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 **Date:** 2026-03-09 (revised 2026-03-24)\
 **Status:** accepted\
 **Context:** Non-secret config (app metadata, model roles, extraction weights) was previously merged into `config/.local.yaml` alongside secrets. This made non-secret tuning parameters (confidence weights, thresholds) gitignored and unversioned, meaning different environments could silently diverge and config could not be code-reviewed.\
-**Decision:** All non-secret config lives in committed `config/app.yaml` with three top-level keys: `app` (metadata), `models` (logical role → provider/model mapping), `extraction` (confidence weights and thresholds). `config/.local.yaml` (gitignored) holds only true secrets: provider API keys, database URL, Redis URL. Python accesses non-secret config via `get_config() → AppConfig` singleton and secrets via `get_secrets() → SecretsConfig` singleton (both in `core/config.py`). `load_yaml_config()` is an internal loader — consumer code never calls it directly.\
+**Decision:** All non-secret config lives in committed `config/app.yaml` with three top-level keys: `app` (metadata), `models` (logical role → provider/model mapping), `extraction` (confidence weights and thresholds). `config/.local.yaml` (gitignored) holds only true secrets: provider API keys, database URL, Redis URL. Python accesses non-secret config via `get_config() → AppConfig` singleton and secrets via `get_env() → EnvConfig` singleton (both in `core/config.py`). `load_yaml_config()` is an internal loader — consumer code never calls it directly.\
 **Consequences:** Non-secret config is versioned, code-reviewable, and consistent across environments. Secrets remain gitignored. The clear boundary — `app.yaml` for config, `.local.yaml` for secrets — prevents future drift back into mixing the two.
 
 ---
@@ -542,7 +616,7 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 **Date:** 2026-03-07\
 **Status:** accepted\
 **Context:** Non-secret settings (app metadata, model assignments) must live in version-controlled files. Secrets must never appear in config files. A loader that knows where to find config files prevents hardcoded paths throughout the codebase.\
-**Decision:** `src/totoro_ai/core/config.py` is the single config module. It exposes two public singletons: `get_config() → AppConfig` (loads `app.yaml` once, cached for process lifetime) and `get_secrets() → SecretsConfig` (loads `.local.yaml` or falls back to env vars once, cached for process lifetime). Internal helpers `load_yaml_config(name)` and `find_project_root()` are implementation details — consumer code never calls them. Config is injectable via FastAPI `Depends(get_config)` / `Depends(get_secrets)`, making it overridable in tests without filesystem I/O.\
+**Decision:** `src/totoro_ai/core/config.py` is the single config module. It exposes two public singletons: `get_config() → AppConfig` (loads `app.yaml` once, cached for process lifetime) and `get_env() → EnvConfig` (loads `.local.yaml` or falls back to env vars once, cached for process lifetime). Internal helpers `load_yaml_config(name)` and `find_project_root()` are implementation details — consumer code never calls them. Config is injectable via FastAPI `Depends(get_config)` / `Depends(get_env)`, making it overridable in tests without filesystem I/O.\
 **Consequences:** Config is loaded exactly once per process. No per-request file I/O. Tests override config via `app.dependency_overrides`. The clear singleton API prevents ad-hoc `load_yaml_config` calls scattered through the codebase.
 
 ---

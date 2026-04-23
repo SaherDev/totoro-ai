@@ -4,8 +4,6 @@ from totoro_ai.core.extraction.types import (
     CandidatePlace,
     ExtractionContext,
     ExtractionLevel,
-    ExtractionPending,
-    ProvisionalResponse,
     ValidatedCandidate,
 )
 from totoro_ai.core.places import (
@@ -77,7 +75,6 @@ class TestExtractionContext:
         assert ctx.caption is None
         assert ctx.transcript is None
         assert ctx.candidates == []
-        assert ctx.pending_levels == []
 
     def test_candidates_are_independent_instances(self) -> None:
         ctx1 = ExtractionContext(url=None, user_id="u1")
@@ -108,30 +105,3 @@ class TestValidatedCandidate:
         # City lives on attributes.location_context, not on the wrapper.
         assert vc.place.attributes.location_context is not None
         assert vc.place.attributes.location_context.city == "Bangkok"
-
-
-class TestProvisionalResponse:
-    def test_instantiation(self) -> None:
-        p = ProvisionalResponse(
-            extraction_status="processing",
-            confidence=0.0,
-            message="Still working on it.",
-        )
-        assert p.extraction_status == "processing"
-        assert p.pending_levels == []
-
-
-class TestExtractionPending:
-    def test_instantiation(self) -> None:
-        ctx = ExtractionContext(url="https://tiktok.com/v/1", user_id="u1")
-        event = ExtractionPending(
-            user_id="u1",
-            url="https://tiktok.com/v/1",
-            pending_levels=[
-                ExtractionLevel.WHISPER_AUDIO,
-                ExtractionLevel.VISION_FRAMES,
-            ],
-            context=ctx,
-        )
-        assert event.user_id == "u1"
-        assert len(event.pending_levels) == 2

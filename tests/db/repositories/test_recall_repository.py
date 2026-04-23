@@ -108,17 +108,21 @@ async def test_filter_mode_builds_where_clauses_for_every_field() -> None:
     session = _mock_session_with_rows([], count=0)
     repo = SQLAlchemyRecallRepository(session)
 
+    from totoro_ai.core.places.models import LocationContext, PlaceAttributes
+
     filters = RecallFilters(
         place_type="food_and_drink",
         subcategory="cafe",
         source="tiktok",
         tags_include=["date-night"],
-        cuisine="japanese",
-        price_hint="moderate",
-        ambiance="cozy",
-        neighborhood="Siam",
-        city="Bangkok",
-        country="Thailand",
+        attributes=PlaceAttributes(
+            cuisine="japanese",
+            price_hint="moderate",
+            ambiance="cozy",
+            location_context=LocationContext(
+                neighborhood="Siam", city="Bangkok", country="Thailand"
+            ),
+        ),
     )
     await repo.search(user_id="u1", query=None, filters=filters, limit=10)
 
@@ -256,7 +260,12 @@ async def test_hybrid_mode_applies_filter_where_clauses() -> None:
     session = _mock_session_with_rows([], count=0)
     repo = SQLAlchemyRecallRepository(session)
 
-    filters = RecallFilters(place_type="food_and_drink", cuisine="japanese")
+    from totoro_ai.core.places.models import PlaceAttributes
+
+    filters = RecallFilters(
+        place_type="food_and_drink",
+        attributes=PlaceAttributes(cuisine="japanese"),
+    )
     await repo.search(
         user_id="u1",
         query="ramen",

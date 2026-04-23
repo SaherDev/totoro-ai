@@ -56,12 +56,17 @@ class Chip(BaseModel):
     status and selection_round are service-owned lifecycle fields added in
     feature 023. The regen LLM never emits them — defaults apply to legacy
     JSONB rows written before the feature shipped.
+
+    query is LLM-emitted: a short natural-language message the user can tap
+    to ask Totoro (e.g. "Best bars near me tonight"). Defaults to "" for
+    legacy JSONB rows written before this field was added.
     """
 
     label: str = Field(min_length=1, max_length=30)
     source_field: str
     source_value: str
     signal_count: int
+    query: str = Field(default="", max_length=120)
     status: ChipStatus = ChipStatus.PENDING
     selection_round: str | None = None
 
@@ -89,6 +94,10 @@ class ChipView(BaseModel):
     source_field: str = Field(..., description="Field the chip was derived from")
     source_value: str = Field(..., description="Value of source_field")
     signal_count: int = Field(..., description="Number of signals for this chip")
+    query: str = Field(
+        default="",
+        description="Natural-language message the user can tap to send (e.g. 'Best bars near me tonight').",  # noqa: E501
+    )
     status: ChipStatus = Field(
         default=ChipStatus.PENDING,
         description="Lifecycle status: pending | confirmed | rejected",

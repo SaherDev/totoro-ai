@@ -32,7 +32,11 @@ class TestOnTasteSignal:
         return EventHandlers(
             taste_service=mock_taste_service,
             memory_service=MagicMock(),
-            langfuse=None,
+            tracer=MagicMock(
+                generation=MagicMock(return_value=MagicMock()),
+                capture_message=MagicMock(),
+                flush=MagicMock(),
+            ),
         )
 
     async def test_place_saved_calls_handle_signal_per_place(
@@ -114,7 +118,11 @@ class TestOnPersonalFactsExtracted:
         return EventHandlers(
             taste_service=mock_taste_service,
             memory_service=mock_memory_service,
-            langfuse=None,
+            tracer=MagicMock(
+                generation=MagicMock(return_value=MagicMock()),
+                capture_message=MagicMock(),
+                flush=MagicMock(),
+            ),
         )
 
     async def test_empty_facts_skips_save(
@@ -186,7 +194,11 @@ class TestOnChipConfirmed:
         return EventHandlers(
             taste_service=mock_taste_service,
             memory_service=MagicMock(),
-            langfuse=None,
+            tracer=MagicMock(
+                generation=MagicMock(return_value=MagicMock()),
+                capture_message=MagicMock(),
+                flush=MagicMock(),
+            ),
         )
 
     async def test_invokes_run_regen_now_once(

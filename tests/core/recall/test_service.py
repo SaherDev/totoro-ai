@@ -110,6 +110,47 @@ class TestRecallServiceHappyPath:
             ["cosy ramen spot"], input_type="query"
         )
 
+    async def test_emit_callback_fires_mode_and_result_for_hybrid(
+        self,
+        recall_service: RecallService,
+        mock_embedder: AsyncMock,
+        mock_repo: AsyncMock,
+    ) -> None:
+        mock_embedder.embed.return_value = [[0.1]]
+        mock_repo.count_saved_places.return_value = 3
+        mock_repo.search.return_value = (
+            [InternalRecallResult(place=_make_place("p1"), match_reason="semantic")],
+            1,
+        )
+        emitted: list[tuple[str, str]] = []
+
+        def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+            emitted.append((step, summary))
+
+        await recall_service.run("ramen", "u1", emit=spy)
+
+        steps = [s for s, _ in emitted]
+        assert steps == ["recall.mode", "recall.result"]
+        assert "mode=hybrid" in emitted[0][1]
+        assert "1 places matched" in emitted[1][1]
+
+    async def test_emit_callback_fires_for_filter_mode(
+        self,
+        recall_service: RecallService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        mock_repo.count_saved_places.return_value = 3
+        mock_repo.search.return_value = ([], 0)
+        emitted: list[tuple[str, str]] = []
+
+        def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+            emitted.append((step, summary))
+
+        await recall_service.run(None, "u1", emit=spy)
+
+        assert [s for s, _ in emitted] == ["recall.mode", "recall.result"]
+        assert "mode=filter" in emitted[0][1]
+
     async def test_run_passes_limit_and_rrf_k_to_repo(
         self,
         recall_service: RecallService,

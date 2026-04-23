@@ -1,13 +1,20 @@
-"""Pydantic schemas for the extract-place endpoint (ADR-017, ADR-018, ADR-054).
+"""Pydantic schemas for the extract-place endpoint (ADR-017, ADR-018, ADR-054, ADR-063).
 
-The response is a list of `ExtractPlaceItem`s. Each item carries either a
-fully-populated `PlaceObject` (for `saved`/`duplicate`) or `None` (for
-`pending`/`failed`), plus the extraction confidence if the cascade made it
-to validation. No more top-level `provisional`/`pending_levels`/
-`extraction_status` — each item is self-describing.
+The envelope is a pipeline-level `ExtractPlaceResponse` carrying `status` in
+`{pending, completed, failed}` and a list of `ExtractPlaceItem`s. Each item is
+self-describing — a non-null `place`, a non-null `confidence`, and a per-place
+`status` in `{saved, needs_review, duplicate}`. No null placeholders; pipeline
+states live on the envelope only. ADR-063 documents the split.
+
+`raw_input` carries the original user-supplied string verbatim (no trimming,
+no URL canonicalization, no case-folding). Replaces the pre-M0.5 `source_url`
+field on this envelope. Note: `PlaceObject.source_url` (the URL the place was
+extracted from, a per-place field) is unrelated and unchanged.
 """
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from totoro_ai.core.places import PlaceObject
 
@@ -15,24 +22,29 @@ from totoro_ai.core.places import PlaceObject
 class ExtractPlaceItem(BaseModel):
     """One row in the extract response.
 
-    status values:
-    - "saved"        — newly written to the permanent store; `place` is
-                       set; confidence ≥ `confident_threshold`.
-    - "needs_review" — newly written, but confidence falls in the
-                       tentative band (between `save_threshold` and
-                       `confident_threshold`); UI should prompt the user
-                       to confirm or delete (ADR-057).
+    Per-place outcome values:
+    - "saved"        — newly written to the permanent store; confidence
+                       ≥ `confident_threshold` (ADR-057).
+    - "needs_review" — newly written, but confidence falls in the tentative
+                       band (between `save_threshold` and
+                       `confident_threshold`); UI should prompt the user to
+                       confirm or delete (ADR-057).
     - "duplicate"    — already existed; `place` is the existing row.
-    - "pending"      — background enrichers are still running; caller
-                       polls via `request_id`.
-    - "failed"       — extraction did not yield a place (below
-                       `save_threshold`, no candidates, validator found
-                       nothing, …); `place` is None.
+
+    Pipeline-level states (`pending`, `failed`) live on the response
+    envelope, never on items (ADR-063).
     """
 
-    place: PlaceObject | None = None
-    confidence: float | None = None
-    status: str
+    place: PlaceObject
+    confidence: float
+    status: Literal["saved", "needs_review", "duplicate"]
+
+    @field_validator("confidence")
+    @classmethod
+    def _confidence_in_range(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f"confidence must be in [0.0, 1.0], got {v}")
+        return v
 
 
 class ExtractPlaceRequest(BaseModel):
@@ -43,8 +55,23 @@ class ExtractPlaceRequest(BaseModel):
 
 
 class ExtractPlaceResponse(BaseModel):
-    """Response body for extract-place endpoint."""
+    """Response body for extract-place endpoint (ADR-063).
 
-    results: list[ExtractPlaceItem]
-    source_url: str | None = None
+    Invariant: `results` is empty iff `status != "completed"`.
+    """
+
+    status: Literal["pending", "completed", "failed"]
+    results: list[ExtractPlaceItem] = Field(default_factory=list)
+    raw_input: str | None = None
     request_id: str | None = None
+
+    @model_validator(mode="after")
+    def _status_results_consistency(self) -> "ExtractPlaceResponse":
+        if self.status == "completed" and not self.results:
+            raise ValueError("status='completed' requires non-empty results")
+        if self.status != "completed" and self.results:
+            raise ValueError(
+                f"status={self.status!r} forbids non-empty results; "
+                f"pipeline-level states carry no items"
+            )
+        return self
