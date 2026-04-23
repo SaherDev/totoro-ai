@@ -48,8 +48,8 @@ models:
     dimensions: 1024
 
   orchestrator:
-    provider: anthropic
-    model: claude-haiku-4-5-20251001
+    provider: openai
+    model: gpt-4o-mini
     max_tokens: 1024
     temperature: 0.7
 
@@ -209,7 +209,7 @@ agent:
   max_errors: 3
   max_history_messages: 40
   checkpointer_ttl_seconds: 86400
-  prompt_caching_enabled: true  # ADR-067: ephemeral cache_control on system message
+  prompt_caching_enabled: false  # ADR-067: Anthropic-only (ephemeral cache_control). Re-enable when orchestrator returns to Anthropic.
   tool_timeouts_seconds:
     recall: 5
     consult: 10
