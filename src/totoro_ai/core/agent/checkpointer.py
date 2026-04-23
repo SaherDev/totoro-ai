@@ -20,7 +20,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from totoro_ai.core.config import get_secrets
+from totoro_ai.core.config import get_env
 
 
 async def build_checkpointer() -> AsyncPostgresSaver:
@@ -29,7 +29,7 @@ async def build_checkpointer() -> AsyncPostgresSaver:
     The pool is stored on `saver.conn` — callers that need to close it at
     shutdown access it via `saver.conn.close()`.
     """
-    db_url = _normalize_postgres_url(get_secrets().DATABASE_URL)
+    db_url = _normalize_postgres_url(get_env().DATABASE_URL)
     pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
         conninfo=db_url,
         max_size=10,

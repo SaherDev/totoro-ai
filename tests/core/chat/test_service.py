@@ -15,14 +15,12 @@ def _make_service(
     taste_service: AsyncMock | None = None,
     memory_service: AsyncMock | None = None,
     agent_graph: AsyncMock | None = None,
-    agent_enabled: bool = True,
 ) -> ChatService:
     """Build a ChatService with all deps mocked."""
     from totoro_ai.core.config import get_config
 
     config = get_config()
     cfg_copy = config.model_copy(deep=True)
-    cfg_copy.agent.enabled = agent_enabled
 
     if taste_service is None:
         taste_service = AsyncMock()

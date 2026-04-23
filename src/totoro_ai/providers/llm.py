@@ -13,7 +13,7 @@ from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
 from pydantic import BaseModel, ValidationError
 
-from totoro_ai.core.config import get_config, get_secrets
+from totoro_ai.core.config import get_config, get_env
 from totoro_ai.providers.tracing import get_tracing_client
 
 # --- Protocols ---
@@ -285,7 +285,7 @@ def get_llm(role: str) -> LLMClientProtocol:
         ValueError: If provider is unsupported
     """
     role_config = get_config().models[role]
-    secrets = get_secrets()
+    secrets = get_env()
 
     provider = role_config.provider
     model = role_config.model
@@ -344,7 +344,7 @@ def get_langchain_chat_model(role: str) -> Any:
         ValueError: If the configured provider has no LangChain adapter yet.
     """
     role_config = get_config().models[role]
-    secrets = get_secrets()
+    secrets = get_env()
 
     provider = role_config.provider
     model = role_config.model
@@ -412,7 +412,7 @@ def get_instructor_client(role: str) -> InstructorClient:
 
     return InstructorClient(
         model=role_config.model,
-        api_key=get_secrets().OPENAI_API_KEY,
+        api_key=get_env().OPENAI_API_KEY,
     )
 
 
@@ -422,7 +422,7 @@ def get_vision_extractor(role: str = "vision_frames") -> VisionExtractorProtocol
     Resolves provider and model from config/app.yaml under the 'models' key.
     """
     role_config = get_config().models[role]
-    secrets = get_secrets()
+    secrets = get_env()
 
     if role_config.provider == "openai":
         return OpenAIVisionExtractor(

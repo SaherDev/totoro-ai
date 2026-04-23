@@ -167,9 +167,9 @@ def get_tracing_client() -> TracingClient:
     try:
         import langfuse  # noqa: PLC0415
 
-        from totoro_ai.core.config import get_secrets  # noqa: PLC0415
+        from totoro_ai.core.config import get_env  # noqa: PLC0415
 
-        secrets = get_secrets()
+        secrets = get_env()
         lf = langfuse.Langfuse(
             public_key=secrets.LANGFUSE_PUBLIC_KEY,
             secret_key=secrets.LANGFUSE_SECRET_KEY,

@@ -8,7 +8,7 @@ from fastapi import BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from totoro_ai.core.chat.service import ChatService
-from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_secrets
+from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_env
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
@@ -53,7 +53,7 @@ def get_taste_service() -> TasteModelService:
 
 def get_cache_backend() -> CacheBackend:
     """FastAPI dependency providing CacheBackend (RedisCacheBackend by default)."""
-    return RedisCacheBackend(url=get_secrets().REDIS_URL)
+    return RedisCacheBackend(url=get_env().REDIS_URL)
 
 
 def get_status_repo(
@@ -72,7 +72,7 @@ def _build_places_cache() -> PlacesCache:
     """
     from redis.asyncio import Redis
 
-    redis_client = Redis.from_url(get_secrets().REDIS_URL, decode_responses=True)
+    redis_client = Redis.from_url(get_env().REDIS_URL, decode_responses=True)
     return PlacesCache(redis_client)
 
 
@@ -247,7 +247,7 @@ def get_extraction_pipeline(
             instructor_client=get_instructor_client("extractor"),
         ),
         WhisperAudioEnricher(
-            groq_client=GroqWhisperClient(api_key=get_secrets().GROQ_API_KEY or ""),
+            groq_client=GroqWhisperClient(api_key=get_env().GROQ_API_KEY or ""),
             instructor_client=get_instructor_client("extractor"),
         ),
         VisionFramesEnricher(vision_extractor=get_vision_extractor()),

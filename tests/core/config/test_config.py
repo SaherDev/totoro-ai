@@ -18,7 +18,6 @@ from totoro_ai.core.config import (
 class TestAgentConfigDefaults:
     def test_default_instance(self) -> None:
         c = AgentConfig()
-        assert c.enabled is False
         assert c.max_steps == 10
         assert c.max_errors == 3
         assert c.checkpointer_ttl_seconds == 86400
@@ -28,7 +27,6 @@ class TestAgentConfigDefaults:
 
     def test_app_config_exposes_agent_with_defaults(self) -> None:
         cfg = get_config()
-        assert cfg.agent.enabled is True
         assert cfg.agent.max_steps == 10
         assert cfg.agent.max_errors == 3
         assert cfg.agent.tool_timeouts_seconds.recall == 5

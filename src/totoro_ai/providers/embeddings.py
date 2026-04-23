@@ -6,7 +6,7 @@ Resolves configured embedder clients by role (ADR-020, ADR-038, ADR-040).
 import logging
 from typing import Protocol, cast, runtime_checkable
 
-from totoro_ai.core.config import get_config, get_secrets
+from totoro_ai.core.config import get_config, get_env
 from totoro_ai.providers.tracing import get_tracing_client
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ def get_embedder() -> EmbedderProtocol:
         ValueError: If provider is unsupported
     """
     role_config = get_config().models["embedder"]
-    secrets = get_secrets()
+    secrets = get_env()
 
     provider = role_config.provider
     model = role_config.model

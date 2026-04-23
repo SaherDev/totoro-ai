@@ -13,7 +13,7 @@ from totoro_ai.core.agent.checkpointer import (
     _normalize_postgres_url,
     build_checkpointer,
 )
-from totoro_ai.core.config import get_secrets
+from totoro_ai.core.config import get_env
 
 
 def _postgres_reachable() -> bool:
@@ -22,7 +22,7 @@ def _postgres_reachable() -> bool:
 
         import psycopg
 
-        url = _normalize_postgres_url(get_secrets().DATABASE_URL)
+        url = _normalize_postgres_url(get_env().DATABASE_URL)
 
         async def _probe() -> None:
             async with (
@@ -52,7 +52,7 @@ async def test_setup_creates_library_tables() -> None:
     saver = await build_checkpointer()
     assert saver is not None
 
-    url = _normalize_postgres_url(get_secrets().DATABASE_URL)
+    url = _normalize_postgres_url(get_env().DATABASE_URL)
     async with (
         await psycopg.AsyncConnection.connect(url) as conn,
         conn.cursor() as cur,

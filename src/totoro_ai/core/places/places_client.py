@@ -9,7 +9,7 @@ from typing import Any, Protocol, cast
 import httpx
 from pydantic import BaseModel
 
-from totoro_ai.core.config import get_config, get_secrets
+from totoro_ai.core.config import get_config, get_env
 from totoro_ai.core.places.models import HoursDict
 
 logger = logging.getLogger(__name__)
@@ -211,7 +211,7 @@ class GooglePlacesClient:
 
     def __init__(self) -> None:
         """Initialize with API key from config."""
-        api_key = get_secrets().GOOGLE_API_KEY
+        api_key = get_env().GOOGLE_API_KEY
         if not api_key:
             raise ValueError("Google API key not configured")
         self.api_key: str = api_key

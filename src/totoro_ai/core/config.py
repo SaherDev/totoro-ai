@@ -2,7 +2,7 @@
 
 Two singletons:
 - get_config()   → AppConfig    from config/app.yaml (committed, non-secret)
-- get_secrets()  → SecretsConfig from .env → env vars (never committed)
+- get_env()  → EnvConfig from .env → env vars (never committed)
 
 All other modules import from here. Nobody calls load_yaml_config() directly.
 """
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
-# Low-level YAML loader (internal — use get_config / get_secrets instead)
+# Low-level YAML loader (internal — use get_config / get_env instead)
 # ---------------------------------------------------------------------------
 
 
@@ -279,13 +279,13 @@ class MemoryConfig(BaseModel):
 
 
 class ProviderEndpointConfig(BaseModel):
-    """Non-secret provider config (base URL, etc.). API keys live in SecretsConfig."""
+    """Non-secret provider config (base URL, etc.). API keys live in EnvConfig."""
 
     base_url: str
 
 
 class AppProvidersConfig(BaseModel):
-    """Non-secret provider endpoints (base URLs). API keys live in SecretsConfig."""
+    """Non-secret provider endpoints (base URLs). API keys live in EnvConfig."""
 
     groq: ProviderEndpointConfig = ProviderEndpointConfig(
         base_url="https://api.groq.com"
@@ -346,13 +346,11 @@ class ToolTimeoutsConfig(BaseModel):
 class AgentConfig(BaseModel):
     """Typed configuration for the agent path (feature 027 M2, ADR-062).
 
-    `enabled` gates the entire agent path; default False. `max_steps` and
-    `max_errors` bound the graph's should_continue loop (M3 reads these).
+    `max_steps` and `max_errors` bound the graph's should_continue loop (M3 reads these).
     `checkpointer_ttl_seconds` is reserved for a future cleanup job
     (Postgres has no native TTL).
     """
 
-    enabled: bool = False
     max_steps: int = 10
     max_errors: int = 3
     max_history_messages: int = 40
@@ -462,13 +460,13 @@ def get_prompt(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# SecretsConfig — flat secrets from .env or environment variables
+# EnvConfig — env vars and secrets from .env or environment variables
 # ---------------------------------------------------------------------------
 
 _ENV_FILE = find_project_root() / ".env"
 
 
-class SecretsConfig(BaseSettings):
+class EnvConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
@@ -485,18 +483,19 @@ class SecretsConfig(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str | None = None
     LANGFUSE_SECRET_KEY: str | None = None
     LANGFUSE_HOST: str | None = None
+    AGENT_ENABLED: bool = True
 
 
-_secrets: SecretsConfig | None = None
+_env: EnvConfig | None = None
 
 
-def get_secrets() -> SecretsConfig:
-    """Return the SecretsConfig singleton.
+def get_env() -> EnvConfig:
+    """Return the EnvConfig singleton.
 
     Reads from .env (local dev) and environment variables (Railway).
     Environment variables take precedence over .env values.
     """
-    global _secrets
-    if _secrets is None:
-        _secrets = SecretsConfig()
-    return _secrets
+    global _env
+    if _env is None:
+        _env = EnvConfig()
+    return _env

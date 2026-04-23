@@ -16,6 +16,7 @@ from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
 from totoro_ai.core.agent.invocation import build_turn_payload
 from totoro_ai.core.agent.messages import extract_text_content
 from totoro_ai.core.chat.service import ChatService, _collect_current_turn_tool_results
+from totoro_ai.core.config import get_env
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ async def chat_stream(
     """
     from fastapi.responses import JSONResponse
 
-    if agent_graph is None or not service._config.agent.enabled:
+    if agent_graph is None or not get_env().AGENT_ENABLED:
         return JSONResponse(  # type: ignore[return-value]
             status_code=400,
             content={"detail": "Agent not enabled or graph unavailable"},

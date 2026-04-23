@@ -13,22 +13,13 @@ from totoro_ai.api.deps import get_agent_graph, get_chat_service
 from totoro_ai.api.main import app
 from totoro_ai.core.agent.reasoning import ReasoningStep
 from totoro_ai.core.chat.service import ChatService
-from totoro_ai.core.config import AgentConfig, AppConfig
+from totoro_ai.core.config import AppConfig
 
 
-def _make_mock_config(enabled: bool = True) -> MagicMock:
-    """Build a mock AppConfig where agent.enabled is `enabled`."""
-    cfg = MagicMock(spec=AppConfig)
-    agent_cfg = MagicMock(spec=AgentConfig)
-    agent_cfg.enabled = enabled
-    cfg.agent = agent_cfg
-    return cfg
-
-
-def _make_mock_service(enabled: bool = True) -> MagicMock:
+def _make_mock_service() -> MagicMock:
     """Build a mock ChatService with async taste/memory helpers."""
     svc = MagicMock(spec=ChatService)
-    svc._config = _make_mock_config(enabled=enabled)
+    svc._config = MagicMock(spec=AppConfig)
     svc._compose_taste_summary = AsyncMock(return_value="")
     svc._compose_memory_summary = AsyncMock(return_value="")
     return svc
@@ -51,7 +42,7 @@ def _make_step_event(step: str, summary: str) -> dict[str, Any]:
 
 @pytest.fixture
 def mock_service() -> MagicMock:
-    return _make_mock_service(enabled=True)
+    return _make_mock_service()
 
 
 @pytest.fixture
@@ -201,7 +192,7 @@ class TestChatStreamToolCallsUsed:
 
         from langchain_core.messages import AIMessage
 
-        svc = _make_mock_service(enabled=True)
+        svc = _make_mock_service()
         graph = MagicMock()
 
         async def _stream_with_tool_calls(
@@ -249,22 +240,28 @@ class TestChatStreamDisabledAgent:
     """Verify /v1/chat/stream returns 400 when agent is disabled or graph is None."""
 
     def test_returns_400_when_agent_disabled(self) -> None:
-        disabled_svc = _make_mock_service(enabled=False)
-        app.dependency_overrides[get_chat_service] = lambda: disabled_svc
+        from unittest.mock import patch
+
+        from totoro_ai.core.config import EnvConfig
+
+        disabled_env = MagicMock(spec=EnvConfig)
+        disabled_env.AGENT_ENABLED = False
+        app.dependency_overrides[get_chat_service] = lambda: _make_mock_service()
         app.dependency_overrides[get_agent_graph] = lambda: MagicMock()
-        try:
-            tc = TestClient(app)
-            response = tc.post(
-                "/v1/chat/stream",
-                json={"user_id": "u1", "message": "test"},
-            )
-            assert response.status_code == 400
-        finally:
-            app.dependency_overrides.pop(get_chat_service, None)
-            app.dependency_overrides.pop(get_agent_graph, None)
+        with patch("totoro_ai.api.routes.chat.get_env", return_value=disabled_env):
+            try:
+                tc = TestClient(app)
+                response = tc.post(
+                    "/v1/chat/stream",
+                    json={"user_id": "u1", "message": "test"},
+                )
+                assert response.status_code == 400
+            finally:
+                app.dependency_overrides.pop(get_chat_service, None)
+                app.dependency_overrides.pop(get_agent_graph, None)
 
     def test_returns_400_when_graph_is_none(self) -> None:
-        enabled_svc = _make_mock_service(enabled=True)
+        enabled_svc = _make_mock_service()
         app.dependency_overrides[get_chat_service] = lambda: enabled_svc
         app.dependency_overrides[get_agent_graph] = lambda: None
         try:
