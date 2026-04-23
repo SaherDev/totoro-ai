@@ -81,6 +81,34 @@ _FALLBACK_MESSAGE = (
 )
 
 
+def _strip_orphaned_tool_results(messages: list[Any]) -> tuple[list[Any], int]:
+    """Remove ToolMessages whose tool_call_id has no matching AIMessage in the window.
+
+    History trimming can cut the AIMessage that triggered a tool call while keeping
+    the ToolMessage response, producing a tool_result block with no tool_use.
+    Anthropic rejects this with a 400. Strip those ToolMessages before sending.
+
+    Returns the cleaned message list and the count of stripped messages.
+    """
+    known_ids: set[str] = set()
+    for msg in messages:
+        if isinstance(msg, AIMessage):
+            for tc in getattr(msg, "tool_calls", None) or []:
+                if tc.get("id"):
+                    known_ids.add(tc["id"])
+
+    stripped = 0
+    result = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            tcid = getattr(msg, "tool_call_id", None)
+            if tcid and tcid not in known_ids:
+                stripped += 1
+                continue
+        result.append(msg)
+    return result, stripped
+
+
 def _sanitize_orphaned_tool_calls(messages: list[Any]) -> tuple[list[Any], int]:
     """Inject placeholder ToolMessages for orphaned tool_use blocks.
 
@@ -169,6 +197,12 @@ def make_agent_node(llm: Any, tools: list[Any]) -> Any:
         system = SystemMessage(content=_render_system_prompt(state))
         max_hist = get_config().agent.max_history_messages
         trimmed = state["messages"][-max_hist:]
+        trimmed, stripped = _strip_orphaned_tool_results(trimmed)
+        if stripped:
+            logger.warning(
+                "Stripped %d ToolMessage(s) whose AIMessage was trimmed from history",
+                stripped,
+            )
         sanitized, dropped = _sanitize_orphaned_tool_calls(trimmed)
         if dropped:
             logger.warning(
