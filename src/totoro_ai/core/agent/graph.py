@@ -120,6 +120,21 @@ def _sanitize_orphaned_tool_calls(messages: list[Any]) -> tuple[list[Any], int]:
     return result, injected
 
 
+def _render_location_context(state: AgentState) -> str:
+    loc = state.get("location")
+    if loc:
+        return (
+            f"User's current GPS location: lat={loc['lat']}, lng={loc['lng']}. "
+            "Do NOT ask for their city — their coordinates are already available. "
+            "When calling consult, leave search_location_name empty and the system "
+            "will use these coordinates automatically."
+        )
+    return (
+        "No location provided. If the user asks for nearby recommendations, "
+        "ask for their city or neighbourhood."
+    )
+
+
 def _render_system_prompt(state: AgentState) -> str:
     """Format the agent prompt with per-turn summaries substituted.
 
@@ -128,6 +143,7 @@ def _render_system_prompt(state: AgentState) -> str:
     """
     template = get_config().prompts["agent"].content
     return template.format(
+        location_context=_render_location_context(state),
         taste_profile_summary=state.get("taste_profile_summary") or "",
         memory_summary=state.get("memory_summary") or "",
     )

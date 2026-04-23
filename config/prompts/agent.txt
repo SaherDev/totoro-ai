@@ -5,6 +5,8 @@ limited to food or dining.
 
 ## Context about this user
 
+{location_context}
+
 Taste profile (behavior-derived, with signal counts):
 
 {taste_profile_summary}
