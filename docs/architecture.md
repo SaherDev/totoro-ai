@@ -128,8 +128,11 @@ ConsultService.consult()
     │   Hybrid search (pgvector + FTS + RRF) via RecallService
     │   Post-filter by price_range and radius if location available
     │
-    ├── Step 3: Discover external candidates
-    │   Call Google Places API with enriched_query + radius filters
+    ├── Step 3: Discover external candidates (parallel)
+    │   ├── Keyword search: Google Places nearby search with query + radius
+    │   └── Suggestion validation: agent-supplied place names validated via
+    │       validate_places() — EXACT/FUZZY matches only, anchored to same
+    │       geocoded location_bias. Both results merge into discovered_places.
     │   Skipped if no location context
     │
     ├── Step 4: Deduplicate candidates (by external_id, then place_id)
