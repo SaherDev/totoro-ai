@@ -10,7 +10,8 @@ All requests come from NestJS after auth verification. totoro-ai never receives 
 
 - Base URL loaded from YAML config: `ai_service.base_url`
 - All endpoints are prefixed with `/v1/`
-- All requests are JSON over HTTP (`Content-Type: application/json`)
+- Most requests are JSON over HTTP (`Content-Type: application/json`)
+- `POST /v1/chat/stream` uses Server-Sent Events (`Content-Type: text/event-stream`) — NestJS must forward the stream to the frontend without buffering
 - Auth between services is TBD (likely a shared secret header in later phases)
 
 ---
@@ -120,19 +121,19 @@ The system classifies intent, dispatches to the correct pipeline, and returns a 
 
 ```json
 {
-  "type": "consult",
+  "type": "agent",
   "message": "Based on what I know about you, try Nara Eatery…",
-  "data": {}
+  "data": {},
+  "tool_calls_used": 2
 }
 ```
 
-| Field     | Type             | Notes                                                                                        |
-| --------- | ---------------- | -------------------------------------------------------------------------------------------- |
-| `type`    | `string`         | One of: `agent`, `extract-place`, `consult`, `recall`, `clarification`, `error` (ADR-065: `assistant` removed) |
-| `message` | `string`         | Human-readable response text                                                                 |
-| `data`    | `object \| null` | Structured payload from downstream service; null for clarification/assistant/error           |
-
-> `"agent"` is the primary response type since M11 (ADR-065). On the agent path, `data` carries `{"reasoning_steps": [<ReasoningStep.model_dump>, ...]}`; only user-visible steps (`agent.tool_decision`, `tool.summary`, `fallback`) survive serialization. Each step includes `duration_ms` for perf observability.
+| Field             | Type             | Notes                                                                                                          |
+| ----------------- | ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| `type`            | `string`         | One of: `agent`, `extract-place`, `consult`, `recall`, `clarification`, `error` (ADR-065: `assistant` removed) |
+| `message`         | `string`         | Human-readable response text                                                                                   |
+| `data`            | `object \| null` | Structured payload from downstream service; shape varies by `type` — see sections below                        |
+| `tool_calls_used` | `integer`        | Count of tool invocations (save, recall, consult) during this turn. Always present; `0` when no tools ran. Read by NestJS to increment the daily tool-call counter. |
 
 **Response Types by Intent:**
 
@@ -222,10 +223,15 @@ Operational note: status payloads are cached in Redis under the `extraction:v2:{
 
 `ReasoningStep` shape:
 
-| Field     | Type     | Notes                                           |
-| --------- | -------- | ----------------------------------------------- |
-| `step`    | `string` | Pipeline step identifier                        |
-| `summary` | `string` | Human-readable summary of what the step decided |
+| Field        | Type                                              | Notes                                                                                                                                                   |
+| ------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `step`       | `string`                                          | Identifier: `agent.tool_decision`, `tool.summary`, `fallback`, `max_steps_detail`, etc.                                                                 |
+| `summary`    | `string`                                          | Human-readable description. For `agent.tool_decision` steps this is the LLM's reasoning text **truncated to 200 chars** — do not use as the full response |
+| `source`     | `"tool" \| "agent" \| "fallback"`                 | Which part of the graph produced this step                                                                                                              |
+| `tool_name`  | `"recall" \| "save" \| "consult" \| null`         | Set iff `source == "tool"`, `null` otherwise                                                                                                            |
+| `visibility` | `"user" \| "debug"`                               | Only `"user"` steps appear in API responses; `"debug"` steps go to Langfuse/SSE only                                                                   |
+| `duration_ms`| `float`                                           | Latency in ms. `0` for `agent.tool_decision` steps (agent node doesn't measure LLM latency); populated for tool steps                                   |
+| `timestamp`  | `ISO-8601 string`                                 | UTC timestamp when the step was recorded                                                                                                                |
 
 ### `recall`
 
@@ -267,29 +273,70 @@ Operational note: status payloads are cached in Redis under the `extraction:v2:{
 | `relevance_score` | `float \| null`                                               | Populated only in hybrid mode. Scale depends on `score_type`                      |
 | `score_type`      | `"rrf" \| "ts_rank" \| null`                                  | `rrf` scores are ~0.01–0.03; `ts_rank` scores are 0–1. Never compare across types |
 
-### `assistant`
+### `agent`
+
+Primary response type since M11 (ADR-065). Returned for all conversational turns that go through the LangGraph agent.
 
 ```json
 {
-  "type": "assistant",
-  "message": "Tipping is not expected in Japan…",
-  "data": null
+  "type": "agent",
+  "message": "Here are some ramen spots near you.",
+  "data": {
+    "reasoning_steps": [
+      {
+        "step": "agent.tool_decision",
+        "summary": "recall — user referenced saved places",
+        "source": "agent",
+        "tool_name": null,
+        "visibility": "user",
+        "duration_ms": 0.0,
+        "timestamp": "2026-04-23T10:00:00Z"
+      }
+    ],
+    "tool_results": [
+      {
+        "tool": "recall",
+        "tool_call_id": "toolu_01abc...",
+        "payload": { /* RecallResponse shape */ }
+      }
+    ]
+  },
+  "tool_calls_used": 2
 }
 ```
 
-`data` is always `null` — the LLM response lives in `message`.
+`data` fields:
+
+| Field             | Type               | Notes                                                                                     |
+| ----------------- | ------------------ | ----------------------------------------------------------------------------------------- |
+| `reasoning_steps` | `ReasoningStep[]`  | Only `visibility="user"` steps — `agent.tool_decision`, `tool.summary`, `fallback`        |
+| `tool_results`    | `ToolResult[]`     | Structured payloads from relevant tool calls this turn. When recall + consult both ran, only consult is included — consult already merges saved + discovered results so the recall payload is redundant. Empty array when no tools ran. |
+
+`ToolResult` shape:
+
+| Field          | Type             | Notes                                                                  |
+| -------------- | ---------------- | ---------------------------------------------------------------------- |
+| `tool`         | `string \| null` | Tool name: `"recall"`, `"save"`, or `"consult"`                        |
+| `tool_call_id` | `string \| null` | LangGraph tool call identifier                                         |
+| `payload`      | `object \| null` | Parsed JSON from the tool's service response; `null` if unparseable    |
 
 ### `clarification`
 
 ```json
 {
   "type": "clarification",
-  "message": "Are you looking for a place called Fuji you saved, or a recommendation near there?",
-  "data": null
+  "message": "Low confidence on Nara Eatery — is this the place you meant?",
+  "data": {
+    "interrupt": {
+      "type": "save_needs_review",
+      "request_id": "req_01HZ...",
+      "candidates": [{ /* ExtractPlaceItem */ }]
+    }
+  }
 }
 ```
 
-Returned when intent classification confidence is below 0.7. `data` is always `null`.
+Returned when the save tool extracts a place with confidence in the tentative band and requires user confirmation (NodeInterrupt — ADR-063). `data.interrupt.candidates` contains the low-confidence `ExtractPlaceItem` objects for the frontend to render a confirmation UI.
 
 ### `error`
 
@@ -318,10 +365,89 @@ All downstream exceptions are caught and surfaced as `type="error"` with HTTP 20
 
 **Notes:**
 
-- `location` is only forwarded to `ConsultService.consult()` — all other intents ignore it.
-- Confidence threshold for intent classification is 0.7. Messages below threshold return `type="clarification"`.
+- `location` is forwarded to the agent and available to the consult tool; ignored for direct-response turns.
+- `type="clarification"` is triggered by a NodeInterrupt from the save tool (low-confidence extraction), not by an intent classification threshold. `data` is never `null` on clarification — it carries the interrupt payload.
 - All downstream exceptions are caught and returned as `type="error"` with HTTP 200 (not 5xx).
 - Consult results are persisted to the `recommendations` table after a successful response (ADR-060). The response includes a `recommendation_id` (UUID) referencing the persisted row. Write failures are logged but do not fail the caller response — `recommendation_id` will be `null` in that case.
+
+---
+
+## POST /v1/chat/stream
+
+SSE streaming variant of the chat endpoint. Emits reasoning steps as they happen, then a final message frame and a done frame. Requires the agent to be enabled.
+
+**Request:** Identical body to `POST /v1/chat`.
+
+**Response:** `Content-Type: text/event-stream`. Four frame types, emitted in this order:
+
+```
+event: reasoning_step
+data: <ReasoningStep JSON>
+
+event: tool_result
+data: {"tool": "consult", "tool_call_id": "toolu_01...", "payload": { /* ConsultResponse */ }}
+
+event: message
+data: {"content": "<final assistant text>"}
+
+event: done
+data: {"tool_calls_used": 2}
+```
+
+| Frame            | When emitted                                                           | Data shape                                                        |
+| ---------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `reasoning_step` | Each time a tool or agent node emits a custom event (real-time)        | `ReasoningStep` (all fields)                                      |
+| `tool_result`    | After graph completes — one frame per relevant tool result (see below) | `{"tool": string, "tool_call_id": string, "payload": object}`     |
+| `message`        | Once, after the graph completes, if there is text                      | `{"content": string}`                                             |
+| `done`           | Always last — even if no message was produced                          | `{"tool_calls_used": integer}`                                    |
+
+**Tool result suppression rule** (applies to both SSE and non-SSE):
+
+- **Recall + consult turn** — only the `consult` tool_result is emitted. Recall is an internal step; consult already merges saved + discovered results.
+- **Recall-only turn** — the `recall` tool_result is emitted.
+- **Save turn** — the `save` tool_result is emitted.
+
+**Expected client behaviour per frame type:**
+
+| Frame            | Client action                                                                 |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `reasoning_step` | Show progress indicator (e.g. "Checking your saves…", "Ranking options…")    |
+| `tool_result`    | Render place cards as soon as they arrive — don't wait for `message`          |
+| `message`        | Render the final text bubble                                                  |
+| `done`           | Capture `tool_calls_used` for rate-limit tracking, then close the stream      |
+
+On error mid-stream:
+
+```
+event: error
+data: {"detail": "<error string>"}
+```
+
+**HTTP Status Codes:**
+
+| Code | When                                          |
+| ---- | --------------------------------------------- |
+| `200`| Streaming started successfully                |
+| `400`| Agent disabled or graph unavailable           |
+
+---
+
+## GET /v1/extraction/{request_id}
+
+Polls the status of a background extraction. Background extractions are dispatched when a save operation takes longer than the inline timeout — `request_id` is returned in the `data.request_id` field of the original `extract-place` response with `status="pending"`.
+
+**Request:** No body. `request_id` is a path parameter.
+
+**Response (200):** `ExtractPlaceResponse` — same shape as the `data` block in `POST /v1/chat` `extract-place` responses. See the `extract-place` section above.
+
+**HTTP Status Codes:**
+
+| Code  | When                                                       |
+| ----- | ---------------------------------------------------------- |
+| `200` | Result found in Redis                                      |
+| `404` | Key not found — still running, or TTL expired              |
+
+Extraction results are cached under the `extraction:v2:{request_id}` key prefix (ADR-063). Legacy `extraction:{request_id}` keys are not read — poll returns `404` for those.
 
 ---
 
@@ -501,12 +627,14 @@ Always HTTP 200 — DB outages surface via `db: "disconnected"`, not a non-2xx s
 
 ## API Contract Summary
 
-| Endpoint             | Purpose                                 | NestJS Sends                                                                                                                                                    | totoro-ai Returns                                                           |
-| -------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| POST /v1/chat        | Unified conversational entry point      | user_id, message, optional location                                                                                                                             | type, message, optional data payload                                        |
-| GET /v1/user/context | User taste context for product UI       | user_id (query param)                                                                                                                                           | saved_places_count, signal_tier, chips (each with status + selection_round) |
-| POST /v1/signal      | Recommendation feedback OR chip_confirm | Discriminated on `signal_type` — recommendation variant (recommendation_id + place_id) OR chip_confirm variant (metadata.chips[] with per-chip selection_round) | status (202)                                                                |
-| GET /v1/health       | Service health check                    | —                                                                                                                                                               | status, db connectivity                                                     |
+| Endpoint                          | Purpose                                 | NestJS Sends                                                                                                                                                    | totoro-ai Returns                                                                        |
+| --------------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| POST /v1/chat                     | Unified conversational entry point      | user_id, message, optional location, optional signal_tier                                                                                                       | type, message, data, tool_calls_used                                                     |
+| POST /v1/chat/stream              | SSE streaming chat                      | Same as POST /v1/chat                                                                                                                                           | reasoning_step frames, message frame, done frame (tool_calls_used)                       |
+| GET /v1/extraction/{request_id}   | Poll background extraction status       | request_id (path param)                                                                                                                                         | ExtractPlaceResponse (200) or 404                                                        |
+| GET /v1/user/context              | User taste context for product UI       | user_id (query param)                                                                                                                                           | saved_places_count, signal_tier, chips (each with status + selection_round)              |
+| POST /v1/signal                   | Recommendation feedback OR chip_confirm | Discriminated on `signal_type` — recommendation variant (recommendation_id + place_id) OR chip_confirm variant (metadata.chips[] with per-chip selection_round) | status (202)                                                                             |
+| GET /v1/health                    | Service health check                    | —                                                                                                                                                               | status, db connectivity                                                                  |
 
 ---
 

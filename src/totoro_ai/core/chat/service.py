@@ -169,6 +169,10 @@ def _collect_current_turn_tool_results(messages: list[Any]) -> list[dict[str, An
     the most recent `HumanMessage` — everything after it belongs to this
     turn. `ToolMessage.content` carries the tool's `response.model_dump_json()`
     string, which we parse back into a dict for the client.
+
+    When recall and consult both ran in the same turn, recall is suppressed —
+    consult already merges saved + discovered results so the recall payload
+    is redundant for the consumer.
     """
     current_turn: list[Any] = []
     for m in reversed(messages):
@@ -177,7 +181,7 @@ def _collect_current_turn_tool_results(messages: list[Any]) -> list[dict[str, An
         current_turn.append(m)
     current_turn.reverse()
 
-    results: list[dict[str, Any]] = []
+    raw: list[dict[str, Any]] = []
     for m in current_turn:
         if not isinstance(m, ToolMessage):
             continue
@@ -186,11 +190,17 @@ def _collect_current_turn_tool_results(messages: list[Any]) -> list[dict[str, An
             payload = json.loads(content) if content else None
         except json.JSONDecodeError:
             payload = None
-        results.append(
+        raw.append(
             {
                 "tool": getattr(m, "name", None),
                 "tool_call_id": getattr(m, "tool_call_id", None),
                 "payload": payload,
             }
         )
+
+    tool_names = {r["tool"] for r in raw}
+    if "consult" in tool_names:
+        raw = [r for r in raw if r["tool"] != "recall"]
+
+    results = raw
     return results

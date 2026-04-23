@@ -15,6 +15,7 @@ from totoro_ai.core.agent.state import AgentState
 from totoro_ai.core.agent.tools._emit import append_summary, build_emit_closure
 from totoro_ai.core.agent.tools._timeout import with_timeout
 from totoro_ai.core.consult.service import ConsultService
+from totoro_ai.core.consult.types import NoMatchesError
 from totoro_ai.core.places.filters import ConsultFilters
 
 
@@ -130,16 +131,19 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
             loc: Location | None = (
                 Location(lat=raw_loc["lat"], lng=raw_loc["lng"]) if raw_loc else None
             )
-            response = await service.consult(
-                user_id=state["user_id"],
-                query=query,
-                saved_places=saved_places,
-                filters=filters,
-                location=loc,
-                preference_context=preference_context,
-                signal_tier="active",
-                emit=emit,
-            )
+            try:
+                response = await service.consult(
+                    user_id=state["user_id"],
+                    query=query,
+                    saved_places=saved_places,
+                    filters=filters,
+                    location=loc,
+                    preference_context=preference_context,
+                    signal_tier="active",
+                    emit=emit,
+                )
+            except NoMatchesError:
+                response = ConsultResponse(recommendation_id=None, results=[])
             append_summary(collected, "consult", _consult_summary(response))
             return Command(
                 update={

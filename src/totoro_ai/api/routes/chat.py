@@ -15,7 +15,7 @@ from totoro_ai.api.deps import get_agent_graph, get_chat_service
 from totoro_ai.api.schemas.chat import ChatRequest, ChatResponse
 from totoro_ai.core.agent.invocation import build_turn_payload
 from totoro_ai.core.agent.messages import extract_text_content
-from totoro_ai.core.chat.service import ChatService
+from totoro_ai.core.chat.service import ChatService, _collect_current_turn_tool_results
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,7 @@ async def chat_stream(
     async def generate() -> AsyncGenerator[str, None]:
         final_message = ""
         tool_calls_used = 0
+        final_state_messages: list[Any] = []
         try:
             async for event in agent_graph.astream_events(
                 payload, config=graph_config, version="v2"
@@ -113,11 +114,17 @@ async def chat_stream(
                                     break
                         if "tool_calls_used" in output:
                             tool_calls_used = output["tool_calls_used"]
+                        if messages:
+                            final_state_messages = messages
         except Exception as exc:
             logger.exception("chat_stream graph error: %s", exc)
             yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"
             return
 
+        for tool_result in _collect_current_turn_tool_results(final_state_messages):
+            yield (
+                f"event: tool_result\ndata: {json.dumps(tool_result)}\n\n"
+            )
         if final_message:
             yield f"event: message\ndata: {json.dumps({'content': final_message})}\n\n"
         done_payload = json.dumps({"tool_calls_used": tool_calls_used})
