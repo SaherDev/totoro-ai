@@ -233,7 +233,16 @@ def _get_inline_level() -> EnrichmentLevel:
 
 
 def _make_deep_level() -> EnrichmentLevel:
-    """Build the URL-only deep enrichment level (subtitle/audio/vision)."""
+    """Build the URL-only deep enrichment level (subtitle/audio/vision + NER).
+
+    Subtitle and Whisper are pure text producers — they populate
+    `context.transcript`. Vision goes image → place names directly via
+    a vision LLM (no text intermediate). `LLMNEREnricher` runs LAST so
+    it sees the just-populated transcript alongside any caption /
+    supplementary text and emits one consolidated NER call instead of
+    three per-source ones.
+    """
+    from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
     from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
     from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
     from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
@@ -241,14 +250,12 @@ def _make_deep_level() -> EnrichmentLevel:
     return EnrichmentLevel(
         name="deep_enrichment",
         enrichers=[
-            SubtitleCheckEnricher(
-                instructor_client=get_instructor_client("extractor"),
-            ),
+            SubtitleCheckEnricher(),
             WhisperAudioEnricher(
                 transcription_client=get_transcription_client(),
-                instructor_client=get_instructor_client("extractor"),
             ),
             VisionFramesEnricher(vision_extractor=get_vision_extractor()),
+            LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         ],
         summary_fn=deep_summary,
         requires_url=True,

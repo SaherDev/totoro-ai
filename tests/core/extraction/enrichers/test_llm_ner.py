@@ -152,6 +152,44 @@ class TestLLMNEREnricher:
         user_msg = next(m for m in messages if m["role"] == "user")
         assert "platform: unknown" in user_msg["content"]
 
+    async def test_runs_when_only_transcript_is_set(self) -> None:
+        """Deep-pass case: subtitle/whisper populated transcript but caption
+        and supplementary_text are empty — NER should still extract."""
+        client = _mock_instructor([_ner_place("Joe's Pizza")])
+        enricher = LLMNEREnricher(instructor_client=client)
+        ctx = ExtractionContext(
+            url="https://tiktok.com/v/x",
+            user_id="u1",
+            transcript="...best slice in town at Joe's Pizza in Brooklyn...",
+        )
+        await enricher.enrich(ctx)
+        client.extract.assert_awaited_once()
+        assert len(ctx.candidates) == 1
+        assert ctx.candidates[0].place.place_name == "Joe's Pizza"
+
+    async def test_transcript_included_in_prompt_when_present(self) -> None:
+        """When transcript is populated, it appears as its own metadata line."""
+        client = _mock_instructor([])
+        enricher = LLMNEREnricher(instructor_client=client)
+        ctx = ExtractionContext(
+            url=None,
+            user_id="u1",
+            caption="Saw a great spot",
+            transcript="They mention Eleven Madison Park",
+        )
+        await enricher.enrich(ctx)
+        content = client.extract.call_args.kwargs["messages"][-1]["content"]
+        assert "caption: Saw a great spot" in content
+        assert "transcript: They mention Eleven Madison Park" in content
+
+    async def test_skips_when_no_text_anywhere(self) -> None:
+        """No caption, no supplementary_text, no transcript → no LLM call."""
+        client = _mock_instructor([])
+        enricher = LLMNEREnricher(instructor_client=client)
+        ctx = ExtractionContext(url="https://tiktok.com/v/x", user_id="u1")
+        await enricher.enrich(ctx)
+        client.extract.assert_not_called()
+
     async def test_case3_full_metadata_passed_to_llm(self) -> None:
         client = _mock_instructor([])
         enricher = LLMNEREnricher(instructor_client=client)

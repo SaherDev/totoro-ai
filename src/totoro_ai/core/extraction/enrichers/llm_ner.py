@@ -146,9 +146,16 @@ class LLMNEREnricher:
         self._instructor_client = instructor_client
 
     async def enrich(self, context: ExtractionContext) -> None:
-        """Extract all place names from available text with full metadata context."""
+        """Extract all place names from any populated text source.
+
+        Reads `caption` / `supplementary_text` (the inline-level inputs) and
+        `transcript` (populated by deep-level enrichers like Subtitle and
+        Whisper). Skips when no text source is available. Used as the
+        last enricher in both the inline and deep levels — earlier deep
+        enrichers populate the text fields, this one harvests them.
+        """
         text_to_use = context.caption or context.supplementary_text
-        if not text_to_use:
+        if not text_to_use and not context.transcript:
             return
 
         platform = context.platform or "unknown"
@@ -156,17 +163,23 @@ class LLMNEREnricher:
         hashtags = context.hashtags or []
         location_tag = context.location_tag
 
+        caption_line = f"  caption: {text_to_use}\n" if text_to_use else ""
+        transcript_line = (
+            f"  transcript: {context.transcript}\n" if context.transcript else ""
+        )
+
         user_content = (
             f"<metadata>\n"
             f"  platform: {platform}\n"
             f"  title: {title}\n"
-            f"  caption: {text_to_use}\n"
+            f"{caption_line}"
+            f"{transcript_line}"
             f"  hashtags: {hashtags}\n"
             f"  location_tag: {location_tag}\n"
             f"</metadata>\n\n"
             "Extract all real venue names (restaurants, cafes, bars, hotels,"
             " hostels, museums, parks, markets, shops, galleries, co-working"
-            " spaces, and similar places) from the above.\n"
+            " spaces, and similar places) from any of the text sources above.\n"
             "Hashtags are context clues, not place names or city names.\n"
             "Hashtag typos are clues (e.g. #bangok means the city is Bangkok).\n"
             "Mall and shopping center names (e.g. #siamparagon) are not cities.\n"
