@@ -24,7 +24,9 @@ from totoro_ai.core.places.cache import PlacesCache
 from totoro_ai.core.places.repository import PlacesRepository
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.signal.service import SignalService
+from totoro_ai.core.taste.debounce import regen_debouncer
 from totoro_ai.core.taste.service import TasteModelService
+from totoro_ai.core.user.service import UserDeletionService
 from totoro_ai.db.repositories import (
     EmbeddingRepository,
     SQLAlchemyEmbeddingRepository,
@@ -343,6 +345,23 @@ def get_agent_checkpointer(request: Request) -> Any:
     when the lifespan hasn't run (test clients) or warmup failed.
     """
     return getattr(request.app.state, "agent_checkpointer", None)
+
+
+def get_user_deletion_service(
+    checkpointer: Any = Depends(get_agent_checkpointer),  # noqa: B008
+) -> UserDeletionService:
+    """FastAPI dependency providing UserDeletionService.
+
+    Sweeps the five AI tables in one transaction (embeddings cascade
+    from places via FK), then deletes the LangGraph checkpoint thread,
+    then cancels any pending taste-regen task. See plan: hard-delete-only
+    v1, sync sweep, 204 No Content.
+    """
+    return UserDeletionService(
+        session_factory=_get_session_factory(),
+        checkpointer=checkpointer,
+        regen_debouncer=regen_debouncer,
+    )
 
 
 def get_agent_graph(

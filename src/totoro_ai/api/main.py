@@ -37,7 +37,7 @@ from totoro_ai.api.errors import register_error_handlers
 from totoro_ai.api.routes.chat import router as chat_router
 from totoro_ai.api.routes.extraction import router as extraction_router
 from totoro_ai.api.routes.signal import router as signal_router
-from totoro_ai.api.routes.user_context import router as user_context_router
+from totoro_ai.api.routes.user import router as user_router
 
 # Agent checkpointer warmup (feature 028 M6). The compiled StateGraph is
 # built per-request in `get_agent_graph` so its tools see request-scoped
@@ -172,7 +172,7 @@ async def health() -> dict[str, str]:
 router.include_router(chat_router, prefix="")
 router.include_router(extraction_router, prefix="")
 router.include_router(signal_router, prefix="")
-router.include_router(user_context_router, prefix="")
+router.include_router(user_router, prefix="")
 app.include_router(router)
 
 # Register error handlers
