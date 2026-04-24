@@ -71,32 +71,44 @@ This repo (totoro-ai) is the AI engine of Totoro. It owns all AI logic: intent p
 
 ## Data Flow: Extract a Place
 
-extract-place is a three-phase deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. The full pipeline always runs as a background task — the HTTP response returns immediately with `status="pending"` and a `request_id`. The caller polls `GET /v1/extraction/{request_id}` for the final result.
+extract-place is a level-driven deterministic workflow, not an agent. No LangGraph. No tool selection. No reasoning loop. The full pipeline always runs as a background task — the HTTP response returns immediately with `status="pending"` and a `request_id`. The caller polls `GET /v1/extraction/{request_id}` for the final result.
+
+The pipeline is built from `EnrichmentLevel`s (text/signal producers grouped by stage) plus a single shared **finalizer** (today: `LLMNEREnricher`) that runs after every executed level. Each level has a `name`, an `enrichers` list, an optional `requires_url` flag, and a `summary_fn`. Adding a new stage is: declare a new `EnrichmentLevel`, append it to the levels list. The pipeline loop is identical for every level.
 
 ```
 Raw input (URL, plain text, or mixed)
     │
     ▼
 POST /v1/chat
-    │  Agent selects save tool → ExtractionService.run()
+    │  Agent selects save tool → ExtractionService.run(raw_input, user_id, limit?)
     │  Returns immediately: { status: "pending", request_id }
     │  asyncio.create_task fires the full pipeline in the background
     │
     └── Background task: ExtractionPipeline.run()
+        │  context = ExtractionContext(url, user_id, supplementary_text)
+        │  context.source auto-derived from url via source_from_url()
+        │  effective_limit = limit ?? config.max_candidates  (default 25)
         │
-        ├── Phase 1: Enrich candidates
-        │   Parallel caption fetch (TikTok oEmbed, yt-dlp), LLM NER
-        │   Deduplicate by name; corroborated candidates receive a confidence bonus
+        ├── For each EnrichmentLevel in [inline, deep]:
+        │   ├── If level.requires_url and url is None → skip
+        │   ├── Run producers in order; dedup_candidates(context)
+        │   │   inline: Parallel(TikTokOEmbed, YtDlp) — both gated to context.source
+        │   │   deep:   Subtitle → Whisper → Vision (each populates transcript or
+        │   │           appends candidates directly)
+        │   ├── Run pipeline finalizer (LLMNEREnricher): one consolidated NER call
+        │   │   over caption + transcript + supplementary_text; dedup again
+        │   ├── Emit save.{name} reasoning step
+        │   ├── Cap-check: if len(candidates) > effective_limit
+        │   │   → emit save.cap_exceeded, raise TooManyCandidatesError, drop request
+        │   ├── validator.validate(candidates) — Google Places parallel fan-out
+        │   └── If results non-empty: emit save.validate, dedup_validated_by_provider_id,
+        │       short-circuit return  ← early exit, deeper levels never run
         │
-        ├── Phase 2: Validate candidates
-        │   Google Places API validates each candidate in parallel
-        │   Confidence scored per match quality; skip Phase 3 if any pass
+        ├── If loop exits with no validated results: emit save.validate
+        │   "Could not confirm any places", return []
         │
-        ├── Phase 3: Deep enrichment (only when Phase 2 returns nothing + URL present)
-        │   Subtitle check, audio transcription (Whisper), vision frame extraction
-        │   Deduplicate → re-validate against Google Places
-        │
-        └── Persist + write status to Redis at extraction:{request_id}
+        └── ExtractionService persists each surviving outcome → emit save.persist
+            → write ExtractPlaceResponse to extraction:v2:{request_id} in Redis
 
 GET /v1/extraction/{request_id}
     Reads Redis → returns ExtractPlaceResponse (same shape as chat data payload)
@@ -104,6 +116,10 @@ GET /v1/extraction/{request_id}
 ```
 
 The pipeline runs the full cascade deterministically. No mid-pipeline callbacks to NestJS.
+
+**Cap semantics (hard drop, not truncate):** when an enrichment level produces more candidates than `effective_limit`, the request is dropped entirely — no Google validation, no DB writes, no embeddings. The service returns `status="failed"` with a `save.cap_exceeded` reasoning step so the caller can show the user what happened. This protects Google quota, DB, and Voyage from a noisy single input (e.g. a 200-place text dump).
+
+**Source-filtered enrichers:** `ExtractionContext.source` is auto-derived from the URL via `source_from_url()` (in `core/extraction/url_source.py`). Enrichers that subclass `SourceFilteredEnricher` declare `allowed_sources` in `__init__` and short-circuit before doing any work when `context.source` is unsupported. Today: `TikTokOEmbedEnricher` runs only for `PlaceSource.tiktok`; `YtDlpMetadataEnricher` for `{tiktok, instagram, youtube}`. Prevents guaranteed-failure URLs from tripping the circuit breaker on noise.
 
 ## Data Flow: Consult (Recommend a Place)
 
@@ -335,6 +351,7 @@ Service-specific parameters are config-driven via `config/app.yaml`:
 Adjust these values to control result relevance and performance.
 
 **Extraction Service** (cascade tuning):
+- `max_candidates`: hard cap on candidates handed to Google validation per request (default 25). When an enrichment level produces more, the request is dropped entirely — protects quota and DB from noisy inputs. Per-request override available via `ExtractionService.run(..., limit=N)`.
 - `circuit_breaker_threshold`: failures before circuit opens (default 5)
 - `circuit_breaker_cooldown`: seconds before half-open probe (default 900)
 - `confidence.base_scores`: per-level base confidence — emoji_regex: 0.95, llm_ner: 0.80, subtitle_check: 0.75, whisper_audio: 0.65, vision_frames: 0.55
@@ -383,7 +400,7 @@ Used for:
 
 ## Design Principles
 
-- extract-place is a three-phase workflow (Enrichment → Validation → Deep enrichment), not an agent. No LangGraph. The full pipeline runs as a background asyncio task; the HTTP response returns `pending` immediately. Phase 3 (subtitle/whisper/vision) runs inline inside the pipeline — no domain event dispatch, no separate handler.
+- extract-place is a level-driven workflow built from `EnrichmentLevel`s plus a shared NER finalizer at the pipeline. Not an agent. No LangGraph. The full pipeline runs as a background asyncio task; the HTTP response returns `pending` immediately. The deep level (subtitle/whisper/vision) runs inline inside the pipeline only when the inline level fails to validate any candidates — no domain event dispatch, no separate handler. NER (`LLMNEREnricher`) is the pipeline's finalizer and runs after every executed level over caption + transcript + supplementary_text in a single LLM call.
 - consult is currently a sequential 6-step Python pipeline in `ConsultService` (ADR-050: LangGraph parallelization deferred). If LangGraph is added in the future, Steps 2 (retrieve) and 3 (discover) are the candidates for parallel branches — they are independent and their results merge before validation.
 - Each pipeline step passes only the data the next step needs. Do not forward the full Google Places API response, full embedding vectors, or raw validation payloads through downstream steps. Extract the fields needed for ranking and drop the rest.
 
