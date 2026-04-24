@@ -50,10 +50,14 @@ class RecallToolInput(BaseModel):
         ),
     )
     limit: int = Field(
-        default=20,
         ge=1,
-        le=50,
-        description="Max places to return. Default 20.",
+        le=10,
+        description=(
+            "How many saved places to return. YOU MUST choose based on the "
+            "user's intent: 1 when they want one specific place, 3 for a "
+            "short comparison, up to 10 for browsing/listing. Hard ceiling "
+            "is 10 — never request more."
+        ),
     )
 
 
@@ -134,10 +138,14 @@ def build_recall_tool(service: RecallService) -> BaseTool:
         limit: Annotated[
             int,
             Field(
-                default=20,
                 ge=1,
-                le=50,
-                description="Max places to return. Default 20.",
+                le=10,
+                description=(
+                    "How many saved places to return. YOU MUST choose based "
+                    "on the user's intent: 1 when they want one specific "
+                    "place, 3 for a short comparison, up to 10 for "
+                    "browsing/listing. Hard ceiling is 10 — never request more."
+                ),
             ),
         ],
         state: Annotated[AgentState, InjectedState],
