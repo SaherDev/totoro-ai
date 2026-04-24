@@ -113,7 +113,7 @@ class ExtractionService:
         pipeline emits `save.enrich` / `save.deep_enrichment` /
         `save.validate` at its own phase boundaries.
         """
-        _emit: EmitFn = emit or (lambda _s, _m, _d=None: None)
+        _emit: EmitFn = emit or (lambda step, summary, duration_ms=None: None)
 
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
