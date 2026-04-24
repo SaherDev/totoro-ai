@@ -41,7 +41,7 @@ docker compose down -v                # stop services and remove volumes
 
 - **Naming**: snake_case everywhere. Pydantic models are PascalCase. Files match module name.
 - **Types**: All function signatures typed. Pydantic models for all LLM input/output schemas. `mypy --strict` is the target.
-- **Secrets management** (ADR-051): `.env` in the project root (gitignored symlink → `totoro-config/secrets/ai.env.local`). Copy `config/.env.example`, fill in your secrets — never committed. CI/CD injects secrets as environment variables at deploy time.
+- **Secrets management** (ADR-051): `.env` in the project root (gitignored symlink → `totoro-config/secrets/ai.env.local`). Copy `.env.example`, fill in your secrets — never committed. CI/CD injects secrets as environment variables at deploy time.
 - **Provider abstraction**: `config/app.yaml` under `models:` maps logical roles (orchestrator, extractor, embedder, taste_regen, vision_frames, transcriber) to provider + model + params. Code never hardcodes model names — always reads from config.
 - **API versioning**: All FastAPI routes live under `/v1/` prefix to match the product repo convention.
 - **Repo boundary**: This repo owns all AI/ML logic. No UI, no auth, no CRUD. The product repo calls this repo via `POST /v1/chat` (unified conversational entry — ADR-052) and `GET /v1/health` (see `docs/api-contract.md`). Never import from or depend on the product repo.
