@@ -60,6 +60,8 @@ class TestChatInterruptMapping:
         mock_graph.ainvoke = AsyncMock(side_effect=GraphInterrupt(interrupt_payload))
 
         cfg = _make_mock_config(enabled=True)
+        places_mock = MagicMock()
+        places_mock.resolve_location_label = AsyncMock(return_value=None)
         svc = ChatService(
             extraction_service=MagicMock(),
             consult_service=MagicMock(),
@@ -67,6 +69,7 @@ class TestChatInterruptMapping:
             event_dispatcher=MagicMock(),
             memory_service=MagicMock(),
             taste_service=MagicMock(),
+            places_service=places_mock,
             config=cfg,
             agent_graph=mock_graph,
         )
@@ -95,6 +98,8 @@ class TestChatInterruptMapping:
         mock_graph.ainvoke = AsyncMock(side_effect=GraphInterrupt(interrupt_payload))
 
         cfg = _make_mock_config(enabled=True)
+        places_mock = MagicMock()
+        places_mock.resolve_location_label = AsyncMock(return_value=None)
         svc = ChatService(
             extraction_service=MagicMock(),
             consult_service=MagicMock(),
@@ -102,6 +107,7 @@ class TestChatInterruptMapping:
             event_dispatcher=MagicMock(),
             memory_service=MagicMock(),
             taste_service=MagicMock(),
+            places_service=places_mock,
             config=cfg,
             agent_graph=mock_graph,
         )

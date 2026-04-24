@@ -1,5 +1,5 @@
-"""User-lifecycle services (delete-user sweep across AI tables + checkpointer)."""
+"""User-lifecycle services (AI-data erase for NestJS's account-delete flow)."""
 
-from totoro_ai.core.user.service import UserDeletionService
+from totoro_ai.core.user.service import UserDataDeletionService
 
-__all__ = ["UserDeletionService"]
+__all__ = ["UserDataDeletionService"]

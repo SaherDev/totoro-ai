@@ -1,9 +1,12 @@
-"""Delete-user sweep across AI tables, the LangGraph checkpointer, and
-the in-memory taste-regen debouncer.
+"""Erase a user's AI-owned data: SQL tables, LangGraph checkpoint thread,
+and the in-memory taste-regen debouncer.
 
-Hard-delete only. The endpoint is idempotent — deleting a user with no
-data is a successful no-op. See plan: hard-delete-only v1, sync sweep,
-204 No Content.
+Scope note: this service does NOT delete the user account — that lives in
+NestJS/Clerk in the product repo. This deletes only the data this repo
+owns, called by NestJS as part of its account-delete flow.
+
+Hard-delete only, idempotent (erasing a user with no data is a successful
+no-op). See plan: hard-delete-only v1, sync sweep, 204 No Content.
 """
 
 from __future__ import annotations
@@ -30,13 +33,17 @@ _CHECKPOINT_DELETE_MAX_ATTEMPTS = 3
 _CHECKPOINT_DELETE_BACKOFF_BASE_SECONDS = 0.5
 
 
-class UserDeletionService:
-    """Erases every trace of a user from AI-owned storage.
+class UserDataDeletionService:
+    """Erases every trace of a user's AI-owned data.
 
     Hits five tables in one transaction (embeddings cascade automatically
     from places via FK ON DELETE CASCADE — see db/models.py:96), then the
     LangGraph checkpoint thread (separate connection pool), then any
     in-flight taste-regen task in the in-memory debouncer.
+
+    Does NOT delete the user account — NestJS owns user lifecycle. The
+    product repo's account-delete flow calls this service to wipe the
+    AI-side after deleting its own user/user_settings rows.
     """
 
     def __init__(
@@ -49,7 +56,7 @@ class UserDeletionService:
         self._checkpointer = checkpointer
         self._regen_debouncer = regen_debouncer
 
-    async def delete_user(self, user_id: str) -> None:
+    async def delete_user_data(self, user_id: str) -> None:
         async with (
             self._session_factory() as session,
             session.begin(),

@@ -72,11 +72,15 @@ Always call recall first, then consult in the next turn
 regardless of whether recall found anything. Do not ask the
 user anything between recall and consult.
 
-When calling consult, always populate place_suggestions with
-specific real place names from your knowledge that fit the
-user's request and location. Validated against the places
-provider — unrecognised names are dropped. Limit 5. Leave
-empty only if you have no knowledge of the area.
+When calling consult, populate place_suggestions with specific
+real place names from your knowledge that exist in the city
+named in your Location context above and fit the user's
+request. Names are validated against the places provider with a
+hard distance check from the user's coordinates — anything
+outside the area is dropped, so guessing globally-famous names
+is wasted work. Limit 5. Leave empty if the city is unknown or
+you do not recognise it; do NOT invent names from other cities
+hoping they happen to exist nearby.
 
 
 For general Q&A (etiquette, tips, logistics, "is tipping 

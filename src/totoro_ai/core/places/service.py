@@ -155,6 +155,30 @@ class PlacesService:
         return self._merge_full(places, combined_geo, combined_enr)
 
     # ------------------------------------------------------------------
+    # Location labels (reverse geocoding, cache-or-fetch)
+    # ------------------------------------------------------------------
+    async def resolve_location_label(
+        self, lat: float, lng: float
+    ) -> str | None:
+        """Resolve precise coords to a city/country label ("Magdeburg, Germany").
+
+        Keyed on a ~11 km grid cell (1 decimal place of lat/lng). Cache hit
+        returns in ~5-15ms; miss triggers a single Google Geocoding call and
+        populates the cache. Returns None on failure so callers can degrade
+        gracefully (the agent just won't see a city hint — same as today).
+        """
+        if self._cache is None or self._client is None:
+            return None
+        cell_key = f"{round(lat, 1)},{round(lng, 1)}"
+        cached = await self._cache.get_location_label(cell_key)
+        if cached is not None:
+            return cached
+        label = await self._client.reverse_geocode(lat, lng)
+        if label is not None:
+            await self._cache.set_location_label(cell_key, label)
+        return label
+
+    # ------------------------------------------------------------------
     # Enrichment internals
     # ------------------------------------------------------------------
     async def _read_geo_cache(self, unique_ids: list[str]) -> dict[str, GeoData | None]:

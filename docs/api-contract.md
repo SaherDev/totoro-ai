@@ -515,14 +515,14 @@ Note: `selection_round` is always a string in `chip_selection` tier — the serv
 
 ---
 
-## DELETE /v1/user/{user_id}
+## DELETE /v1/user/{user_id}/data
 
-Hard-deletes every trace of a user from AI-owned storage. Called by the product repo (NestJS) as part of its user-deletion flow — NestJS deletes from `users` / `user_settings` (its tables), this endpoint deletes from the AI tables this repo owns.
+Hard-deletes every trace of a user's **AI-owned data**. Does NOT delete the user account — that lives in NestJS/Clerk. Called by the product repo as part of its account-deletion flow: NestJS deletes its own `users` / `user_settings` rows and calls this endpoint to wipe the AI side.
 
 **Request:**
 
 ```
-DELETE /v1/user/user_abc
+DELETE /v1/user/user_abc/data
 ```
 
 **Response (204):** Empty body.

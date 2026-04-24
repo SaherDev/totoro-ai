@@ -1,5 +1,6 @@
-"""Tests for UserDeletionService — the delete-user sweep across AI tables,
-LangGraph checkpointer, and in-memory taste-regen debouncer.
+"""Tests for UserDataDeletionService — the user-data erase sweep across
+AI tables, the LangGraph checkpointer, and the in-memory taste-regen
+debouncer.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.sql import Delete
 
 from totoro_ai.core.taste.debounce import RegenDebouncer
-from totoro_ai.core.user.service import UserDeletionService
+from totoro_ai.core.user.service import UserDataDeletionService
 from totoro_ai.db.models import (
     Interaction,
     Place,
@@ -55,13 +56,13 @@ async def test_sweep_deletes_all_five_user_scoped_tables() -> None:
     checkpointer = AsyncMock()
     debouncer = RegenDebouncer()
 
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=checkpointer,
         regen_debouncer=debouncer,
     )
 
-    await service.delete_user("user_abc")
+    await service.delete_user_data("user_abc")
 
     assert _delete_targets(session) == [
         Interaction,
@@ -75,13 +76,13 @@ async def test_sweep_deletes_all_five_user_scoped_tables() -> None:
 async def test_sweep_runs_inside_transaction() -> None:
     """All 5 deletes must execute inside the same `session.begin()` block."""
     factory, session = _build_session_factory_mock()
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=AsyncMock(),
         regen_debouncer=RegenDebouncer(),
     )
 
-    await service.delete_user("user_abc")
+    await service.delete_user_data("user_abc")
 
     session.begin.assert_called_once()
     begin_cm = session.begin.return_value
@@ -93,13 +94,13 @@ async def test_sweep_runs_inside_transaction() -> None:
 async def test_checkpointer_adelete_thread_called_with_user_id() -> None:
     factory, _ = _build_session_factory_mock()
     checkpointer = AsyncMock()
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=checkpointer,
         regen_debouncer=RegenDebouncer(),
     )
 
-    await service.delete_user("user_abc")
+    await service.delete_user_data("user_abc")
 
     checkpointer.adelete_thread.assert_awaited_once_with("user_abc")
 
@@ -109,13 +110,13 @@ async def test_checkpointer_none_logs_warning_and_continues() -> None:
     must not crash and the rest of the cleanup must still run."""
     factory, session = _build_session_factory_mock()
     debouncer = RegenDebouncer()
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=None,
         regen_debouncer=debouncer,
     )
 
-    await service.delete_user("user_abc")
+    await service.delete_user_data("user_abc")
 
     assert session.execute.await_count == 5
     assert "user_abc" not in debouncer._pending
@@ -133,13 +134,13 @@ async def test_debouncer_pending_task_cancelled() -> None:
     debouncer.schedule("user_abc", cb_called, delay_seconds=10.0)
     pending_task = debouncer._pending["user_abc"]
 
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=AsyncMock(),
         regen_debouncer=debouncer,
     )
 
-    await service.delete_user("user_abc")
+    await service.delete_user_data("user_abc")
 
     with contextlib.suppress(asyncio.CancelledError):
         await pending_task
@@ -155,30 +156,30 @@ async def test_debouncer_cancel_no_pending_task_is_noop() -> None:
     debouncer = RegenDebouncer()
     assert "user_abc" not in debouncer._pending
 
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=AsyncMock(),
         regen_debouncer=debouncer,
     )
 
-    await service.delete_user("user_abc")  # must not raise
+    await service.delete_user_data("user_abc")  # must not raise
 
     assert "user_abc" not in debouncer._pending
 
 
 async def test_idempotent_double_delete() -> None:
-    """Calling delete_user twice on the same user is fine — both calls
+    """Calling delete_user_data twice on the same user is fine — both calls
     succeed (DB returns 0 rows on the second; checkpointer is a no-op)."""
     factory, session = _build_session_factory_mock()
     checkpointer = AsyncMock()
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=checkpointer,
         regen_debouncer=RegenDebouncer(),
     )
 
-    await service.delete_user("user_abc")
-    await service.delete_user("user_abc")
+    await service.delete_user_data("user_abc")
+    await service.delete_user_data("user_abc")
 
     assert session.execute.await_count == 10
     assert checkpointer.adelete_thread.await_count == 2
@@ -191,7 +192,7 @@ async def test_sql_error_bubbles_up_for_central_handler() -> None:
     factory, session = _build_session_factory_mock()
     session.execute.side_effect = RuntimeError("simulated db failure")
 
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=AsyncMock(),
         regen_debouncer=RegenDebouncer(),
@@ -199,7 +200,7 @@ async def test_sql_error_bubbles_up_for_central_handler() -> None:
 
     raised = False
     try:
-        await service.delete_user("user_abc")
+        await service.delete_user_data("user_abc")
     except RuntimeError:
         raised = True
     assert raised, "expected RuntimeError to propagate"
@@ -221,13 +222,13 @@ async def test_adelete_thread_transient_failure_recovers_within_retry_budget(
         RuntimeError("transient psycopg blip 2"),
         None,
     ]
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=checkpointer,
         regen_debouncer=RegenDebouncer(),
     )
 
-    await service.delete_user("user_abc")
+    await service.delete_user_data("user_abc")
 
     assert checkpointer.adelete_thread.await_count == 3
 
@@ -242,7 +243,7 @@ async def test_adelete_thread_exhausted_retries_raises(monkeypatch: object) -> N
     factory, _ = _build_session_factory_mock()
     checkpointer = AsyncMock()
     checkpointer.adelete_thread.side_effect = RuntimeError("persistent failure")
-    service = UserDeletionService(
+    service = UserDataDeletionService(
         session_factory=factory,
         checkpointer=checkpointer,
         regen_debouncer=RegenDebouncer(),
@@ -250,7 +251,7 @@ async def test_adelete_thread_exhausted_retries_raises(monkeypatch: object) -> N
 
     raised = False
     try:
-        await service.delete_user("user_abc")
+        await service.delete_user_data("user_abc")
     except RuntimeError as exc:
         raised = True
         assert "persistent failure" in str(exc)

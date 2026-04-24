@@ -3,6 +3,7 @@
 import asyncio
 import difflib
 import logging
+import math
 import re
 from enum import Enum
 from typing import Any, Protocol, cast
@@ -19,6 +20,88 @@ from totoro_ai.core.places.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Mirrors the `circle:50000@...` locationbias radius used in `validate_place`
+# and `geocode` so post-filtering treats "in the search area" the same way
+# Google was asked to bias toward.
+_LOCATION_BIAS_RADIUS_KM = 50.0
+_GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance between two lat/lng points in kilometres."""
+    radius_km = 6371.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+    return 2 * radius_km * math.asin(math.sqrt(a))
+
+
+# Google Places "types" array → PlaceType. Longer per-category lists win
+# over one-off aliases so near-equivalent strings still route correctly.
+# Order matters: a venue tagged both `restaurant` and `store` lands as
+# food_and_drink (the more specific food signal wins).
+GOOGLE_TYPE_TO_PLACE_TYPE: dict[str, PlaceType] = {
+    # food_and_drink
+    "restaurant": PlaceType.food_and_drink,
+    "cafe": PlaceType.food_and_drink,
+    "bar": PlaceType.food_and_drink,
+    "bakery": PlaceType.food_and_drink,
+    "meal_takeaway": PlaceType.food_and_drink,
+    "meal_delivery": PlaceType.food_and_drink,
+    "food": PlaceType.food_and_drink,
+    "night_club": PlaceType.food_and_drink,
+    # things_to_do
+    "museum": PlaceType.things_to_do,
+    "park": PlaceType.things_to_do,
+    "tourist_attraction": PlaceType.things_to_do,
+    "aquarium": PlaceType.things_to_do,
+    "zoo": PlaceType.things_to_do,
+    "art_gallery": PlaceType.things_to_do,
+    "amusement_park": PlaceType.things_to_do,
+    "stadium": PlaceType.things_to_do,
+    "movie_theater": PlaceType.things_to_do,
+    # shopping
+    "store": PlaceType.shopping,
+    "shopping_mall": PlaceType.shopping,
+    "book_store": PlaceType.shopping,
+    "clothing_store": PlaceType.shopping,
+    "shoe_store": PlaceType.shopping,
+    "jewelry_store": PlaceType.shopping,
+    "department_store": PlaceType.shopping,
+    "supermarket": PlaceType.shopping,
+    # accommodation
+    "lodging": PlaceType.accommodation,
+    # services
+    "gym": PlaceType.services,
+    "spa": PlaceType.services,
+    "beauty_salon": PlaceType.services,
+    "hair_care": PlaceType.services,
+    "pharmacy": PlaceType.services,
+    "laundry": PlaceType.services,
+    "post_office": PlaceType.services,
+    "bank": PlaceType.services,
+}
+
+
+def google_types_to_place_type(types: list[str]) -> PlaceType:
+    """Map a Google `types[]` array to a canonical `PlaceType`.
+
+    Scans in order — first known type wins. Defaults to `PlaceType.services`
+    when no known type is present and emits `google_place_type_unknown` so
+    coverage gaps surface in logs.
+    """
+    for google_type in types:
+        mapped = GOOGLE_TYPE_TO_PLACE_TYPE.get(google_type)
+        if mapped is not None:
+            return mapped
+    logger.info("google_place_type_unknown", extra={"types": list(types)})
+    return PlaceType.services
 
 # ---------------------------------------------------------------------------
 # Opening-hours mapping (Google Places API v1 → HoursDict)
@@ -198,6 +281,16 @@ class PlacesClient(Protocol):
         """
         ...
 
+    async def reverse_geocode(self, lat: float, lng: float) -> str | None:
+        """Resolve coordinates to a human-readable city/country label.
+
+        Returns a short label like "Magdeburg, Germany" or None on failure
+        / no results / coords in unpopulated areas. Used to give the agent
+        a city name it can reason about — raw lat/lng alone is too low-info
+        for an LLM to generate locality-correct place suggestions.
+        """
+        ...
+
     async def get_place_details(self, external_id: str) -> dict[str, Any] | None:
         """Fetch full place details by raw provider external_id (feature 019).
 
@@ -343,7 +436,7 @@ class GooglePlacesClient:
                     if result.external_id
                     else None
                 )
-                place_type = PlaceType.services
+                place_type = google_types_to_place_type(result.place_types or [])
                 return PlaceObject(
                     place_id=str(uuid4()),
                     place_name=result.validated_name or name,
@@ -359,7 +452,24 @@ class GooglePlacesClient:
                 return None
 
         results = await asyncio.gather(*[_validate_one(n) for n in names])
-        return [p for p in results if p is not None]
+        validated = [p for p in results if p is not None]
+
+        # locationbias is a soft hint — Google freely returns global matches
+        # when no in-circle result exists (e.g. asking for "Menya Ramen House"
+        # near Magdeburg returns the famous London location). Drop anything
+        # outside the same radius the bias circle was built with.
+        if location_bias is not None:
+            return [
+                p
+                for p in validated
+                if p.lat is not None
+                and p.lng is not None
+                and _haversine_km(
+                    p.lat, p.lng, location_bias["lat"], location_bias["lng"]
+                )
+                <= _LOCATION_BIAS_RADIUS_KM
+            ]
+        return validated
 
     async def discover(
         self, search_location: dict[str, float], filters: dict[str, Any]
@@ -466,6 +576,58 @@ class GooglePlacesClient:
             return None
 
         return {"lat": float(lat), "lng": float(lng)}
+
+    async def reverse_geocode(self, lat: float, lng: float) -> str | None:
+        """Resolve coords to "<locality>, <country>" via Google Geocoding API.
+
+        Returns None on HTTP failure, status != "OK", or when the response
+        carries neither a locality nor an administrative_area_level_1.
+        Falls back to admin_area_level_1 (state/region) when locality is
+        absent — useful for rural coords that don't fall inside a city.
+        """
+        params: dict[str, Any] = {
+            "latlng": f"{lat},{lng}",
+            "key": self.api_key,
+            "result_type": "locality|administrative_area_level_1|country",
+        }
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    _GOOGLE_GEOCODE_URL,
+                    params=params,
+                    timeout=get_config().external_services.google_places.timeout_seconds,
+                )
+                response.raise_for_status()
+        except (httpx.HTTPError, httpx.TimeoutException):
+            logger.warning("reverse_geocode failed for %s,%s", lat, lng)
+            return None
+
+        data = response.json()
+        if data.get("status") != "OK":
+            return None
+        results = data.get("results") or []
+        if not results:
+            return None
+
+        components = results[0].get("address_components") or []
+        locality: str | None = None
+        admin_area: str | None = None
+        country: str | None = None
+        for c in components:
+            types = c.get("types") or []
+            if "locality" in types and locality is None:
+                locality = c.get("long_name")
+            elif "administrative_area_level_1" in types and admin_area is None:
+                admin_area = c.get("long_name")
+            elif "country" in types and country is None:
+                country = c.get("long_name")
+
+        city = locality or admin_area
+        if city is None and country is None:
+            return None
+        if city and country:
+            return f"{city}, {country}"
+        return city or country
 
     async def validate(self, candidate: Any, filters: dict[str, Any]) -> bool:
         """

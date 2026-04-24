@@ -26,7 +26,7 @@ from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.signal.service import SignalService
 from totoro_ai.core.taste.debounce import regen_debouncer
 from totoro_ai.core.taste.service import TasteModelService
-from totoro_ai.core.user.service import UserDeletionService
+from totoro_ai.core.user.service import UserDataDeletionService
 from totoro_ai.db.repositories import (
     EmbeddingRepository,
     SQLAlchemyEmbeddingRepository,
@@ -347,17 +347,18 @@ def get_agent_checkpointer(request: Request) -> Any:
     return getattr(request.app.state, "agent_checkpointer", None)
 
 
-def get_user_deletion_service(
+def get_user_data_deletion_service(
     checkpointer: Any = Depends(get_agent_checkpointer),  # noqa: B008
-) -> UserDeletionService:
-    """FastAPI dependency providing UserDeletionService.
+) -> UserDataDeletionService:
+    """FastAPI dependency providing UserDataDeletionService.
 
     Sweeps the five AI tables in one transaction (embeddings cascade
     from places via FK), then deletes the LangGraph checkpoint thread,
-    then cancels any pending taste-regen task. See plan: hard-delete-only
-    v1, sync sweep, 204 No Content.
+    then cancels any pending taste-regen task. Erases AI-owned data
+    only — NestJS is responsible for deleting the user account itself.
+    Hard-delete only, sync sweep, 204 No Content.
     """
-    return UserDeletionService(
+    return UserDataDeletionService(
         session_factory=_get_session_factory(),
         checkpointer=checkpointer,
         regen_debouncer=regen_debouncer,
@@ -396,6 +397,7 @@ async def get_chat_service(
     event_dispatcher: EventDispatcher = Depends(get_event_dispatcher),  # noqa: B008
     memory_service: UserMemoryService = Depends(get_user_memory_service),  # noqa: B008
     taste_service: TasteModelService = Depends(get_taste_service),  # noqa: B008
+    places_service: PlacesService = Depends(get_places_service),  # noqa: B008
     config: AppConfig = Depends(get_config),  # noqa: B008
     agent_graph: Any = Depends(get_agent_graph),  # noqa: B008
 ) -> ChatService:
@@ -411,6 +413,7 @@ async def get_chat_service(
         event_dispatcher=event_dispatcher,
         memory_service=memory_service,
         taste_service=taste_service,
+        places_service=places_service,
         config=config,
         agent_graph=agent_graph,
     )

@@ -1,4 +1,4 @@
-"""Real-DB integration test for UserDeletionService — proves
+"""Real-DB integration test for UserDataDeletionService — proves
 `adelete_thread` actually wipes the three per-thread checkpoint tables
 and leaves other users' rows intact.
 

@@ -27,10 +27,17 @@ logger = logging.getLogger(__name__)
 
 
 class PlacesCache:
-    """Two-tier cache for Google Places geo + enrichment data (ADR-054, feature 019)."""
+    """Two-tier cache for Google Places geo + enrichment data (ADR-054, feature 019).
+
+    Also carries a small reverse-geocode cache (`places:geocode:{cell_key}`)
+    used by `PlacesService.resolve_location_label`. Same TTL as the other
+    tiers — the underlying value (city + country) is essentially immutable,
+    30 days is the project convention.
+    """
 
     GEO_PREFIX = "places:geo:"
     ENRICHMENT_PREFIX = "places:enrichment:"
+    GEOCODE_PREFIX = "places:geocode:"
 
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
@@ -178,4 +185,33 @@ class PlacesCache:
                     "key_count": len(items),
                     "error": str(exc),
                 },
+            )
+
+    # ------------------------------------------------------------------
+    # Reverse-geocode — cell_key (rounded lat/lng) → "<city>, <country>"
+    # ------------------------------------------------------------------
+    async def get_location_label(self, cell_key: str) -> str | None:
+        try:
+            raw = await self._redis.get(f"{self.GEOCODE_PREFIX}{cell_key}")
+        except (TimeoutError, RedisError, ConnectionError) as exc:
+            logger.warning(
+                "places.cache.read_failed",
+                extra={"tier": "geocode", "cell_key": cell_key, "error": str(exc)},
+            )
+            return None
+        if raw is None:
+            return None
+        return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+
+    async def set_location_label(self, cell_key: str, label: str) -> None:
+        try:
+            await self._redis.set(
+                f"{self.GEOCODE_PREFIX}{cell_key}",
+                label,
+                ex=self._ttl_seconds(),
+            )
+        except (TimeoutError, RedisError, ConnectionError) as exc:
+            logger.warning(
+                "places.cache.write_failed",
+                extra={"tier": "geocode", "cell_key": cell_key, "error": str(exc)},
             )
