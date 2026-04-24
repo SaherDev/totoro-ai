@@ -232,18 +232,13 @@ def _get_inline_level() -> EnrichmentLevel:
     return _inline_level
 
 
-def get_extraction_pipeline(
-    extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
-) -> ExtractionPipeline:
-    """FastAPI dependency providing ExtractionPipeline with all levels wired."""
+def _make_deep_level() -> EnrichmentLevel:
+    """Build the URL-only deep enrichment level (subtitle/audio/vision)."""
     from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
     from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
     from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
-    from totoro_ai.core.extraction.validator import GooglePlacesValidator
-    from totoro_ai.core.places import GooglePlacesClient
 
-    inline_level = _get_inline_level()
-    deep_level = EnrichmentLevel(
+    return EnrichmentLevel(
         name="deep_enrichment",
         enrichers=[
             SubtitleCheckEnricher(
@@ -258,12 +253,33 @@ def get_extraction_pipeline(
         summary_fn=deep_summary,
         requires_url=True,
     )
+
+
+# Cached so the underlying instructor/transcription/vision clients are
+# built once at process start, not rebuilt per request.
+_deep_level: EnrichmentLevel | None = None
+
+
+def _get_deep_level() -> EnrichmentLevel:
+    global _deep_level
+    if _deep_level is None:
+        _deep_level = _make_deep_level()
+    return _deep_level
+
+
+def get_extraction_pipeline(
+    extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
+) -> ExtractionPipeline:
+    """FastAPI dependency providing ExtractionPipeline with all levels wired."""
+    from totoro_ai.core.extraction.validator import GooglePlacesValidator
+    from totoro_ai.core.places import GooglePlacesClient
+
     validator = GooglePlacesValidator(
         places_client=GooglePlacesClient(),
         confidence_config=extraction_config.confidence,
     )
     return ExtractionPipeline(
-        levels=[inline_level, deep_level],
+        levels=[_get_inline_level(), _get_deep_level()],
         validator=validator,
         extraction_config=extraction_config,
     )
