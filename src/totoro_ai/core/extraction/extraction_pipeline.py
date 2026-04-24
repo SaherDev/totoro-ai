@@ -32,6 +32,41 @@ def _friendly(class_name: str) -> str:
     return _ENRICHER_LABELS.get(class_name, class_name)
 
 
+class TooManyCandidatesError(Exception):
+    """Raised when Phase 1 enrichment produces more candidates than allowed.
+
+    The pipeline refuses to validate or persist anything in this case —
+    the whole request is dropped. The service catches this exception and
+    returns a `failed` envelope with a user-facing reason in the SSE stream.
+    """
+
+    def __init__(self, found: int, limit: int) -> None:
+        super().__init__(f"Found {found} candidates; limit is {limit}")
+        self.found = found
+        self.limit = limit
+
+
+def _enforce_candidate_limit(
+    context: ExtractionContext, limit: int, emit: EmitFn
+) -> None:
+    """Drop the entire request when too many candidates were found.
+
+    Runs after Phase 1 enrichment + dedup, before validation. Emits a
+    `save.cap_exceeded` reasoning step with counts and raises
+    `TooManyCandidatesError` so the service can return a `failed`
+    envelope without spending Google Places quota or DB writes.
+    """
+    found = len(context.candidates)
+    if found <= limit:
+        return
+    emit(
+        "save.cap_exceeded",
+        f"Found {found} possible places, more than the limit of {limit} — "
+        "skipping this request to protect the system",
+    )
+    raise TooManyCandidatesError(found=found, limit=limit)
+
+
 class ExtractionPipeline:
     """Three-phase extraction runner (ADR-008 — sequential async, not LangGraph).
 
@@ -77,6 +112,9 @@ class ExtractionPipeline:
             if context.candidates
             else "No places found in the text",
         )
+        _enforce_candidate_limit(
+            context, self._extraction_config.max_candidates, _emit
+        )
 
         # Phase 2: validate candidates, then dedup by provider_id
         results = await self._validator.validate(context.candidates)
@@ -106,6 +144,9 @@ class ExtractionPipeline:
             if enrichers_fired
             else "No extra checks needed",
         )
+        # Phase 3 starts from the already-capped Phase 1 set; background
+        # enrichers add at most a handful of candidates per source, so a
+        # second cap check here is unnecessary.
 
         results = await self._validator.validate(context.candidates)
         validated_count = len(results) if results else 0

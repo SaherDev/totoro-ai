@@ -2,7 +2,10 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from totoro_ai.core.extraction.types import (
+    CandidatePlace,
     ExtractionLevel,
     ValidatedCandidate,
 )
@@ -39,8 +42,15 @@ def _make_pipeline(
     inline_validator_returns=None,  # type: ignore[no-untyped-def]
     background_validator_returns=None,
     background_enrichers=None,
+    enrichment_seeds_candidates=0,
+    max_candidates=25,
 ) -> tuple:
-    """Returns (pipeline, enrichment_mock, validator_mock, bg_enrichers)."""
+    """Returns (pipeline, enrichment_mock, validator_mock, bg_enrichers).
+
+    `enrichment_seeds_candidates`: when non-zero, the enrichment mock
+    appends that many `CandidatePlace`s to context.candidates so the
+    cap check has something real to count.
+    """
     from totoro_ai.core.config import (
         ConfidenceWeights,
         ExtractionConfig,
@@ -50,7 +60,22 @@ def _make_pipeline(
     from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
 
     enrichment = MagicMock(spec=EnrichmentPipeline)
-    enrichment.run = AsyncMock()
+
+    async def _seed(ctx) -> None:  # type: ignore[no-untyped-def]
+        for i in range(enrichment_seeds_candidates):
+            ctx.candidates.append(
+                CandidatePlace(
+                    place=PlaceCreate(
+                        user_id="u1",
+                        place_name=f"Place {i}",
+                        place_type=PlaceType.food_and_drink,
+                        attributes=PlaceAttributes(),
+                    ),
+                    source=ExtractionLevel.LLM_NER,
+                )
+            )
+
+    enrichment.run = AsyncMock(side_effect=_seed)
 
     # validator returns inline_validator_returns on first call,
     # background_validator_returns on second (Phase 3 re-validation)
@@ -73,6 +98,7 @@ def _make_pipeline(
     extraction_config = ExtractionConfig(
         confidence_weights=weights,
         thresholds=ExtractionThresholds(),
+        max_candidates=max_candidates,
     )
 
     pipeline = ExtractionPipeline(
@@ -200,3 +226,64 @@ async def test_validator_receives_only_candidates() -> None:
     args = validator.validate.call_args.args
     kwargs = validator.validate.call_args.kwargs
     assert len(args) + len(kwargs) == 1
+
+
+async def test_too_many_candidates_drops_request_before_validation() -> None:
+    """When Phase 1 produces more candidates than `max_candidates`, the
+    pipeline raises `TooManyCandidatesError` and never calls the validator."""
+    from totoro_ai.core.extraction.extraction_pipeline import (
+        TooManyCandidatesError,
+    )
+
+    pipeline, _, validator, _ = _make_pipeline(
+        enrichment_seeds_candidates=30,
+        max_candidates=25,
+    )
+
+    with pytest.raises(TooManyCandidatesError) as exc_info:
+        await pipeline.run(url=None, user_id="u1", supplementary_text="...")
+
+    assert exc_info.value.found == 30
+    assert exc_info.value.limit == 25
+    validator.validate.assert_not_called()
+
+
+async def test_candidates_at_limit_proceed_normally() -> None:
+    """Exactly `max_candidates` candidates is allowed — no exception."""
+    pipeline, _, validator, _ = _make_pipeline(
+        inline_validator_returns=None,
+        enrichment_seeds_candidates=25,
+        max_candidates=25,
+    )
+
+    await pipeline.run(url=None, user_id="u1", supplementary_text="...")
+
+    validator.validate.assert_awaited()
+
+
+async def test_too_many_candidates_emits_cap_exceeded_step() -> None:
+    """The pipeline emits a `save.cap_exceeded` reasoning step before raising."""
+    from totoro_ai.core.extraction.extraction_pipeline import (
+        TooManyCandidatesError,
+    )
+
+    pipeline, _, _, _ = _make_pipeline(
+        enrichment_seeds_candidates=30,
+        max_candidates=25,
+    )
+
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    with pytest.raises(TooManyCandidatesError):
+        await pipeline.run(
+            url=None, user_id="u1", supplementary_text="...", emit=spy
+        )
+
+    steps = [s for s, _ in emitted]
+    assert "save.cap_exceeded" in steps
+    cap_msg = next(msg for s, msg in emitted if s == "save.cap_exceeded")
+    assert "30" in cap_msg
+    assert "25" in cap_msg

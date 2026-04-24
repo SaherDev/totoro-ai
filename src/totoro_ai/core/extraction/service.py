@@ -9,7 +9,10 @@ from totoro_ai.api.schemas.extract_place import (
     ExtractPlaceResponse,
 )
 from totoro_ai.core.emit import EmitFn
-from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
+from totoro_ai.core.extraction.extraction_pipeline import (
+    ExtractionPipeline,
+    TooManyCandidatesError,
+)
 from totoro_ai.core.extraction.input_parser import parse_input
 from totoro_ai.core.extraction.persistence import (
     ExtractionPersistenceService,
@@ -125,6 +128,7 @@ class ExtractionService:
         parse_summary = _build_parse_summary(source, bool(parsed.supplementary_text))
         _emit("save.parse_input", parse_summary)
 
+        cap_exceeded = False
         try:
             result = await self._pipeline.run(
                 url=parsed.url,
@@ -154,6 +158,24 @@ class ExtractionService:
                     raw_input=raw_input,
                     request_id=rid,
                 )
+        except TooManyCandidatesError as exc:
+            # Expected outcome — not an error. Pipeline already emitted
+            # the user-facing reason via `save.cap_exceeded`; flag the
+            # final persist summary so it doesn't look like a normal failure.
+            cap_exceeded = True
+            logger.info(
+                "Extraction request %s dropped: %d candidates exceeded "
+                "limit of %d",
+                rid,
+                exc.found,
+                exc.limit,
+            )
+            response = ExtractPlaceResponse(
+                status="failed",
+                results=[],
+                raw_input=raw_input,
+                request_id=rid,
+            )
         except Exception:
             logger.exception("Extraction pipeline failed for request %s", rid)
             response = ExtractPlaceResponse(
@@ -167,6 +189,8 @@ class ExtractionService:
             persist_summary = f"Saved {len(response.results)} place(s)"
         elif response.status == "completed":
             persist_summary = "Done — nothing new to save"
+        elif cap_exceeded:
+            persist_summary = "Skipped — too many places in one request"
         else:
             persist_summary = "Could not save — no valid places found"
         _emit("save.persist", persist_summary)
