@@ -51,6 +51,16 @@ class RegenDebouncer:
             await asyncio.gather(*self._pending.values(), return_exceptions=True)
         self._pending.clear()
 
+    def cancel_pending(self, user_id: str) -> None:
+        """Cancel and forget the pending regen task for a single user.
+
+        Used by the delete-user sweep so the cancelled user doesn't get a
+        regen fired against now-deleted rows. No-op if no task is pending.
+        """
+        task = self._pending.pop(user_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
 
 # Module-level singleton
 regen_debouncer = RegenDebouncer()

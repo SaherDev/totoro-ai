@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from totoro_ai.api.deps import get_taste_service
-from totoro_ai.api.routes.user_context import router as user_context_router
+from totoro_ai.api.routes.user import router as user_router
 from totoro_ai.core.taste.schemas import (
     Chip,
     ChipStatus,
@@ -20,7 +20,7 @@ from totoro_ai.core.taste.service import TasteModelService
 
 def _make_app(taste_service: TasteModelService) -> TestClient:
     app = FastAPI()
-    app.include_router(user_context_router, prefix="/v1")
+    app.include_router(user_router, prefix="/v1")
     app.dependency_overrides[get_taste_service] = lambda: taste_service
     return TestClient(app)
 

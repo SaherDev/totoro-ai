@@ -151,9 +151,14 @@ def _sanitize_orphaned_tool_calls(messages: list[Any]) -> tuple[list[Any], int]:
 
 def _render_location_context(state: AgentState) -> str:
     loc = state.get("location")
+    label = state.get("location_label")
     if loc:
+        city_clause = (
+            f" The user is in {label}." if label else " The user's city is unknown."
+        )
         return (
-            f"User's current GPS location: lat={loc['lat']}, lng={loc['lng']}. "
+            f"User's current GPS location: lat={loc['lat']}, lng={loc['lng']}."
+            f"{city_clause} "
             "Do NOT ask for their city — their coordinates are already available. "
             "When calling consult, leave search_location_name empty and the system "
             "will use these coordinates automatically."
