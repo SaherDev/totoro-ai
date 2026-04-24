@@ -9,10 +9,7 @@ import pytest
 from totoro_ai.core.extraction.enrichers.google_maps_list import (
     GoogleMapsListEnricher,
 )
-from totoro_ai.core.extraction.types import (
-    ExtractionContext,
-    ExtractionLevel,
-)
+from totoro_ai.core.extraction.types import ExtractionContext
 from totoro_ai.core.places import PlaceSource
 
 
@@ -35,7 +32,7 @@ class TestSourceGate:
         with patch("httpx.AsyncClient") as client_cls:
             await enricher.enrich(ctx)
         client_cls.assert_not_called()
-        assert ctx.candidates == []
+        assert ctx.known_places == []
 
     async def test_skips_when_no_url(self) -> None:
         enricher = GoogleMapsListEnricher(token="t")
@@ -57,7 +54,11 @@ class TestTokenResolution:
 
 
 class TestApifyResponse:
-    async def test_appends_candidate_per_item(self) -> None:
+    async def test_appends_each_name_to_known_places(self) -> None:
+        """Pure text producer — names land in known_places; no
+        CandidatePlace is created here. The NER finalizer downstream
+        is responsible for turning each name into a structured
+        candidate with inferred attributes."""
         enricher = GoogleMapsListEnricher(token="apify-token")
         items = [
             {"name": "Joe's Pizza", "placeId": "0xabc:0x123"},
@@ -72,33 +73,8 @@ class TestApifyResponse:
             client_cls.return_value.__aenter__.return_value.post = _post
             await enricher.enrich(ctx)
 
-        assert len(ctx.candidates) == 2
-        names = [c.place.place_name for c in ctx.candidates]
-        assert names == ["Joe's Pizza", "Eleven Madison Park"]
-
-    async def test_drops_apify_fid_and_lets_validator_resolve_place_id(
-        self,
-    ) -> None:
-        """Apify returns a Google Maps FID (0x...:0x...), not a Places
-        API ChIJ ID. Mixing those in `external_id` would break dedup
-        with candidates from other extraction paths. The enricher
-        deliberately leaves provider/external_id unset and lets
-        GooglePlacesValidator discover the canonical Place ID."""
-        enricher = GoogleMapsListEnricher(token="apify-token")
-        items = [{"name": "Joe's Pizza", "placeId": "0xabc:0x123"}]
-        ctx = _ctx()
-
-        async def _post(*_a, **_kw):  # type: ignore[no-untyped-def]
-            return _mock_response(items)
-
-        with patch("httpx.AsyncClient") as client_cls:
-            client_cls.return_value.__aenter__.return_value.post = _post
-            await enricher.enrich(ctx)
-
-        cand = ctx.candidates[0]
-        assert cand.place.provider is None
-        assert cand.place.external_id is None
-        assert cand.source is ExtractionLevel.GOOGLE_MAPS_LIST
+        assert ctx.known_places == ["Joe's Pizza", "Eleven Madison Park"]
+        assert ctx.candidates == []
 
     async def test_skips_items_without_a_name(self) -> None:
         enricher = GoogleMapsListEnricher(token="apify-token")
@@ -115,8 +91,7 @@ class TestApifyResponse:
             client_cls.return_value.__aenter__.return_value.post = _post
             await enricher.enrich(ctx)
 
-        assert len(ctx.candidates) == 1
-        assert ctx.candidates[0].place.place_name == "Joe's Pizza"
+        assert ctx.known_places == ["Joe's Pizza"]
 
     async def test_request_body_disables_apify_residential_proxy(self) -> None:
         """Apify residential proxy is a paid-tier feature; the enricher

@@ -244,7 +244,12 @@ agent:
   tool_timeouts_seconds:
     recall: 5
     consult: 10
-    save: 25
+    # Save handles three flavors of input with very different latency:
+    # text-only / TikTok / IG (~3-5s), YouTube videos with deep enrichment
+    # (~15-20s), and Google Maps shared lists where Apify takes ~14s
+    # alone before NER and validation. 60s gives the slowest happy-path
+    # (~30s today) ~2x headroom.
+    save: 60
 
 # ---------------------------------------------------------------------------
 # Taste Model Configuration

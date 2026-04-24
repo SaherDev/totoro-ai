@@ -183,12 +183,47 @@ class TestLLMNEREnricher:
         assert "transcript: They mention Eleven Madison Park" in content
 
     async def test_skips_when_no_text_anywhere(self) -> None:
-        """No caption, no supplementary_text, no transcript → no LLM call."""
+        """No caption, no supplementary_text, no transcript, no
+        known_places → no LLM call."""
         client = _mock_instructor([])
         enricher = LLMNEREnricher(instructor_client=client)
         ctx = ExtractionContext(url="https://tiktok.com/v/x", user_id="u1")
         await enricher.enrich(ctx)
         client.extract.assert_not_called()
+
+    async def test_runs_when_only_known_places_is_set(self) -> None:
+        """Google Maps shared list path: enricher populates
+        known_places, NER turns each into a structured candidate."""
+        client = _mock_instructor(
+            [_ner_place("Baret"), _ner_place("KitKatClub")]
+        )
+        enricher = LLMNEREnricher(instructor_client=client)
+        ctx = ExtractionContext(
+            url="https://maps.app.goo.gl/x",
+            user_id="u1",
+            known_places=["Baret", "KitKatClub"],
+        )
+        await enricher.enrich(ctx)
+        client.extract.assert_awaited_once()
+        names = [c.place.place_name for c in ctx.candidates]
+        assert names == ["Baret", "KitKatClub"]
+
+    async def test_known_places_appears_in_prompt_with_instruction(self) -> None:
+        """The prompt names the field and tells the model to emit one
+        structured object per entry without dropping or renaming."""
+        client = _mock_instructor([])
+        enricher = LLMNEREnricher(instructor_client=client)
+        ctx = ExtractionContext(
+            url=None,
+            user_id="u1",
+            known_places=["Baret", "KitKatClub"],
+        )
+        await enricher.enrich(ctx)
+        content = client.extract.call_args.kwargs["messages"][-1]["content"]
+        assert "known_places" in content
+        assert "Baret" in content
+        assert "KitKatClub" in content
+        assert "Do not drop or rename" in content
 
     async def test_case3_full_metadata_passed_to_llm(self) -> None:
         client = _mock_instructor([])

@@ -415,7 +415,7 @@ class ToolTimeoutsConfig(BaseModel):
 
     recall: int = 5
     consult: int = 10
-    save: int = 25
+    save: int = 60  # accommodates Apify-backed Google Maps list scrapes
 
     @model_validator(mode="after")
     def _positive_integers(self) -> "ToolTimeoutsConfig":
