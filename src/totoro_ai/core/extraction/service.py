@@ -27,12 +27,16 @@ _SOURCE_LABELS: dict[PlaceSource, str] = {
     PlaceSource.instagram: "the Instagram post",
     PlaceSource.youtube: "the YouTube video",
     PlaceSource.link: "the link",
-    PlaceSource.manual: "the link",
 }
 
 
 def _source_label(source: PlaceSource | None) -> str:
-    return _SOURCE_LABELS.get(source, "the link") if source else "the link"
+    # `PlaceSource.manual` is never produced by `source_from_url` — it
+    # marks hand-added places, not extracted ones — so it can't reach
+    # this helper. Unknown URL sources fall back to "the link".
+    if source is None:
+        return "the link"
+    return _SOURCE_LABELS.get(source, "the link")
 
 
 def _build_parse_summary(source: PlaceSource | None, has_text: bool) -> str:
