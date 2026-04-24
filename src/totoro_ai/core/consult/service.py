@@ -109,8 +109,9 @@ class ConsultService:
             )
             _emit(
                 "consult.geocode",
-                f"geocoded {filters.search_location_name!r} -> "
-                f"{'(resolved)' if search_location else '(unresolved)'}",
+                f"Pinpointed {filters.search_location_name!r} on the map"
+                if search_location
+                else f"Could not locate {filters.search_location_name!r}",
             )
         if search_location is None and location:
             search_location = {"lat": location.lat, "lng": location.lng}
@@ -159,19 +160,22 @@ class ConsultService:
             suggestion_places = list(suggestion_places)
             _emit(
                 "consult.keywords",
-                f"{len(keyword_places)} from keyword search"
+                f"Found {len(keyword_places)} nearby matches"
                 if keyword_places
-                else "no keyword results",
+                else "No nearby matches found",
             )
             _emit(
                 "consult.suggestions",
-                f"{len(suggestion_places)} from suggestions"
+                f"Validated {len(suggestion_places)} suggested places"
                 if suggestion_places
-                else "no suggestion results",
+                else "No suggested places to validate",
             )
         else:
-            _emit("consult.keywords", "discovery skipped (no location context)")
-            _emit("consult.suggestions", "discovery skipped (no location context)")
+            _emit("consult.keywords", "Skipped discovery — no location to search around")
+            _emit(
+                "consult.suggestions",
+                "Skipped suggestion validation — no location to search around",
+            )
 
         # Phase 3: merge + dedupe (saved → suggested → discovered priority).
         deduped_places, sources_by_place_id = _dedupe_places(
@@ -179,15 +183,17 @@ class ConsultService:
         )
         _emit(
             "consult.merge",
-            f"merged {len(filtered_saved)} saved + {len(keyword_places)} discovered + {len(suggestion_places)} suggested"
+            f"Combined {len(filtered_saved)} from your saves, "
+            f"{len(keyword_places)} from search, "
+            f"{len(suggestion_places)} from suggestions"
             if filtered_saved or keyword_places or suggestion_places
-            else "no candidates to merge",
+            else "Nothing to combine",
         )
         _emit(
             "consult.dedupe",
-            f"{len(deduped_places)} unique after dedup"
+            f"{len(deduped_places)} unique places after removing duplicates"
             if deduped_places
-            else "no candidates after dedup",
+            else "No places left after removing duplicates",
         )
 
         # Phase 4: enrich with Tier 2 + Tier 3 data.
@@ -205,9 +211,9 @@ class ConsultService:
         )
         _emit(
             "consult.enrich",
-            f"enriched {len(enriched_places)} candidates"
+            f"Added details for {len(enriched_places)} places"
             if enriched_places
-            else "no candidates to enrich",
+            else "No places to add details for",
         )
 
         # Active-tier chip filter (ADR-061) — ONE remaining taste read on main path.
@@ -233,12 +239,14 @@ class ConsultService:
                     if removed > 0:
                         _emit(
                             "consult.chip_filter",
-                            f"filtered {removed}/{before} matching rejected chips",
+                            f"Removed {removed} place(s) matching preferences "
+                            "you rejected",
                         )
                 if confirmed_chips:
                     _emit(
                         "consult.chip_filter",
-                        "confirmed: " + ", ".join(c.label for c in confirmed_chips),
+                        "Honoring your confirmed preferences: "
+                        + ", ".join(c.label for c in confirmed_chips),
                     )
 
         if not enriched_places:
@@ -260,7 +268,8 @@ class ConsultService:
             top = (saved_pool + discovered_pool)[:limit]
             _emit(
                 "consult.tier_blend",
-                f"discovered={len(discovered_pool)}, saved={len(saved_pool)}",
+                f"Mixing {len(saved_pool)} from your saves with "
+                f"{len(discovered_pool)} new discoveries",
             )
         else:
             top = enriched_places[:limit]

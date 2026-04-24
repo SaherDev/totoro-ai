@@ -131,7 +131,7 @@ class TestRecallServiceHappyPath:
 
         steps = [s for s, _ in emitted]
         assert steps == ["recall.mode", "recall.result"]
-        assert "mode=hybrid" in emitted[0][1]
+        assert "Searching for 'ramen' in your saves" in emitted[0][1]
         assert "1 places matched" in emitted[1][1]
 
     async def test_emit_callback_fires_for_filter_mode(
@@ -149,7 +149,7 @@ class TestRecallServiceHappyPath:
         await recall_service.run(None, "u1", emit=spy)
 
         assert [s for s, _ in emitted] == ["recall.mode", "recall.result"]
-        assert "mode=filter" in emitted[0][1]
+        assert "Browsing your saves" in emitted[0][1]
 
     async def test_run_passes_limit_and_rrf_k_to_repo(
         self,

@@ -107,11 +107,18 @@ class ExtractionService:
         parsed = parse_input(raw_input)
         source = _source_from_url(parsed.url)
         rid = request_id or uuid4().hex
-        _emit(
-            "save.parse_input",
-            f"url={parsed.url or '(none)'}; "
-            f"supplementary_text={len(parsed.supplementary_text)} chars",
-        )
+        if parsed.url and parsed.supplementary_text:
+            parse_summary = (
+                f"Reading {parsed.url} with "
+                f"{len(parsed.supplementary_text)} chars of extra context"
+            )
+        elif parsed.url:
+            parse_summary = f"Reading {parsed.url}"
+        else:
+            parse_summary = (
+                f"Reading {len(parsed.supplementary_text)} chars of text"
+            )
+        _emit("save.parse_input", parse_summary)
 
         try:
             result = await self._pipeline.run(
@@ -151,10 +158,12 @@ class ExtractionService:
                 request_id=rid,
             )
 
-        _emit(
-            "save.persist",
-            f"status={response.status}"
-            + (f"; {len(response.results)} saved" if response.results else ""),
-        )
+        if response.results:
+            persist_summary = f"Saved {len(response.results)} place(s)"
+        elif response.status == "completed":
+            persist_summary = "Done — nothing new to save"
+        else:
+            persist_summary = "Could not save — no valid places found"
+        _emit("save.persist", persist_summary)
         await self._status_repo.write(rid, response.model_dump(mode="json"))
         return response

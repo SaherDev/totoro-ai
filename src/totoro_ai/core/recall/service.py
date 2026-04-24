@@ -89,9 +89,11 @@ class RecallService:
 
         mode = "filter" if query is None else "hybrid"
         effective_limit = limit if limit is not None else self._config.max_results
+        verb = "Browsing" if mode == "filter" else f"Searching for {query!r} in"
+        order = "newest first" if sort_by == "created_at" else "by relevance"
         _emit(
             "recall.mode",
-            f"mode={mode}; limit={effective_limit}; sort_by={sort_by}",
+            f"{verb} your saves {order}, up to {effective_limit}",
         )
 
         query_vector: list[float] | None = None
