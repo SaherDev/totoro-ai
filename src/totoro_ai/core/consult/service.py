@@ -84,6 +84,7 @@ class ConsultService:
         query: str,
         saved_places: list[PlaceObject],
         filters: ConsultFilters,
+        limit: int,
         location: Location | None = None,
         preference_context: str | None = None,
         signal_tier: str = "active",
@@ -243,10 +244,9 @@ class ConsultService:
         if not enriched_places:
             raise NoMatchesError(query)
 
-        total_cap = config.consult.total_cap
         if signal_tier == "warming":
-            saved_cap = round(total_cap * config.taste_model.warming_blend.saved)
-            discovered_cap = total_cap - saved_cap
+            saved_cap = round(limit * config.taste_model.warming_blend.saved)
+            discovered_cap = limit - saved_cap
             saved_pool = [
                 p
                 for p in enriched_places
@@ -257,13 +257,13 @@ class ConsultService:
                 for p in enriched_places
                 if sources_by_place_id.get(p.place_id) in ("discovered", "suggested")
             ][:discovered_cap]
-            top = (saved_pool + discovered_pool)[:total_cap]
+            top = (saved_pool + discovered_pool)[:limit]
             _emit(
                 "consult.tier_blend",
                 f"discovered={len(discovered_pool)}, saved={len(saved_pool)}",
             )
         else:
-            top = enriched_places[:total_cap]
+            top = enriched_places[:limit]
 
         results = [
             ConsultResult(

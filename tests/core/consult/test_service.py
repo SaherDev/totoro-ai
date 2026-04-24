@@ -136,6 +136,7 @@ async def test_emit_callback_fires_pipeline_steps_in_order(
         query="Thai food",
         saved_places=[_place("saved_1")],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         emit=spy,
     )
@@ -169,6 +170,7 @@ async def test_emit_geocode_fires_when_search_location_name_set(
         query="Thai food",
         saved_places=[],
         filters=ConsultFilters(search_location_name="Shibuya"),
+        limit=3,
         location=None,
         emit=spy,
     )
@@ -191,6 +193,7 @@ async def test_no_matches_raises_when_everything_empty(
             query="Thai food",
             saved_places=[],
             filters=ConsultFilters(),
+            limit=3,
             location=Location(lat=13.75, lng=100.5),
         )
 
@@ -221,6 +224,7 @@ async def test_warming_tier_applies_candidate_blend(
         query="Thai food",
         saved_places=saved_places,
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="warming",
         emit=spy,
@@ -296,6 +300,7 @@ async def test_active_tier_excludes_rejected_chip_candidates(
         query="food",
         saved_places=[],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
         emit=spy,
@@ -340,6 +345,7 @@ async def test_active_tier_surfaces_confirmed_chips(
         query="Ramen nearby",
         saved_places=[_place("saved_1")],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
         emit=spy,
@@ -369,6 +375,7 @@ async def test_non_warming_tier_skips_blend_emit(
         query="Ramen nearby",
         saved_places=[_place("saved_1"), _place("saved_2")],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
         emit=spy,
@@ -395,6 +402,7 @@ async def test_response_has_no_reasoning_steps_attribute(
         query="Thai food",
         saved_places=[],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
     )
 

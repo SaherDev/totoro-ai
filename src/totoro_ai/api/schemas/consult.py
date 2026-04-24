@@ -60,9 +60,10 @@ class ConsultResponse(BaseModel):
     """Response body for POST /v1/consult.
 
     `results` is ordered by source (saved first, discovered second, suggested third) and
-    capped at `consult.total_cap` entries. Reasoning steps are delivered
-    live via the `emit` callback on the agent path (feature 028 M4) —
-    the response no longer bundles them.
+    capped by the agent-chosen `limit` (hard ceiling 5, enforced at the
+    consult tool boundary). Reasoning steps are delivered live via the
+    `emit` callback on the agent path (feature 028 M4) — the response no
+    longer bundles them.
     """
 
     recommendation_id: str | None = Field(

@@ -48,6 +48,17 @@ class ConsultToolInput(BaseModel):
             "place_type, price range."
         ),
     )
+    limit: int = Field(
+        ge=1,
+        le=5,
+        description=(
+            "How many recommendations to return. YOU MUST choose based on "
+            "the user's intent and context: 1 when they want a single "
+            "confident pick ('where should I go tonight'), 2–3 when "
+            "comparing options, up to 5 when they explicitly ask for a few "
+            "choices. Prefer fewer. Hard ceiling is 5 — never request more."
+        ),
+    )
     preference_context: str | None = Field(
         default=None,
         description=(
@@ -104,6 +115,21 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
                 description=(
                     "Structural + discovery filters: radius_m, "
                     "search_location_name, place_type, price range."
+                ),
+            ),
+        ],
+        limit: Annotated[
+            int,
+            Field(
+                ge=1,
+                le=5,
+                description=(
+                    "How many recommendations to return. YOU MUST choose "
+                    "based on the user's intent and context: 1 when they "
+                    "want a single confident pick ('where should I go "
+                    "tonight'), 2–3 when comparing options, up to 5 when "
+                    "they explicitly ask for a few choices. Prefer fewer. "
+                    "Hard ceiling is 5 — never request more."
                 ),
             ),
         ],
@@ -167,6 +193,7 @@ def build_consult_tool(service: ConsultService) -> BaseTool:
                     query=query,
                     saved_places=saved_places,
                     filters=filters,
+                    limit=limit,
                     location=loc,
                     preference_context=preference_context,
                     signal_tier="active",
