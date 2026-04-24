@@ -117,6 +117,8 @@ extraction:
       subtitle_check: 0.75
       whisper_audio: 0.65
       vision_frames: 0.55
+      # User-curated lists are explicit saves — treat them as ground truth.
+      google_maps_list: 0.95
     corroboration_bonus: 0.10
     max_score: 0.97
     # ADR-057: two-band save gate.

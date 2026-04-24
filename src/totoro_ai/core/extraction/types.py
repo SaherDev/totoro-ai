@@ -36,6 +36,7 @@ class ExtractionLevel(Enum):
     SUBTITLE_CHECK = "subtitle_check"
     WHISPER_AUDIO = "whisper_audio"
     VISION_FRAMES = "vision_frames"
+    GOOGLE_MAPS_LIST = "google_maps_list"
 
 
 @dataclass

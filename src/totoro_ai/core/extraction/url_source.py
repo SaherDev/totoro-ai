@@ -22,4 +22,11 @@ def source_from_url(url: str | None) -> PlaceSource | None:
         return PlaceSource.instagram
     if "youtube.com" in lowered or "youtu.be" in lowered:
         return PlaceSource.youtube
+    if (
+        "maps.app.goo.gl" in lowered
+        or "goo.gl/maps" in lowered
+        or "google.com/maps" in lowered
+        or "maps.google.com" in lowered
+    ):
+        return PlaceSource.google_maps
     return PlaceSource.link

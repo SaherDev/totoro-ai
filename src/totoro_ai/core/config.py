@@ -173,6 +173,8 @@ class ConfidenceConfig(BaseModel):
         "subtitle_check": 0.75,
         "whisper_audio": 0.65,
         "vision_frames": 0.55,
+        # User-curated lists are explicit saves — treat them as ground truth.
+        "google_maps_list": 0.95,
     }
     signal_scores: dict[str, float] = {
         "emoji_marker": 0.92,
@@ -584,6 +586,7 @@ class EnvConfig(BaseSettings):
     VOYAGE_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
+    APIFY_TOKEN: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
     LANGFUSE_SECRET_KEY: str | None = None
     LANGFUSE_HOST: str | None = None

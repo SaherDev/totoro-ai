@@ -206,6 +206,9 @@ def _make_inline_level() -> EnrichmentLevel:
         CircuitBreakerEnricher,
         ParallelEnricherGroup,
     )
+    from totoro_ai.core.extraction.enrichers.google_maps_list import (
+        GoogleMapsListEnricher,
+    )
     from totoro_ai.core.extraction.enrichers.tiktok_oembed import TikTokOEmbedEnricher
     from totoro_ai.core.extraction.enrichers.ytdlp_metadata import YtDlpMetadataEnricher
 
@@ -216,6 +219,7 @@ def _make_inline_level() -> EnrichmentLevel:
                 [
                     CircuitBreakerEnricher(TikTokOEmbedEnricher()),
                     CircuitBreakerEnricher(YtDlpMetadataEnricher()),
+                    CircuitBreakerEnricher(GoogleMapsListEnricher()),
                 ]
             ),
         ],

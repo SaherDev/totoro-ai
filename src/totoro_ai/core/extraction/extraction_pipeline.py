@@ -22,6 +22,7 @@ _ENRICHER_LABELS = {
     "VisionFramesEnricher": "video frames",
     "TikTokOEmbedEnricher": "TikTok metadata",
     "YtDlpMetadataEnricher": "video metadata",
+    "GoogleMapsListEnricher": "Google Maps list",
     "LLMNEREnricher": "text analysis",
     "CircuitBreakerEnricher": "fallback extractor",
     "ParallelEnricherGroup": "parallel extractors",

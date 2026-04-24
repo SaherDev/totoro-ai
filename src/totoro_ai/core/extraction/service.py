@@ -35,6 +35,7 @@ _SOURCE_LABELS: dict[PlaceSource, str] = {
     PlaceSource.tiktok: "the TikTok video",
     PlaceSource.instagram: "the Instagram post",
     PlaceSource.youtube: "the YouTube video",
+    PlaceSource.google_maps: "the Google Maps list",
     PlaceSource.link: "the link",
     PlaceSource.manual: "what you added or wrote",
 }
