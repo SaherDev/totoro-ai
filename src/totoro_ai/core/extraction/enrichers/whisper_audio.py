@@ -21,9 +21,9 @@ from totoro_ai.core.places import (
     PlaceCreate,
     PlaceType,
 )
-from totoro_ai.providers.groq_client import GroqTranscriptionProtocol
 from totoro_ai.providers.llm import InstructorClient
 from totoro_ai.providers.tracing import get_tracing_client
+from totoro_ai.providers.transcription import TranscriptionProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,11 @@ class WhisperAudioEnricher:
 
     def __init__(
         self,
-        groq_client: GroqTranscriptionProtocol,
+        transcription_client: TranscriptionProtocol,
         instructor_client: InstructorClient,
         config: ExtractionWhisperConfig = _DEFAULT_WHISPER_CONFIG,
     ) -> None:
-        self._groq_client = groq_client
+        self._transcription_client = transcription_client
         self._instructor_client = instructor_client
         self._config = config
 
@@ -98,7 +98,7 @@ class WhisperAudioEnricher:
             cdn_url = await asyncio.get_event_loop().run_in_executor(
                 None, self._get_cdn_url, url
             )
-            return await self._groq_client.transcribe_url(cdn_url)
+            return await self._transcription_client.transcribe_url(cdn_url)
         except Exception as tier1_exc:
             logger.debug("Whisper Tier 1 failed (%s), trying Tier 2", tier1_exc)
 
@@ -107,7 +107,9 @@ class WhisperAudioEnricher:
                 None, self._download_audio_bytes, url
             )
             filename = f"audio.{self._config.audio_format}"
-            return await self._groq_client.transcribe_bytes(audio_bytes, filename)
+            return await self._transcription_client.transcribe_bytes(
+                audio_bytes, filename
+            )
         except Exception as tier2_exc:
             logger.warning("Whisper Tier 2 also failed: %s", tier2_exc)
             return None

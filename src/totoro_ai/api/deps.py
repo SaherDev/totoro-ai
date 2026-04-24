@@ -38,8 +38,7 @@ from totoro_ai.db.session import _get_session_factory, get_session
 from totoro_ai.providers import get_instructor_client
 from totoro_ai.providers.cache import CacheBackend
 from totoro_ai.providers.embeddings import EmbedderProtocol, get_embedder
-from totoro_ai.providers.groq_client import GroqWhisperClient
-from totoro_ai.providers.llm import get_vision_extractor
+from totoro_ai.providers.llm import get_transcription_client, get_vision_extractor
 from totoro_ai.providers.redis_cache import RedisCacheBackend
 
 
@@ -247,7 +246,7 @@ def get_extraction_pipeline(
             instructor_client=get_instructor_client("extractor"),
         ),
         WhisperAudioEnricher(
-            groq_client=GroqWhisperClient(api_key=get_env().GROQ_API_KEY or ""),
+            transcription_client=get_transcription_client(),
             instructor_client=get_instructor_client("extractor"),
         ),
         VisionFramesEnricher(vision_extractor=get_vision_extractor()),
