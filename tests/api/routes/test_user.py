@@ -7,22 +7,33 @@ from unittest.mock import AsyncMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from totoro_ai.api.deps import get_taste_service
+from totoro_ai.api.deps import get_places_service, get_taste_service
 from totoro_ai.api.routes.user import router as user_router
+from totoro_ai.core.places.service import PlacesService
 from totoro_ai.core.taste.schemas import (
     Chip,
     ChipStatus,
+    TasteContext,
     TasteProfile,
-    UserContext,
 )
 from totoro_ai.core.taste.service import TasteModelService
 
 
-def _make_app(taste_service: TasteModelService) -> TestClient:
+def _make_app(
+    taste_service: TasteModelService,
+    places_service: PlacesService,
+) -> TestClient:
     app = FastAPI()
     app.include_router(user_router, prefix="/v1")
     app.dependency_overrides[get_taste_service] = lambda: taste_service
+    app.dependency_overrides[get_places_service] = lambda: places_service
     return TestClient(app)
+
+
+def _stub_places_service(saved_count: int) -> AsyncMock:
+    svc = AsyncMock(spec=PlacesService)
+    svc.count_for_user = AsyncMock(return_value=saved_count)
+    return svc
 
 
 def _stub_service(
@@ -30,14 +41,13 @@ def _stub_service(
     profile: TasteProfile | None = None,
     user_id: str = "user_abc",
 ) -> AsyncMock:
-    """Build a TasteModelService stub with get_taste_profile + real get_user_context."""
+    """Build a TasteModelService stub that runs the real get_taste_context."""
     from totoro_ai.core.taste.service import TasteModelService as _Real
 
     svc = AsyncMock(spec=_Real)
     svc.get_taste_profile = AsyncMock(return_value=profile)
 
-    # Use the real get_user_context implementation, bind via closure.
-    async def _get_user_context(uid: str) -> UserContext:
+    async def _get_taste_context(uid: str) -> TasteContext:
         from totoro_ai.core.config import get_config
         from totoro_ai.core.taste.schemas import ChipView
         from totoro_ai.core.taste.tier import derive_signal_tier, selection_round_name
@@ -47,17 +57,10 @@ def _stub_service(
         chip_threshold = config.taste_model.chip_threshold
         p = await svc.get_taste_profile(uid)
         if p is None:
-            return UserContext(
-                saved_places_count=0,
+            return TasteContext(
                 signal_tier=derive_signal_tier(0, [], stages, chip_threshold),
                 chips=[],
             )
-        saved_count = 0
-        totals = (
-            p.signal_counts.get("totals") if isinstance(p.signal_counts, dict) else None
-        )
-        if isinstance(totals, dict):
-            saved_count = int(totals.get("saves", 0))
         signal_tier = derive_signal_tier(
             signal_count=p.generated_from_log_count,
             chips=p.chips,
@@ -76,26 +79,28 @@ def _stub_service(
             )
             for c in p.chips
         ]
-        return UserContext(
-            saved_places_count=saved_count,
+        return TasteContext(
             signal_tier=signal_tier,
             chips=chips,
         )
 
-    svc.get_user_context = _get_user_context
+    svc.get_taste_context = _get_taste_context
     return svc
 
 
-def test_cold_user_returns_cold_tier() -> None:
+def test_cold_user_returns_cold_tier_with_real_place_count() -> None:
     svc = _stub_service(profile=None)
-    client = _make_app(svc)
+    places = _stub_places_service(saved_count=2)
+    client = _make_app(svc, places)
 
     response = client.get("/v1/user/context", params={"user_id": "new_user"})
 
     assert response.status_code == 200
     body = response.json()
+    # Cold tier (no taste_model row) but the 2 places in the DB surface
+    # through — the old bug returned 0 because it read signal_counts.
     assert body == {
-        "saved_places_count": 0,
+        "saved_places_count": 2,
         "signal_tier": "cold",
         "chips": [],
     }
@@ -109,7 +114,8 @@ def test_warming_user_returns_warming_tier() -> None:
         generated_from_log_count=3,
     )
     svc = _stub_service(profile=profile)
-    client = _make_app(svc)
+    places = _stub_places_service(saved_count=3)
+    client = _make_app(svc, places)
 
     response = client.get("/v1/user/context", params={"user_id": "warm_user"})
 
@@ -136,7 +142,8 @@ def test_chip_selection_tier_exposes_pending_chip_shape() -> None:
         generated_from_log_count=5,
     )
     svc = _stub_service(profile=profile)
-    client = _make_app(svc)
+    places = _stub_places_service(saved_count=5)
+    client = _make_app(svc, places)
 
     response = client.get("/v1/user/context", params={"user_id": "chip_user"})
 
@@ -179,7 +186,8 @@ def test_active_tier_preserves_confirmed_and_rejected_statuses() -> None:
         generated_from_log_count=12,
     )
     svc = _stub_service(profile=profile)
-    client = _make_app(svc)
+    places = _stub_places_service(saved_count=12)
+    client = _make_app(svc, places)
 
     response = client.get("/v1/user/context", params={"user_id": "active_user"})
 
@@ -210,7 +218,8 @@ def test_chip_selection_at_round_2_stamps_round_2_on_pending_chips() -> None:
         generated_from_log_count=20,  # round_2 threshold
     )
     svc = _stub_service(profile=profile)
-    client = _make_app(svc)
+    places = _stub_places_service(saved_count=20)
+    client = _make_app(svc, places)
 
     response = client.get("/v1/user/context", params={"user_id": "r2_user"})
 
@@ -221,7 +230,8 @@ def test_chip_selection_at_round_2_stamps_round_2_on_pending_chips() -> None:
 
 def test_missing_user_id_returns_422() -> None:
     svc = _stub_service(profile=None)
-    client = _make_app(svc)
+    places = _stub_places_service(saved_count=0)
+    client = _make_app(svc, places)
 
     response = client.get("/v1/user/context")
     assert response.status_code == 422

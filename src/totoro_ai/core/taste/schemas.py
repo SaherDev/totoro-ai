@@ -108,11 +108,35 @@ class ChipView(BaseModel):
     )
 
 
+class TasteContext(BaseModel):
+    """Tier + chips derived from the taste model — the slice of
+    GET /v1/user/context that TasteModelService owns. The route handler
+    composes this with `saved_places_count` (from PlacesService) to build
+    the final UserContext response.
+    """
+
+    signal_tier: SignalTier = Field(
+        ...,
+        description="Derived tier: cold | warming | chip_selection | active",
+    )
+    chips: list[ChipView] = Field(
+        default_factory=list,
+        description=(
+            "Precomputed taste chips. Each chip's `selection_round` carries "
+            "either the round the chip was decided in (confirmed/rejected) "
+            "or — for still-pending chips — the round the user should submit "
+            "the chip under (stamped server-side from the highest crossed "
+            "stage). Null only at cold/warming tiers where no stage has been "
+            "crossed yet."
+        ),
+    )
+
+
 class UserContext(BaseModel):
     """Response shape for GET /v1/user/context (feature 023).
 
-    Produced end-to-end by TasteModelService.get_user_context — the route
-    handler just returns it unchanged (facade per ADR-034).
+    Composed at the route: `saved_places_count` from PlacesService (places
+    table) + `signal_tier` / `chips` from TasteModelService.get_taste_context.
     """
 
     saved_places_count: int = Field(
