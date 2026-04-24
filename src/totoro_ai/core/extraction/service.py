@@ -27,7 +27,7 @@ _SOURCE_LABELS: dict[PlaceSource, str] = {
     PlaceSource.instagram: "the Instagram post",
     PlaceSource.youtube: "the YouTube video",
     PlaceSource.link: "the link",
-    PlaceSource.manual: "the place you added",
+    PlaceSource.manual: "what you added or wrote",
 }
 
 
