@@ -95,7 +95,7 @@ Domain surface under `src/totoro_ai/core/`:
 poetry install
 
 # 2 — Create your local .env (fill in the keys listed under Environment Variables)
-cp config/.env.example .env
+cp .env.example .env
 
 # 3 — Start PostgreSQL and Redis
 docker compose up -d
@@ -111,7 +111,7 @@ Verify the service is up: `curl http://localhost:8000/v1/health` → `{"status":
 
 ## Environment Variables
 
-Secrets go in `.env` at the project root (gitignored). Copy `config/.env.example` to get started.
+Secrets go in `.env` at the project root (gitignored). Copy `.env.example` to get started.
 
 | Variable              | Required | Description                                                             |
 | --------------------- | -------- | ----------------------------------------------------------------------- |
