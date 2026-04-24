@@ -40,12 +40,15 @@ def _source_label(source: PlaceSource | None) -> str:
 
 
 def _build_parse_summary(source: PlaceSource | None, has_text: bool) -> str:
+    # The text branch covers both free-form notes and bare lists of places
+    # (e.g. "Fuji Ramen, Pizza Place"). "What you shared" stays neutral
+    # across both since we don't classify the text at parse time.
     has_url = source is not None
     if has_url and has_text:
-        return f"Reading {_source_label(source)} and your notes"
+        return f"Reading {_source_label(source)} and what you shared"
     if has_url:
         return f"Reading {_source_label(source)}"
-    return "Reading your message"
+    return "Reading what you shared"
 
 
 def _is_real(outcome: PlaceSaveOutcome) -> bool:
