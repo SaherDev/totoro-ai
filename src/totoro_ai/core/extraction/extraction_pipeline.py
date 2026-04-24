@@ -1,15 +1,11 @@
-"""ExtractionPipeline — three-phase runner for the extraction cascade."""
+"""ExtractionPipeline — level-by-level runner for the extraction cascade."""
 
 from __future__ import annotations
 
 from totoro_ai.core.config import ExtractionConfig
 from totoro_ai.core.emit import EmitFn
-from totoro_ai.core.extraction.dedup import (
-    dedup_candidates,
-    dedup_validated_by_provider_id,
-)
-from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
-from totoro_ai.core.extraction.protocols import Enricher
+from totoro_ai.core.extraction.dedup import dedup_validated_by_provider_id
+from totoro_ai.core.extraction.enrichment_level import EnrichmentLevel
 from totoro_ai.core.extraction.types import (
     ExtractionContext,
     ValidatedCandidate,
@@ -32,8 +28,22 @@ def _friendly(class_name: str) -> str:
     return _ENRICHER_LABELS.get(class_name, class_name)
 
 
+def inline_summary(context: ExtractionContext, _fired: list[str]) -> str:
+    """Summary for the inline (text + metadata) level — count-driven."""
+    if context.candidates:
+        return f"Found {len(context.candidates)} possible place(s) in the text"
+    return "No places found in the text"
+
+
+def deep_summary(_context: ExtractionContext, fired: list[str]) -> str:
+    """Summary for deep enrichment (subtitle/audio/vision) — enricher-driven."""
+    if not fired:
+        return "No extra checks needed"
+    return "Taking a closer look: " + ", ".join(_friendly(n) for n in fired)
+
+
 class TooManyCandidatesError(Exception):
-    """Raised when Phase 1 enrichment produces more candidates than allowed.
+    """Raised when an enrichment level produces more candidates than allowed.
 
     The pipeline refuses to validate or persist anything in this case —
     the whole request is dropped. The service catches this exception and
@@ -49,9 +59,9 @@ class TooManyCandidatesError(Exception):
 def _enforce_candidate_limit(
     context: ExtractionContext, limit: int, emit: EmitFn
 ) -> None:
-    """Drop the entire request when too many candidates were found.
+    """Drop the request when too many candidates were produced.
 
-    Runs after Phase 1 enrichment + dedup, before validation. Emits a
+    Runs after every enrichment level, before validation. Emits a
     `save.cap_exceeded` reasoning step with counts and raises
     `TooManyCandidatesError` so the service can return a `failed`
     envelope without spending Google Places quota or DB writes.
@@ -68,25 +78,27 @@ def _enforce_candidate_limit(
 
 
 class ExtractionPipeline:
-    """Three-phase extraction runner (ADR-008 — sequential async, not LangGraph).
+    """Level-driven extraction runner (ADR-008 — sequential async, not LangGraph).
 
-    Phase 1: Inline enrichment (emoji regex, LLM NER, oEmbed, yt-dlp metadata)
-             via EnrichmentPipeline, which also deduplicates candidates.
-    Phase 2: Validate candidates against Google Places; return immediately on success.
-    Phase 3: No inline candidates → run background enrichers (subtitle, whisper,
-             vision) inline, re-validate, return results. Always returns synchronously.
+    A list of `EnrichmentLevel`s is run in order. After each level the
+    pipeline emits the level's summary, enforces the candidate cap, and
+    asks the validator for a verdict. The first level whose validated
+    set is non-empty short-circuits and returns. Levels that declare
+    `requires_url=True` are skipped silently when the input has no URL.
+
+    Default configuration wires two levels:
+    - "enrich"           — TikTok oEmbed + yt-dlp + LLM NER (text + metadata).
+    - "deep_enrichment"  — subtitle, whisper, vision (URL-only fallback).
     """
 
     def __init__(
         self,
-        enrichment: EnrichmentPipeline,
+        levels: list[EnrichmentLevel],
         validator: PlacesValidatorProtocol,
-        background_enrichers: list[Enricher],
         extraction_config: ExtractionConfig,
     ) -> None:
-        self._enrichment = enrichment
+        self._levels = levels
         self._validator = validator
-        self._background_enrichers = background_enrichers
         self._extraction_config = extraction_config
 
     async def run(
@@ -114,60 +126,22 @@ class ExtractionPipeline:
             supplementary_text=supplementary_text,
         )
 
-        # Phase 1: inline enrichment + dedup
-        await self._enrichment.run(context)
-        _emit(
-            "save.enrich",
-            f"Found {len(context.candidates)} possible place(s) in the text"
-            if context.candidates
-            else "No places found in the text",
-        )
-        _enforce_candidate_limit(context, effective_limit, _emit)
+        for level in self._levels:
+            executed, summary = await level.run(context)
+            if not executed:
+                continue
+            _emit(f"save.{level.name}", summary)
+            _enforce_candidate_limit(context, effective_limit, _emit)
 
-        # Phase 2: validate candidates, then dedup by provider_id
-        results = await self._validator.validate(context.candidates)
-        if results:
-            _emit(
-                "save.validate",
-                f"Confirmed {len(results)} place(s) via Google Places",
-            )
-            return dedup_validated_by_provider_id(
-                results, self._extraction_config.confidence
-            )
+            results = await self._validator.validate(context.candidates)
+            if results:
+                _emit(
+                    "save.validate",
+                    f"Confirmed {len(results)} place(s) via Google Places",
+                )
+                return dedup_validated_by_provider_id(
+                    results, self._extraction_config.confidence
+                )
 
-        # Phase 3 only fires for URL inputs — background enrichers (subtitle,
-        # whisper, vision) all require a video/page URL to process.
-        if url is None:
-            return []
-
-        # Phase 3: run background enrichers inline, re-validate
-        enrichers_fired: list[str] = []
-        for enricher in self._background_enrichers:
-            await enricher.enrich(context)
-            enrichers_fired.append(type(enricher).__name__)
-        dedup_candidates(context)
-        _emit(
-            "save.deep_enrichment",
-            "Taking a closer look: " + ", ".join(_friendly(n) for n in enrichers_fired)
-            if enrichers_fired
-            else "No extra checks needed",
-        )
-        # Phase 3 starts from the Phase 1-capped set, but subtitle, whisper,
-        # and vision enrichers each add their own candidates. Re-enforce
-        # the cap before the second validation pass for the same reason —
-        # protect Google quota + DB writes from a noisy deep pass.
-        _enforce_candidate_limit(context, effective_limit, _emit)
-
-        results = await self._validator.validate(context.candidates)
-        validated_count = len(results) if results else 0
-        _emit(
-            "save.validate",
-            f"Confirmed {validated_count} place(s) via Google Places"
-            if validated_count
-            else "Could not confirm any places",
-        )
-        if results:
-            return dedup_validated_by_provider_id(
-                results, self._extraction_config.confidence
-            )
+        _emit("save.validate", "Could not confirm any places")
         return []

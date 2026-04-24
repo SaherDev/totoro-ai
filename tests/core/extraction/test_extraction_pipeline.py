@@ -45,21 +45,25 @@ def _make_pipeline(
     enrichment_seeds_candidates=0,
     max_candidates=25,
 ) -> tuple:
-    """Returns (pipeline, enrichment_mock, validator_mock, bg_enrichers).
+    """Returns (pipeline, inline_level, validator_mock, bg_enrichers).
 
-    `enrichment_seeds_candidates`: when non-zero, the enrichment mock
-    appends that many `CandidatePlace`s to context.candidates so the
-    cap check has something real to count.
+    `enrichment_seeds_candidates`: when non-zero, the inline level's
+    enricher appends that many `CandidatePlace`s to context.candidates
+    so the cap check has something real to count.
     """
     from totoro_ai.core.config import (
         ConfidenceWeights,
         ExtractionConfig,
         ExtractionThresholds,
     )
-    from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
-    from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
+    from totoro_ai.core.extraction.enrichment_level import EnrichmentLevel
+    from totoro_ai.core.extraction.extraction_pipeline import (
+        ExtractionPipeline,
+        deep_summary,
+        inline_summary,
+    )
 
-    enrichment = MagicMock(spec=EnrichmentPipeline)
+    seeder = MagicMock()
 
     async def _seed(ctx) -> None:  # type: ignore[no-untyped-def]
         for i in range(enrichment_seeds_candidates):
@@ -75,10 +79,16 @@ def _make_pipeline(
                 )
             )
 
-    enrichment.run = AsyncMock(side_effect=_seed)
+    seeder.enrich = AsyncMock(side_effect=_seed)
+
+    inline_level = EnrichmentLevel(
+        name="enrich",
+        enrichers=[seeder],
+        summary_fn=inline_summary,
+    )
 
     # validator returns inline_validator_returns on first call,
-    # background_validator_returns on second (Phase 3 re-validation)
+    # background_validator_returns on second (deep level re-validation)
     if background_validator_returns is not None:
         validator = MagicMock()
         validator.validate = AsyncMock(
@@ -91,6 +101,13 @@ def _make_pipeline(
     if background_enrichers is None:
         background_enrichers = []
 
+    deep_level = EnrichmentLevel(
+        name="deep_enrichment",
+        enrichers=background_enrichers,
+        summary_fn=deep_summary,
+        requires_url=True,
+    )
+
     weights = ConfidenceWeights(
         base_scores={"CAPTION": 0.7},
         places_modifiers={"EXACT": 0.2},
@@ -102,12 +119,11 @@ def _make_pipeline(
     )
 
     pipeline = ExtractionPipeline(
-        enrichment=enrichment,
+        levels=[inline_level, deep_level],
         validator=validator,
-        background_enrichers=background_enrichers,
         extraction_config=extraction_config,
     )
-    return pipeline, enrichment, validator, background_enrichers
+    return pipeline, inline_level, validator, background_enrichers
 
 
 async def test_inline_candidates_found_returns_results() -> None:
@@ -203,15 +219,16 @@ async def test_same_provider_id_deduped_after_validation() -> None:
 
 async def test_plain_text_input_url_none_passes_through() -> None:
     results = [_make_validated()]
-    pipeline, enrichment, _, _ = _make_pipeline(inline_validator_returns=results)
+    pipeline, inline_level, _, _ = _make_pipeline(inline_validator_returns=results)
 
     output = await pipeline.run(
         url=None, user_id="u1", supplementary_text="Ramen House Paris"
     )
 
     assert output == results
-    enrichment.run.assert_awaited_once()
-    ctx = enrichment.run.call_args[0][0]
+    seeder = inline_level.enrichers[0]
+    seeder.enrich.assert_awaited_once()
+    ctx = seeder.enrich.call_args.args[0]
     assert ctx.url is None
     assert ctx.supplementary_text == "Ramen House Paris"
 
