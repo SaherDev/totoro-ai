@@ -38,19 +38,23 @@ def _make_validated(
     )
 
 
+_TEST_LIMIT = 25  # default cap used by tests that don't care about the limit
+
+
 def _make_pipeline(
     inline_validator_returns=None,  # type: ignore[no-untyped-def]
     background_validator_returns=None,
     background_enrichers=None,
     enrichment_seeds_candidates=0,
-    max_candidates=25,
     finalizer=None,
 ) -> tuple:
     """Returns (pipeline, inline_level, validator_mock, bg_enrichers).
 
     `enrichment_seeds_candidates`: when non-zero, the inline level's
     enricher appends that many `CandidatePlace`s to context.candidates
-    so the cap check has something real to count.
+    so the cap check has something real to count. Tests pass the cap
+    value via `pipeline.run(..., limit=N)` directly — the pipeline
+    requires `limit` and no longer reads it from config.
     `finalizer`: optional pipeline-level enricher that runs after every
     executed level (in production this is `LLMNEREnricher`).
     """
@@ -118,7 +122,6 @@ def _make_pipeline(
     extraction_config = ExtractionConfig(
         confidence_weights=weights,
         thresholds=ExtractionThresholds(),
-        max_candidates=max_candidates,
     )
 
     pipeline = ExtractionPipeline(
@@ -134,7 +137,9 @@ async def test_inline_candidates_found_returns_results() -> None:
     results = [_make_validated()]
     pipeline, _, _, _ = _make_pipeline(inline_validator_returns=results)
 
-    output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+    output = await pipeline.run(
+        url="https://tiktok.com/1", user_id="u1", limit=_TEST_LIMIT
+    )
 
     assert output == results
 
@@ -142,7 +147,9 @@ async def test_inline_candidates_found_returns_results() -> None:
 async def test_no_inline_candidates_no_bg_enrichers_returns_empty() -> None:
     pipeline, _, _, _ = _make_pipeline(inline_validator_returns=None)
 
-    output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+    output = await pipeline.run(
+        url="https://tiktok.com/1", user_id="u1", limit=_TEST_LIMIT
+    )
 
     assert output == []
 
@@ -158,7 +165,9 @@ async def test_no_inline_candidates_bg_enrichers_run_inline() -> None:
         background_enrichers=[bg_enricher],
     )
 
-    output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+    output = await pipeline.run(
+        url="https://tiktok.com/1", user_id="u1", limit=_TEST_LIMIT
+    )
 
     bg_enricher.enrich.assert_awaited_once()
     assert output == bg_results
@@ -174,7 +183,9 @@ async def test_bg_enrichers_find_nothing_returns_empty() -> None:
         background_enrichers=[bg_enricher],
     )
 
-    output = await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+    output = await pipeline.run(
+        url="https://tiktok.com/1", user_id="u1", limit=_TEST_LIMIT
+    )
 
     assert output == []
 
@@ -188,7 +199,9 @@ async def test_plain_text_no_url_skips_bg_enrichers() -> None:
         background_enrichers=[bg_enricher],
     )
 
-    output = await pipeline.run(url=None, user_id="u1", supplementary_text="Some place")
+    output = await pipeline.run(
+        url=None, user_id="u1", supplementary_text="Some place", limit=_TEST_LIMIT
+    )
 
     bg_enricher.enrich.assert_not_called()
     assert output == []
@@ -212,7 +225,10 @@ async def test_same_provider_id_deduped_after_validation() -> None:
     pipeline, _, _, _ = _make_pipeline(inline_validator_returns=[emoji, ner])
 
     output = await pipeline.run(
-        url=None, user_id="u1", supplementary_text="RAMEN KAISUGI Bangkok"
+        url=None,
+        user_id="u1",
+        supplementary_text="RAMEN KAISUGI Bangkok",
+        limit=_TEST_LIMIT,
     )
 
     assert isinstance(output, list)
@@ -226,7 +242,10 @@ async def test_plain_text_input_url_none_passes_through() -> None:
     pipeline, inline_level, _, _ = _make_pipeline(inline_validator_returns=results)
 
     output = await pipeline.run(
-        url=None, user_id="u1", supplementary_text="Ramen House Paris"
+        url=None,
+        user_id="u1",
+        supplementary_text="Ramen House Paris",
+        limit=_TEST_LIMIT,
     )
 
     assert output == results
@@ -241,7 +260,7 @@ async def test_validator_receives_only_candidates() -> None:
     """validator.validate(candidates) — no user_id positional arg."""
     pipeline, _, validator, _ = _make_pipeline(inline_validator_returns=None)
 
-    await pipeline.run(url="https://tiktok.com/1", user_id="u-xyz")
+    await pipeline.run(url="https://tiktok.com/1", user_id="u-xyz", limit=_TEST_LIMIT)
 
     assert validator.validate.await_count >= 1
     args = validator.validate.call_args.args
@@ -267,7 +286,7 @@ async def test_pipeline_finalizer_runs_after_each_executed_level() -> None:
         finalizer=finalizer,
     )
 
-    await pipeline.run(url="https://tiktok.com/x", user_id="u1")
+    await pipeline.run(url="https://tiktok.com/x", user_id="u1", limit=_TEST_LIMIT)
 
     assert finalizer.enrich.await_count == 2
 
@@ -285,25 +304,26 @@ async def test_pipeline_finalizer_skipped_when_level_skipped() -> None:
     )
 
     # url=None → deep level is skipped, only inline fires the finalizer.
-    await pipeline.run(url=None, user_id="u1", supplementary_text="something")
+    await pipeline.run(
+        url=None, user_id="u1", supplementary_text="something", limit=_TEST_LIMIT
+    )
 
     assert finalizer.enrich.await_count == 1
 
 
 async def test_too_many_candidates_drops_request_before_validation() -> None:
-    """When Phase 1 produces more candidates than `max_candidates`, the
-    pipeline raises `TooManyCandidatesError` and never calls the validator."""
+    """When Phase 1 produces more candidates than `limit`, the pipeline
+    raises `TooManyCandidatesError` and never calls the validator."""
     from totoro_ai.core.extraction.extraction_pipeline import (
         TooManyCandidatesError,
     )
 
-    pipeline, _, validator, _ = _make_pipeline(
-        enrichment_seeds_candidates=30,
-        max_candidates=25,
-    )
+    pipeline, _, validator, _ = _make_pipeline(enrichment_seeds_candidates=30)
 
     with pytest.raises(TooManyCandidatesError) as exc_info:
-        await pipeline.run(url=None, user_id="u1", supplementary_text="...")
+        await pipeline.run(
+            url=None, user_id="u1", supplementary_text="...", limit=25
+        )
 
     assert exc_info.value.found == 30
     assert exc_info.value.limit == 25
@@ -311,14 +331,15 @@ async def test_too_many_candidates_drops_request_before_validation() -> None:
 
 
 async def test_candidates_at_limit_proceed_normally() -> None:
-    """Exactly `max_candidates` candidates is allowed — no exception."""
+    """Exactly `limit` candidates is allowed — no exception."""
     pipeline, _, validator, _ = _make_pipeline(
         inline_validator_returns=None,
         enrichment_seeds_candidates=25,
-        max_candidates=25,
     )
 
-    await pipeline.run(url=None, user_id="u1", supplementary_text="...")
+    await pipeline.run(
+        url=None, user_id="u1", supplementary_text="...", limit=25
+    )
 
     validator.validate.assert_awaited()
 
@@ -354,11 +375,10 @@ async def test_phase3_too_many_candidates_drops_request() -> None:
     pipeline, _, validator, _ = _make_pipeline(
         inline_validator_returns=None,
         background_enrichers=[bg_enricher],
-        max_candidates=25,
     )
 
     with pytest.raises(TooManyCandidatesError) as exc_info:
-        await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+        await pipeline.run(url="https://tiktok.com/1", user_id="u1", limit=25)
 
     assert exc_info.value.found == 30
     # Validator was called once (Phase 2 with 0 candidates) but never
@@ -366,19 +386,13 @@ async def test_phase3_too_many_candidates_drops_request() -> None:
     assert validator.validate.await_count == 1
 
 
-async def test_explicit_limit_overrides_config_default() -> None:
-    """Caller-supplied `limit` overrides `config.max_candidates` for
-    this single request — both tighter and looser overrides apply."""
+async def test_tight_limit_drops_request() -> None:
+    """A tight per-call limit trips even with relatively few candidates."""
     from totoro_ai.core.extraction.extraction_pipeline import (
         TooManyCandidatesError,
     )
 
-    # Config allows 25, but caller passes limit=10. 12 candidates from
-    # Phase 1 must trip the override, not the config.
-    pipeline, _, validator, _ = _make_pipeline(
-        enrichment_seeds_candidates=12,
-        max_candidates=25,
-    )
+    pipeline, _, validator, _ = _make_pipeline(enrichment_seeds_candidates=12)
 
     with pytest.raises(TooManyCandidatesError) as exc_info:
         await pipeline.run(url=None, user_id="u1", limit=10)
@@ -388,15 +402,14 @@ async def test_explicit_limit_overrides_config_default() -> None:
     validator.validate.assert_not_called()
 
 
-async def test_explicit_limit_higher_than_config_allows_more() -> None:
-    """A caller can also raise the cap above the config default."""
+async def test_loose_limit_allows_many_candidates() -> None:
+    """A high per-call limit lets the pipeline through with a big set."""
     pipeline, _, validator, _ = _make_pipeline(
         inline_validator_returns=None,
         enrichment_seeds_candidates=40,
-        max_candidates=25,
     )
 
-    # No exception — override raised the ceiling to 50.
+    # No exception — caller raised the ceiling to 50.
     await pipeline.run(url=None, user_id="u1", limit=50)
     validator.validate.assert_awaited()
 
@@ -407,10 +420,7 @@ async def test_too_many_candidates_emits_cap_exceeded_step() -> None:
         TooManyCandidatesError,
     )
 
-    pipeline, _, _, _ = _make_pipeline(
-        enrichment_seeds_candidates=30,
-        max_candidates=25,
-    )
+    pipeline, _, _, _ = _make_pipeline(enrichment_seeds_candidates=30)
 
     emitted: list[tuple[str, str]] = []
 
@@ -419,7 +429,7 @@ async def test_too_many_candidates_emits_cap_exceeded_step() -> None:
 
     with pytest.raises(TooManyCandidatesError):
         await pipeline.run(
-            url=None, user_id="u1", supplementary_text="...", emit=spy
+            url=None, user_id="u1", supplementary_text="...", emit=spy, limit=25
         )
 
     steps = [s for s, _ in emitted]

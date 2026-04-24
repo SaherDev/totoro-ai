@@ -115,20 +115,17 @@ class ExtractionPipeline:
         self,
         url: str | None,
         user_id: str,
+        limit: int,
         supplementary_text: str = "",
         emit: EmitFn | None = None,
-        limit: int | None = None,
     ) -> list[ValidatedCandidate]:
         """Run the extraction cascade.
 
-        `limit`, when supplied, overrides `extraction.max_candidates` for
-        this single request — the agent (or any other caller) can tighten
-        the cap below the config default. `None` falls back to the config.
+        `limit` is the per-request candidate cap. The pipeline takes a
+        concrete value; default-fallback logic lives in
+        `ExtractionService.run` (the only caller).
         """
         _emit: EmitFn = emit or (lambda step, summary, duration_ms=None: None)
-        effective_limit = (
-            limit if limit is not None else self._extraction_config.max_candidates
-        )
 
         context = ExtractionContext(
             url=url,
@@ -144,13 +141,13 @@ class ExtractionPipeline:
                 await self._finalizer.enrich(context)
                 dedup_candidates(context)
             _emit(f"save.{level.name}", summary)
-            _enforce_candidate_limit(context, effective_limit, _emit)
+            _enforce_candidate_limit(context, limit, _emit)
 
             results = await self._validator.validate(context.candidates)
             if results:
                 _emit(
                     "save.validate",
-                    f"Confirmed {len(results)} place(s) via Google Places",
+                    f"Confirmed {len(results)} place(s) via Places providor ",
                 )
                 return dedup_validated_by_provider_id(
                     results, self._extraction_config.confidence

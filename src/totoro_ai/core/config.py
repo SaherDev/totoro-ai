@@ -226,11 +226,6 @@ class ExtractionConfig(BaseModel):
     confidence: ConfidenceConfig = ConfidenceConfig()
     circuit_breaker_threshold: int = 5
     circuit_breaker_cooldown: float = 900.0
-    # Hard cap on the candidate set handed to Google Places validation
-    # (and therefore the most places a single extract request can save).
-    # Protects quota and DB writes when a noisy input — e.g. a 200-place
-    # text dump — produces too many candidates.
-    max_candidates: int = 25
     vision: ExtractionVisionConfig = ExtractionVisionConfig()
     whisper: ExtractionWhisperConfig = ExtractionWhisperConfig()
     subtitle: ExtractionSubtitleConfig = ExtractionSubtitleConfig()

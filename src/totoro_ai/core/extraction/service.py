@@ -24,6 +24,12 @@ from totoro_ai.core.places import PlaceSource
 
 logger = logging.getLogger(__name__)
 
+# Default per-request candidate cap. Hard cap on what the pipeline will
+# hand to Google Places validation (and therefore the most places a
+# single extract request can save). Callers can tighten or loosen this
+# by passing `limit=N` to `ExtractionService.run`.
+DEFAULT_MAX_CANDIDATES = 25
+
 
 _SOURCE_LABELS: dict[PlaceSource, str] = {
     PlaceSource.tiktok: "the TikTok video",
@@ -118,9 +124,10 @@ class ExtractionService:
         pipeline emits `save.enrich` / `save.deep_enrichment` /
         `save.validate` at its own phase boundaries.
 
-        `limit`, when supplied, overrides `extraction.max_candidates`
-        for this single request — callers (e.g. the agent's save tool)
-        can tighten the cap without touching config.
+        `limit`, when supplied, overrides `DEFAULT_MAX_CANDIDATES` for
+        this single request — callers (e.g. the agent's save tool)
+        can tighten or loosen the cap explicitly. `None` falls back to
+        the default.
         """
         _emit: EmitFn = emit or (lambda step, summary, duration_ms=None: None)
 
@@ -135,12 +142,15 @@ class ExtractionService:
 
         cap_exceeded = False
         try:
+            effective_limit = (
+                limit if limit is not None else DEFAULT_MAX_CANDIDATES
+            )
             result = await self._pipeline.run(
                 url=parsed.url,
                 user_id=user_id,
                 supplementary_text=parsed.supplementary_text,
                 emit=emit,
-                limit=limit,
+                limit=effective_limit,
             )
             if not result:
                 response = ExtractPlaceResponse(

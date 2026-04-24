@@ -87,7 +87,7 @@ POST /v1/chat
     └── Background task: ExtractionPipeline.run()
         │  context = ExtractionContext(url, user_id, supplementary_text)
         │  context.source auto-derived from url via source_from_url()
-        │  effective_limit = limit ?? config.max_candidates  (default 25)
+        │  effective_limit = limit ?? DEFAULT_MAX_CANDIDATES  (default 25)
         │
         ├── For each EnrichmentLevel in [inline, deep]:
         │   ├── If level.requires_url and url is None → skip
@@ -351,7 +351,7 @@ Service-specific parameters are config-driven via `config/app.yaml`:
 Adjust these values to control result relevance and performance.
 
 **Extraction Service** (cascade tuning):
-- `max_candidates`: hard cap on candidates handed to Google validation per request (default 25). When an enrichment level produces more, the request is dropped entirely — protects quota and DB from noisy inputs. Per-request override available via `ExtractionService.run(..., limit=N)`.
+- Per-request candidate cap lives in code, not config — `DEFAULT_MAX_CANDIDATES = 25` in `core/extraction/service.py`. Callers override per-request via `ExtractionService.run(..., limit=N)`. When an enrichment level produces more candidates than the effective limit, the request is dropped entirely — protects quota and DB from noisy inputs.
 - `circuit_breaker_threshold`: failures before circuit opens (default 5)
 - `circuit_breaker_cooldown`: seconds before half-open probe (default 900)
 - `confidence.base_scores`: per-level base confidence — emoji_regex: 0.95, llm_ner: 0.80, subtitle_check: 0.75, whisper_audio: 0.65, vision_frames: 0.55

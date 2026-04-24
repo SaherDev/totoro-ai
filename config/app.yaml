@@ -127,10 +127,6 @@ extraction:
     confident_threshold: 0.70
   circuit_breaker_threshold: 5
   circuit_breaker_cooldown: 900
-  # Hard cap on candidates handed to Google Places validation per request.
-  # Truncates the candidate set before validation runs, so excess places
-  # never hit Google, never get persisted, never appear in the response.
-  max_candidates: 25
   vision:
     max_frames: 5
     scene_threshold: 0.3
