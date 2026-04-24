@@ -95,8 +95,18 @@ class ExtractionPipeline:
         user_id: str,
         supplementary_text: str = "",
         emit: EmitFn | None = None,
+        limit: int | None = None,
     ) -> list[ValidatedCandidate]:
-        _emit: EmitFn = emit or (lambda _s, _m, _d=None: None)
+        """Run the extraction cascade.
+
+        `limit`, when supplied, overrides `extraction.max_candidates` for
+        this single request — the agent (or any other caller) can tighten
+        the cap below the config default. `None` falls back to the config.
+        """
+        _emit: EmitFn = emit or (lambda step, summary, duration_ms=None: None)
+        effective_limit = (
+            limit if limit is not None else self._extraction_config.max_candidates
+        )
 
         context = ExtractionContext(
             url=url,
@@ -112,9 +122,7 @@ class ExtractionPipeline:
             if context.candidates
             else "No places found in the text",
         )
-        _enforce_candidate_limit(
-            context, self._extraction_config.max_candidates, _emit
-        )
+        _enforce_candidate_limit(context, effective_limit, _emit)
 
         # Phase 2: validate candidates, then dedup by provider_id
         results = await self._validator.validate(context.candidates)
@@ -148,9 +156,7 @@ class ExtractionPipeline:
         # and vision enrichers each add their own candidates. Re-enforce
         # the cap before the second validation pass for the same reason —
         # protect Google quota + DB writes from a noisy deep pass.
-        _enforce_candidate_limit(
-            context, self._extraction_config.max_candidates, _emit
-        )
+        _enforce_candidate_limit(context, effective_limit, _emit)
 
         results = await self._validator.validate(context.candidates)
         validated_count = len(results) if results else 0

@@ -304,6 +304,41 @@ async def test_phase3_too_many_candidates_drops_request() -> None:
     assert validator.validate.await_count == 1
 
 
+async def test_explicit_limit_overrides_config_default() -> None:
+    """Caller-supplied `limit` overrides `config.max_candidates` for
+    this single request — both tighter and looser overrides apply."""
+    from totoro_ai.core.extraction.extraction_pipeline import (
+        TooManyCandidatesError,
+    )
+
+    # Config allows 25, but caller passes limit=10. 12 candidates from
+    # Phase 1 must trip the override, not the config.
+    pipeline, _, validator, _ = _make_pipeline(
+        enrichment_seeds_candidates=12,
+        max_candidates=25,
+    )
+
+    with pytest.raises(TooManyCandidatesError) as exc_info:
+        await pipeline.run(url=None, user_id="u1", limit=10)
+
+    assert exc_info.value.found == 12
+    assert exc_info.value.limit == 10
+    validator.validate.assert_not_called()
+
+
+async def test_explicit_limit_higher_than_config_allows_more() -> None:
+    """A caller can also raise the cap above the config default."""
+    pipeline, _, validator, _ = _make_pipeline(
+        inline_validator_returns=None,
+        enrichment_seeds_candidates=40,
+        max_candidates=25,
+    )
+
+    # No exception — override raised the ceiling to 50.
+    await pipeline.run(url=None, user_id="u1", limit=50)
+    validator.validate.assert_awaited()
+
+
 async def test_too_many_candidates_emits_cap_exceeded_step() -> None:
     """The pipeline emits a `save.cap_exceeded` reasoning step before raising."""
     from totoro_ai.core.extraction.extraction_pipeline import (

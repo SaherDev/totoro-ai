@@ -100,6 +100,7 @@ class ExtractionService:
         user_id: str,
         request_id: str | None = None,
         emit: EmitFn | None = None,
+        limit: int | None = None,
     ) -> ExtractPlaceResponse:
         """Run the extraction pipeline inline and return a terminal envelope.
 
@@ -116,6 +117,10 @@ class ExtractionService:
         after input parsing and `save.persist` after persistence; the
         pipeline emits `save.enrich` / `save.deep_enrichment` /
         `save.validate` at its own phase boundaries.
+
+        `limit`, when supplied, overrides `extraction.max_candidates`
+        for this single request — callers (e.g. the agent's save tool)
+        can tighten the cap without touching config.
         """
         _emit: EmitFn = emit or (lambda step, summary, duration_ms=None: None)
 
@@ -135,6 +140,7 @@ class ExtractionService:
                 user_id=user_id,
                 supplementary_text=parsed.supplementary_text,
                 emit=emit,
+                limit=limit,
             )
             if not result:
                 response = ExtractPlaceResponse(
