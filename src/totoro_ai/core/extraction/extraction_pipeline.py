@@ -144,9 +144,13 @@ class ExtractionPipeline:
             if enrichers_fired
             else "No extra checks needed",
         )
-        # Phase 3 starts from the already-capped Phase 1 set; background
-        # enrichers add at most a handful of candidates per source, so a
-        # second cap check here is unnecessary.
+        # Phase 3 starts from the Phase 1-capped set, but subtitle, whisper,
+        # and vision enrichers each add their own candidates. Re-enforce
+        # the cap before the second validation pass for the same reason —
+        # protect Google quota + DB writes from a noisy deep pass.
+        _enforce_candidate_limit(
+            context, self._extraction_config.max_candidates, _emit
+        )
 
         results = await self._validator.validate(context.candidates)
         validated_count = len(results) if results else 0

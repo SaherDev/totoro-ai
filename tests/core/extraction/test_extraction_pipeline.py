@@ -261,6 +261,49 @@ async def test_candidates_at_limit_proceed_normally() -> None:
     validator.validate.assert_awaited()
 
 
+async def test_phase3_too_many_candidates_drops_request() -> None:
+    """Phase 3 background enrichers can push the candidate count back
+    over the cap. The pipeline must enforce the same hard drop before
+    the Phase 3 re-validation."""
+    from totoro_ai.core.extraction.extraction_pipeline import (
+        TooManyCandidatesError,
+    )
+
+    # Phase 1 returns nothing (validator returns None) so Phase 3 fires.
+    # The bg enricher then balloons the candidate set past the cap.
+    bg_enricher = MagicMock()
+
+    async def _balloon(ctx) -> None:  # type: ignore[no-untyped-def]
+        for i in range(30):
+            ctx.candidates.append(
+                CandidatePlace(
+                    place=PlaceCreate(
+                        user_id="u1",
+                        place_name=f"BG Place {i}",
+                        place_type=PlaceType.food_and_drink,
+                        attributes=PlaceAttributes(),
+                    ),
+                    source=ExtractionLevel.WHISPER_AUDIO,
+                )
+            )
+
+    bg_enricher.enrich = AsyncMock(side_effect=_balloon)
+
+    pipeline, _, validator, _ = _make_pipeline(
+        inline_validator_returns=None,
+        background_enrichers=[bg_enricher],
+        max_candidates=25,
+    )
+
+    with pytest.raises(TooManyCandidatesError) as exc_info:
+        await pipeline.run(url="https://tiktok.com/1", user_id="u1")
+
+    assert exc_info.value.found == 30
+    # Validator was called once (Phase 2 with 0 candidates) but never
+    # again — Phase 3 raised before re-validation.
+    assert validator.validate.await_count == 1
+
+
 async def test_too_many_candidates_emits_cap_exceeded_step() -> None:
     """The pipeline emits a `save.cap_exceeded` reasoning step before raising."""
     from totoro_ai.core.extraction.extraction_pipeline import (
