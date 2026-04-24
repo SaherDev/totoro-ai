@@ -15,6 +15,7 @@ def _make_service(
     taste_service: AsyncMock | None = None,
     memory_service: AsyncMock | None = None,
     agent_graph: AsyncMock | None = None,
+    places_service: AsyncMock | None = None,
 ) -> ChatService:
     """Build a ChatService with all deps mocked."""
     from totoro_ai.core.config import get_config
@@ -28,6 +29,9 @@ def _make_service(
     if memory_service is None:
         memory_service = AsyncMock()
         memory_service.load_memories = AsyncMock(return_value=[])
+    if places_service is None:
+        places_service = AsyncMock()
+        places_service.resolve_location_label = AsyncMock(return_value=None)
     if agent_graph is None:
         graph = AsyncMock()
         graph.ainvoke = AsyncMock(
@@ -45,6 +49,7 @@ def _make_service(
         event_dispatcher=MagicMock(),
         memory_service=memory_service,
         taste_service=taste_service,
+        places_service=places_service,
         config=cfg_copy,
         agent_graph=agent_graph,
     )
@@ -124,3 +129,80 @@ async def test_run_returns_error_on_graph_exception() -> None:
     result = await service.run(ChatRequest(user_id="u", message="hi"))
 
     assert result.type == "error"
+
+
+# ---------------------------------------------------------------------------
+# location_label resolution (PR: fix consult out-of-region suggestions)
+# ---------------------------------------------------------------------------
+
+
+async def test_run_resolves_location_label_when_location_present() -> None:
+    """ChatService passes lat/lng to PlacesService.resolve_location_label and
+    threads the result into the agent payload as `location_label`."""
+    from totoro_ai.api.schemas.consult import Location
+
+    graph = AsyncMock()
+    graph.ainvoke = AsyncMock(
+        return_value={"messages": [AIMessage(content="ok")], "reasoning_steps": []}
+    )
+    places_mock = AsyncMock()
+    places_mock.resolve_location_label = AsyncMock(return_value="Magdeburg, Germany")
+
+    service = _make_service(agent_graph=graph, places_service=places_mock)
+
+    await service.run(
+        ChatRequest(
+            user_id="u",
+            message="ramen for date night",
+            location=Location(lat=52.12, lng=11.62),
+        )
+    )
+
+    places_mock.resolve_location_label.assert_awaited_once_with(lat=52.12, lng=11.62)
+    payload = graph.ainvoke.call_args.args[0]
+    assert payload["location_label"] == "Magdeburg, Germany"
+    assert payload["location"] == {"lat": 52.12, "lng": 11.62}
+
+
+async def test_run_skips_label_resolution_when_no_location() -> None:
+    """No location in request → no geocode call → location_label is None."""
+    graph = AsyncMock()
+    graph.ainvoke = AsyncMock(
+        return_value={"messages": [AIMessage(content="ok")], "reasoning_steps": []}
+    )
+    places_mock = AsyncMock()
+    places_mock.resolve_location_label = AsyncMock()
+
+    service = _make_service(agent_graph=graph, places_service=places_mock)
+
+    await service.run(ChatRequest(user_id="u", message="hi"))
+
+    places_mock.resolve_location_label.assert_not_awaited()
+    payload = graph.ainvoke.call_args.args[0]
+    assert payload["location_label"] is None
+
+
+async def test_run_uses_none_label_when_geocode_fails() -> None:
+    """resolve_location_label returns None on failure → payload carries None."""
+    from totoro_ai.api.schemas.consult import Location
+
+    graph = AsyncMock()
+    graph.ainvoke = AsyncMock(
+        return_value={"messages": [AIMessage(content="ok")], "reasoning_steps": []}
+    )
+    places_mock = AsyncMock()
+    places_mock.resolve_location_label = AsyncMock(return_value=None)
+
+    service = _make_service(agent_graph=graph, places_service=places_mock)
+
+    await service.run(
+        ChatRequest(
+            user_id="u",
+            message="hi",
+            location=Location(lat=0.0, lng=0.0),
+        )
+    )
+
+    payload = graph.ainvoke.call_args.args[0]
+    assert payload["location_label"] is None
+    assert payload["location"] == {"lat": 0.0, "lng": 0.0}

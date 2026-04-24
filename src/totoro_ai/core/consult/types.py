@@ -21,72 +21,12 @@ from totoro_ai.core.places.models import (
     PlaceObject,
     PlaceType,
 )
-from totoro_ai.core.places.places_client import PlacesMatchResult
+from totoro_ai.core.places.places_client import (
+    PlacesMatchResult,
+    google_types_to_place_type,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# Google Places "types" array → PlaceType.
-# Longer per-category lists are preferred over one-off aliases so that any
-# near-equivalent string still routes to the right bucket. Checked in the
-# order below so a venue tagged both `restaurant` and `store` lands as
-# food_and_drink (the more specific food signal wins).
-_GOOGLE_TYPE_TO_PLACE_TYPE: dict[str, PlaceType] = {
-    # --- food_and_drink ---
-    "restaurant": PlaceType.food_and_drink,
-    "cafe": PlaceType.food_and_drink,
-    "bar": PlaceType.food_and_drink,
-    "bakery": PlaceType.food_and_drink,
-    "meal_takeaway": PlaceType.food_and_drink,
-    "meal_delivery": PlaceType.food_and_drink,
-    "food": PlaceType.food_and_drink,
-    "night_club": PlaceType.food_and_drink,
-    # --- things_to_do ---
-    "museum": PlaceType.things_to_do,
-    "park": PlaceType.things_to_do,
-    "tourist_attraction": PlaceType.things_to_do,
-    "aquarium": PlaceType.things_to_do,
-    "zoo": PlaceType.things_to_do,
-    "art_gallery": PlaceType.things_to_do,
-    "amusement_park": PlaceType.things_to_do,
-    "stadium": PlaceType.things_to_do,
-    "movie_theater": PlaceType.things_to_do,
-    # --- shopping ---
-    "store": PlaceType.shopping,
-    "shopping_mall": PlaceType.shopping,
-    "book_store": PlaceType.shopping,
-    "clothing_store": PlaceType.shopping,
-    "shoe_store": PlaceType.shopping,
-    "jewelry_store": PlaceType.shopping,
-    "department_store": PlaceType.shopping,
-    "supermarket": PlaceType.shopping,
-    # --- accommodation ---
-    "lodging": PlaceType.accommodation,
-    # --- services ---
-    "gym": PlaceType.services,
-    "spa": PlaceType.services,
-    "beauty_salon": PlaceType.services,
-    "hair_care": PlaceType.services,
-    "pharmacy": PlaceType.services,
-    "laundry": PlaceType.services,
-    "post_office": PlaceType.services,
-    "bank": PlaceType.services,
-}
-
-
-def _google_types_to_place_type(types: list[str]) -> PlaceType:
-    """Map a Google `types[]` array to a canonical `PlaceType`.
-
-    Scans the list in order — the first known type wins. Defaults to
-    `PlaceType.services` and emits a `google_place_type_unknown` log line
-    when no known type is present so we can spot coverage gaps.
-    """
-    for google_type in types:
-        mapped = _GOOGLE_TYPE_TO_PLACE_TYPE.get(google_type)
-        if mapped is not None:
-            return mapped
-    logger.info("google_place_type_unknown", extra={"types": list(types)})
-    return PlaceType.services
 
 
 class NoMatchesError(Exception):
@@ -116,7 +56,7 @@ def map_google_place_to_place_object(google_result: dict[str, Any]) -> PlaceObje
         f"google:{google_result['place_id']}" if google_result.get("place_id") else None
     )
 
-    place_type = _google_types_to_place_type(google_result.get("types") or [])
+    place_type = google_types_to_place_type(google_result.get("types") or [])
 
     return PlaceObject(
         place_id=str(uuid4()),

@@ -30,6 +30,10 @@ class AgentState(TypedDict):
       memory_summary      — user-stated facts (per turn).
       user_id             — immutable per turn; used as the checkpointer thread_id.
       location            — {lat, lng} or None.
+      location_label      — "Magdeburg, Germany" or None; resolved server-side
+                            via reverse-geocode cache so the agent can reason
+                            about the user's city (coords alone are too low-
+                            info for the LLM to reverse-geocode in its head).
       last_recall_results — set by recall_tool (M5), read by consult_tool (M5);
                             reset to None on every new user message.
       reasoning_steps     — agent + tool trace; reset to [] on every new user
@@ -46,6 +50,7 @@ class AgentState(TypedDict):
     memory_summary: str
     user_id: str
     location: dict[str, float] | None
+    location_label: str | None
     last_recall_results: list[PlaceObject] | None
     reasoning_steps: list[ReasoningStep]
     steps_taken: int

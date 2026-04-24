@@ -285,3 +285,57 @@ async def test_set_enrichment_batch_raises_when_hours_has_days_without_timezone(
     )
     with pytest.raises(ValueError, match="timezone"):
         await cache.set_enrichment_batch({"google:bad": broken})
+
+
+# ---------------------------------------------------------------------------
+# Reverse-geocode label cache
+# ---------------------------------------------------------------------------
+
+
+async def test_set_and_get_location_label_round_trip() -> None:
+    redis_mock, _ = _make_mock_redis()
+    cache = PlacesCache(redis_mock)
+
+    captured: dict[str, Any] = {}
+
+    async def capture_set(key: str, value: str, ex: int) -> None:
+        captured["key"] = key
+        captured["value"] = value
+        captured["ex"] = ex
+
+    redis_mock.set = AsyncMock(side_effect=capture_set)
+    await cache.set_location_label("52.1,11.6", "Magdeburg, Germany")
+
+    assert captured["key"] == "places:geocode:52.1,11.6"
+    assert captured["value"] == "Magdeburg, Germany"
+    assert captured["ex"] == get_config().places.cache_ttl_days * 86400
+
+    redis_mock.get = AsyncMock(return_value=b"Magdeburg, Germany")
+    result = await cache.get_location_label("52.1,11.6")
+    assert result == "Magdeburg, Germany"
+
+
+async def test_get_location_label_returns_none_on_miss() -> None:
+    redis_mock, _ = _make_mock_redis()
+    cache = PlacesCache(redis_mock)
+    redis_mock.get = AsyncMock(return_value=None)
+
+    assert await cache.get_location_label("0.0,0.0") is None
+
+
+async def test_get_location_label_returns_none_on_redis_error() -> None:
+    """Redis blips degrade gracefully — caller sees None, not an exception."""
+    redis_mock, _ = _make_mock_redis()
+    cache = PlacesCache(redis_mock)
+    redis_mock.get = AsyncMock(side_effect=RedisError("blip"))
+
+    assert await cache.get_location_label("52.1,11.6") is None
+
+
+async def test_set_location_label_swallows_redis_error() -> None:
+    """Cache writes are best-effort — a blip must not break the request."""
+    redis_mock, _ = _make_mock_redis()
+    cache = PlacesCache(redis_mock)
+    redis_mock.set = AsyncMock(side_effect=RedisError("blip"))
+
+    await cache.set_location_label("52.1,11.6", "Magdeburg, Germany")  # no raise

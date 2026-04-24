@@ -701,3 +701,81 @@ async def test_enrich_batch_geo_only_dedupes_duplicate_provider_ids() -> None:
     # Both result places got the same geo data.
     assert result[0].lat == 5.0
     assert result[1].lat == 5.0
+
+
+# ---------------------------------------------------------------------------
+# resolve_location_label — cache-or-fetch helper
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_location_label_cache_hit_skips_geocode() -> None:
+    """Cache hit returns immediately; the Google Geocoding API is never called."""
+    repo = MagicMock()
+    cache = MagicMock()
+    cache.get_location_label = AsyncMock(return_value="Magdeburg, Germany")
+    cache.set_location_label = AsyncMock()
+    client = MagicMock()
+    client.reverse_geocode = AsyncMock()
+
+    service = PlacesService(repo=repo, cache=cache, client=client)
+    label = await service.resolve_location_label(52.12345, 11.62789)
+
+    assert label == "Magdeburg, Germany"
+    cache.get_location_label.assert_awaited_once_with("52.1,11.6")
+    client.reverse_geocode.assert_not_awaited()
+    cache.set_location_label.assert_not_awaited()
+
+
+async def test_resolve_location_label_cache_miss_calls_geocode_and_caches() -> None:
+    """Cache miss → geocode → cache-set → return label."""
+    repo = MagicMock()
+    cache = MagicMock()
+    cache.get_location_label = AsyncMock(return_value=None)
+    cache.set_location_label = AsyncMock()
+    client = MagicMock()
+    client.reverse_geocode = AsyncMock(return_value="Magdeburg, Germany")
+
+    service = PlacesService(repo=repo, cache=cache, client=client)
+    label = await service.resolve_location_label(52.12345, 11.62789)
+
+    assert label == "Magdeburg, Germany"
+    client.reverse_geocode.assert_awaited_once_with(52.12345, 11.62789)
+    cache.set_location_label.assert_awaited_once_with(
+        "52.1,11.6", "Magdeburg, Germany"
+    )
+
+
+async def test_resolve_location_label_returns_none_when_geocode_fails() -> None:
+    repo = MagicMock()
+    cache = MagicMock()
+    cache.get_location_label = AsyncMock(return_value=None)
+    cache.set_location_label = AsyncMock()
+    client = MagicMock()
+    client.reverse_geocode = AsyncMock(return_value=None)
+
+    service = PlacesService(repo=repo, cache=cache, client=client)
+    label = await service.resolve_location_label(0.0, 0.0)
+
+    assert label is None
+    cache.set_location_label.assert_not_awaited()
+
+
+async def test_resolve_location_label_none_when_no_cache_or_client() -> None:
+    """Service built without cache/client degrades gracefully."""
+    service = PlacesService(repo=MagicMock(), cache=None, client=None)
+    assert await service.resolve_location_label(52.12, 11.62) is None
+
+
+async def test_resolve_location_label_uses_one_decimal_cell_key() -> None:
+    """Two users ~5km apart must share the same cache cell (~11km granularity)."""
+    repo = MagicMock()
+    cache = MagicMock()
+    cache.get_location_label = AsyncMock(return_value="Magdeburg, Germany")
+    client = MagicMock()
+
+    service = PlacesService(repo=repo, cache=cache, client=client)
+    await service.resolve_location_label(52.12, 11.62)
+    await service.resolve_location_label(52.14, 11.60)
+
+    keys = [call.args[0] for call in cache.get_location_label.await_args_list]
+    assert keys == ["52.1,11.6", "52.1,11.6"]  # same cell

@@ -515,6 +515,38 @@ Note: `selection_round` is always a string in `chip_selection` tier — the serv
 
 ---
 
+## DELETE /v1/user/{user_id}/data
+
+Hard-deletes every trace of a user's **AI-owned data**. Does NOT delete the user account — that lives in NestJS/Clerk. Called by the product repo as part of its account-deletion flow: NestJS deletes its own `users` / `user_settings` rows and calls this endpoint to wipe the AI side.
+
+**Request:**
+
+```
+DELETE /v1/user/user_abc/data
+```
+
+**Response (204):** Empty body.
+
+**What gets deleted (in one DB transaction, then the checkpointer, then the in-memory debouncer):**
+
+1. `interactions` rows where `user_id = ?`
+2. `recommendations` rows where `user_id = ?`
+3. `user_memories` rows where `user_id = ?`
+4. `taste_model` row for `user_id = ?` (one per user)
+5. `places` rows where `user_id = ?` — `embeddings` cascade automatically via FK `ON DELETE CASCADE`
+6. LangGraph checkpoint thread for `thread_id = user_id` (= the agent conversation history across all turns)
+7. Any pending taste-regen task for the user in the in-memory debouncer
+
+**Notes:**
+
+- **Idempotent.** Calling on an absent user is still 204. The SQL deletes return 0 rows; `adelete_thread` is a no-op when the thread isn't there.
+- **Synchronous.** The endpoint blocks until the sweep completes. At portfolio volume the sweep is well under 1s. If a single user ever accumulates thousands of places this can move to a background task with a 202 response — see plan.
+- **Hard-delete only.** No soft-delete column, no grace window, no purge cron. This is a deliberate v1 simplification — soft-delete on `places` can be added later if a real GDPR / "oops recovery" requirement appears.
+- **No Redis cleanup.** All Redis keys in this repo are `place_id` or `request_id` scoped (see ADR-054); none are per-user.
+- **Caller trust.** No new auth — this matches every other route's "NestJS verified upstream" model.
+
+---
+
 ## POST /v1/signal
 
 Behavioral signal endpoint (ADR-060, ADR-061). Replaces `POST /v1/feedback`. Discriminated union on `signal_type`.

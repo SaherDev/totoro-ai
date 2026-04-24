@@ -7,6 +7,7 @@ Feature 028 M11 (ADR-065): the legacy intent-router dispatch path
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from totoro_ai.core.config import AppConfig
     from totoro_ai.core.events.dispatcher import EventDispatcherProtocol
     from totoro_ai.core.memory.service import UserMemoryService
+    from totoro_ai.core.places import PlacesService
     from totoro_ai.core.taste.service import TasteModelService
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,7 @@ class ChatService:
         event_dispatcher: EventDispatcherProtocol,
         memory_service: UserMemoryService,
         taste_service: TasteModelService,
+        places_service: PlacesService,
         config: AppConfig,
         agent_graph: Any,
     ) -> None:
@@ -52,6 +55,7 @@ class ChatService:
         self._dispatcher = event_dispatcher
         self._memory = memory_service
         self._taste_service = taste_service
+        self._places_service = places_service
         self._config = config
         self._agent_graph = agent_graph
 
@@ -69,8 +73,13 @@ class ChatService:
 
     async def _run_agent(self, request: ChatRequest) -> ChatResponse:
         """Invoke the compiled agent graph and map its final state to ChatResponse."""
-        taste_summary = await self._compose_taste_summary(request.user_id)
-        memory_summary = await self._compose_memory_summary(request.user_id)
+        # Pre-agent prep runs in parallel so the cold-path geocode hides
+        # behind the taste/memory reads we'd do anyway.
+        taste_summary, memory_summary, location_label = await asyncio.gather(
+            self._compose_taste_summary(request.user_id),
+            self._compose_memory_summary(request.user_id),
+            self._resolve_location_label(request),
+        )
 
         payload = build_turn_payload(
             message=request.message,
@@ -78,6 +87,7 @@ class ChatService:
             taste_profile_summary=taste_summary,
             memory_summary=memory_summary,
             location=(request.location.model_dump() if request.location else None),
+            location_label=location_label,
         )
 
         graph_config = {
@@ -152,6 +162,18 @@ class ChatService:
         if not memory_list:
             return ""
         return "\n".join(memory_list)
+
+    async def _resolve_location_label(self, request: ChatRequest) -> str | None:
+        """Resolve the user's lat/lng to a "City, Country" label via the
+        cache-or-fetch helper on PlacesService. Returns None when no
+        location was supplied, the cache+geocoder both failed, or the
+        coords don't resolve to a known locality."""
+        if request.location is None:
+            return None
+        return await self._places_service.resolve_location_label(
+            lat=request.location.lat,
+            lng=request.location.lng,
+        )
 
 
 def _last_ai_message(messages: list[Any]) -> AIMessage | None:

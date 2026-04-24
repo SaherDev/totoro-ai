@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 
 from totoro_ai.core.config import get_config, get_env
 from totoro_ai.providers.tracing import get_tracing_client
+from totoro_ai.providers.transcription import GroqWhisperClient, TranscriptionProtocol
 
 # --- Protocols ---
 
@@ -275,7 +276,7 @@ def get_llm(role: str) -> LLMClientProtocol:
     Resolves provider and model from config/app.yaml under the 'models' key.
 
     Args:
-        role: Logical role (e.g., 'orchestrator', 'intent_parser')
+        role: Logical role (e.g., 'orchestrator', 'taste_regen')
 
     Returns:
         LLM client implementing LLMClientProtocol
@@ -386,7 +387,7 @@ def get_instructor_client(role: str) -> InstructorClient:
     Currently only supports OpenAI provider.
 
     Args:
-        role: Logical role (e.g., 'intent_parser')
+        role: Logical role (e.g., 'extractor')
 
     Returns:
         InstructorClient
@@ -432,4 +433,22 @@ def get_vision_extractor(role: str = "vision_frames") -> VisionExtractorProtocol
 
     raise ValueError(
         f"Unsupported provider for vision extractor: {role_config.provider}"
+    )
+
+
+def get_transcription_client(role: str = "transcriber") -> TranscriptionProtocol:
+    """Get a transcription client for the given role.
+
+    Resolves provider and model from config/app.yaml under the 'models' key.
+    """
+    role_config = get_config().models[role]
+
+    if role_config.provider == "groq":
+        return GroqWhisperClient(
+            api_key=get_env().GROQ_API_KEY or "",
+            model=role_config.model,
+        )
+
+    raise ValueError(
+        f"Unsupported provider for transcription client: {role_config.provider}"
     )

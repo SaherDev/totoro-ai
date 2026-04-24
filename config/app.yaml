@@ -23,18 +23,25 @@ providers:
     base_url: http://localhost:11434/v1
 
 models:
+  # Speech-to-text for the audio track of submitted videos (e.g. TikTok/Reels).
+  # Output feeds the SPEECH source in the extraction confidence pipeline.
   transcriber:
     provider: groq
     model: whisper-large-v3-turbo
     max_tokens: 0
     temperature: 0
 
+  # Vision model that reads sampled video frames to pull on-screen place names,
+  # signage, and OCR'd text. Feeds the OCR / vision_frames extraction sources.
   vision_frames:
     provider: openai
     model: gpt-4o-mini
     max_tokens: 512
     temperature: 0
 
+  # Structured place extraction from free text (captions, descriptions, plain
+  # text, transcribed speech). Returns the Pydantic place schema used by the
+  # extraction pipeline.
   extractor:
     provider: openai
     model: gpt-4o-mini
@@ -42,17 +49,40 @@ models:
     temperature: 0
   # Offline swap: set provider: ollama, model: gemma4:e2b (requires: ollama serve)
 
+  # Embedding model for semantic search over saved places (pgvector) and for
+  # the FTS+vector RRF recall pipeline. 1024-dim per ADR-040.
   embedder:
     provider: voyage
     model: voyage-4-lite
     dimensions: 1024
 
+  # LangGraph agent brain — drives the recall/consult/save tool loop behind
+  # POST /v1/chat and /v1/chat/stream (ADR-062/065). Higher temperature for
+  # conversational variety.
+  #
+  # Runtime selection (ADR-068): set AGENT_MODEL=<option-key> in the env to
+  # pick a non-default option. Unset / unknown values fall back to `default`.
+  # Boot fails if `default` does not name one of the option keys below.
   orchestrator:
-    provider: openai
-    model: gpt-4o-mini
-    max_tokens: 1024
-    temperature: 0.7
+    default: claude-sonnet
+    claude-sonnet:
+      provider: anthropic
+      model: claude-sonnet-4-6
+      max_tokens: 1024
+      temperature: 0.7
+    claude-haiku:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      max_tokens: 1024
+      temperature: 0.7
+    gpt-4o-mini:
+      provider: openai
+      model: gpt-4o-mini
+      max_tokens: 1024
+      temperature: 0.7
 
+  # Rewrites the user's taste_profile_summary from accumulated signals.
+  # Triggered by debounced signal events and by chip_confirm.
   taste_regen:
     provider: openai
     model: gpt-4o-mini
