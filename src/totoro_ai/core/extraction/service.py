@@ -17,8 +17,31 @@ from totoro_ai.core.extraction.persistence import (
 )
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
 from totoro_ai.core.extraction.url_source import source_from_url
+from totoro_ai.core.places import PlaceSource
 
 logger = logging.getLogger(__name__)
+
+
+_SOURCE_LABELS: dict[PlaceSource, str] = {
+    PlaceSource.tiktok: "the TikTok video",
+    PlaceSource.instagram: "the Instagram post",
+    PlaceSource.youtube: "the YouTube video",
+    PlaceSource.link: "the link",
+    PlaceSource.manual: "the link",
+}
+
+
+def _source_label(source: PlaceSource | None) -> str:
+    return _SOURCE_LABELS.get(source, "the link") if source else "the link"
+
+
+def _build_parse_summary(source: PlaceSource | None, has_text: bool) -> str:
+    has_url = source is not None
+    if has_url and has_text:
+        return f"Reading {_source_label(source)} and your notes"
+    if has_url:
+        return f"Reading {_source_label(source)}"
+    return "Reading your message"
 
 
 def _is_real(outcome: PlaceSaveOutcome) -> bool:
@@ -94,17 +117,7 @@ class ExtractionService:
         parsed = parse_input(raw_input)
         source = source_from_url(parsed.url)
         rid = request_id or uuid4().hex
-        if parsed.url and parsed.supplementary_text:
-            parse_summary = (
-                f"Reading {parsed.url} with "
-                f"{len(parsed.supplementary_text)} chars of extra context"
-            )
-        elif parsed.url:
-            parse_summary = f"Reading {parsed.url}"
-        else:
-            parse_summary = (
-                f"Reading {len(parsed.supplementary_text)} chars of text"
-            )
+        parse_summary = _build_parse_summary(source, bool(parsed.supplementary_text))
         _emit("save.parse_input", parse_summary)
 
         try:
