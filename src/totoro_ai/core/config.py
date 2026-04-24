@@ -7,12 +7,15 @@ Two singletons:
 All other modules import from here. Nobody calls load_yaml_config() directly.
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Low-level YAML loader (internal — use get_config / get_env instead)
@@ -64,6 +67,85 @@ class LLMRoleConfig(BaseModel):
     model: str
     max_tokens: int = 1024
     temperature: float = 1.0
+
+
+class OrchestratorOptionsConfig(BaseModel):
+    """Multi-option orchestrator block (ADR-068).
+
+    Shape in YAML:
+        orchestrator:
+          default: <option-key>
+          <option-key>: { provider, model, max_tokens, temperature }
+          <option-key>: { ... }
+
+    Resolved at boot via `_resolve_orchestrator(raw, agent_model)`. Other
+    roles keep the flat `LLMRoleConfig` shape — orchestrator is the only
+    role with runtime selection right now.
+    """
+
+    default: str
+    options: dict[str, LLMRoleConfig]
+
+    @model_validator(mode="after")
+    def _default_must_exist(self) -> "OrchestratorOptionsConfig":
+        if self.default not in self.options:
+            raise ValueError(
+                f"orchestrator.default={self.default!r} not found in options "
+                f"{sorted(self.options)}"
+            )
+        return self
+
+
+def _split_orchestrator_block(raw_orch: dict[str, Any]) -> OrchestratorOptionsConfig:
+    """Parse the YAML orchestrator block into OrchestratorOptionsConfig.
+
+    `default` is the only reserved key; every other key is an option name
+    mapping to an `LLMRoleConfig`-shaped dict.
+    """
+    if "default" not in raw_orch:
+        raise ValueError(
+            "models.orchestrator must define a 'default' key naming one of "
+            "its option keys"
+        )
+    default = raw_orch["default"]
+    options = {k: v for k, v in raw_orch.items() if k != "default"}
+    return OrchestratorOptionsConfig(default=default, options=options)
+
+
+def _resolve_orchestrator(
+    raw_models: dict[str, Any], agent_model: str | None
+) -> dict[str, Any]:
+    """Resolve a `{default, <option>, ...}` orchestrator block to a flat
+    `LLMRoleConfig` dict (ADR-068).
+
+    No-op if the block is already flat (i.e. has top-level `provider`/`model`).
+    Mutates `raw_models["orchestrator"]` in place and returns the same dict.
+
+    - `agent_model` is None  → use `default`.
+    - `agent_model` matches an option key → use that option.
+    - `agent_model` is set but unknown → log a warning and fall back to
+      `default`. Boot continues so a typo in env vars does not kill prod.
+    - `default` missing or pointing at a missing option → raises.
+    """
+    orch = raw_models.get("orchestrator")
+    if not isinstance(orch, dict) or "provider" in orch:
+        return raw_models
+
+    parsed = _split_orchestrator_block(orch)
+    chosen = parsed.default
+    if agent_model is not None:
+        if agent_model in parsed.options:
+            chosen = agent_model
+        else:
+            logger.warning(
+                "AGENT_MODEL=%r not in orchestrator options %s; "
+                "falling back to default %r",
+                agent_model,
+                sorted(parsed.options),
+                parsed.default,
+            )
+    raw_models["orchestrator"] = parsed.options[chosen].model_dump()
+    return raw_models
 
 
 class ConfidenceWeights(BaseModel):
@@ -395,6 +477,20 @@ class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     prompts: dict[str, PromptConfig] = {}
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_orchestrator_default(cls, data: Any) -> Any:
+        """Default-only orchestrator resolution (ADR-068).
+
+        The env-aware path runs in `get_config()` and replaces the
+        orchestrator block with a flat dict before AppConfig sees it.
+        Direct `AppConfig(**raw)` calls (e.g. from tests) hit this
+        validator instead and resolve to the `default` option.
+        """
+        if isinstance(data, dict) and isinstance(data.get("models"), dict):
+            _resolve_orchestrator(data["models"], agent_model=None)
+        return data
+
 
 # Per-prompt required template-slot registry (feature 027 FR-018a).
 # Eager validation at _load_prompts() ensures any missing slot aborts boot.
@@ -438,10 +534,15 @@ def get_config() -> AppConfig:
     """Return the AppConfig singleton, loading app.yaml on first call.
 
     Prompt files are read from disk during this call (ADR-059).
+    The orchestrator block is resolved against `AGENT_MODEL` here (ADR-068)
+    before AppConfig sees `models["orchestrator"]`.
     """
     global _config
     if _config is None:
         raw = load_yaml_config("app.yaml")
+        raw["models"] = _resolve_orchestrator(
+            raw.get("models") or {}, agent_model=get_env().AGENT_MODEL
+        )
         raw["prompts"] = _load_prompts(raw.get("prompts") or {})
         _config = AppConfig(**raw)
     return _config
@@ -488,6 +589,7 @@ class EnvConfig(BaseSettings):
     LANGFUSE_SECRET_KEY: str | None = None
     LANGFUSE_HOST: str | None = None
     AGENT_ENABLED: bool = True
+    AGENT_MODEL: str | None = None  # ADR-068: orchestrator option key override
 
 
 _env: EnvConfig | None = None

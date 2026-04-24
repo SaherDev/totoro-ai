@@ -1,4 +1,4 @@
-"""Groq Whisper transcription client (ADR-038 — swappable transcription Protocol)."""
+"""Audio transcription Protocol and provider implementations (ADR-038)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Protocol
 import groq
 
 
-class GroqTranscriptionProtocol(Protocol):
+class TranscriptionProtocol(Protocol):
     """Protocol for audio transcription providers (ADR-038)."""
 
     async def transcribe_url(self, cdn_url: str) -> str:
@@ -20,16 +20,16 @@ class GroqTranscriptionProtocol(Protocol):
 
         Args:
             audio_bytes: Raw audio data.
-            filename: Filename with extension (e.g. "audio.opus") — Groq uses this
-                      to infer the audio format.
+            filename: Filename with extension (e.g. "audio.opus") — providers use
+                      this to infer the audio format.
         """
         ...
 
 
-class GroqWhisperClient:
-    """Groq Whisper transcription client using the groq Python SDK."""
+class GroqWhisperClient(TranscriptionProtocol):
+    """Groq Whisper implementation of TranscriptionProtocol."""
 
-    def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo") -> None:
+    def __init__(self, api_key: str, model: str) -> None:
         self._client = groq.AsyncGroq(api_key=api_key)
         self._model = model
 
