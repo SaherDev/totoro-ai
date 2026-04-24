@@ -5,7 +5,7 @@
 ```bash
 poetry install
 docker compose up -d          # PostgreSQL + Redis
-cp config/.env.example .env   # fill in secrets
+cp .env.example .env          # fill in secrets
 ```
 
 ## Run migrations
