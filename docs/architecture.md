@@ -313,7 +313,7 @@ All requests come from NestJS after auth verification. This repo never receives 
 
 | Logical Role  | Model                   | Why                                                                  |
 | ------------- | ----------------------- | -------------------------------------------------------------------- |
-| orchestrator  | claude-sonnet-4-6       | Strong reasoning for tool calling (LangGraph agent) |
+| orchestrator  | claude-sonnet-4-6 (default; selectable at boot via `AGENT_MODEL`, ADR-068) | Strong reasoning for tool calling (LangGraph agent) |
 | extractor     | GPT-4o-mini             | NER and subtitle/audio extraction enrichers in the save pipeline |
 | embedder      | Voyage 4-lite           | 9.25% better retrieval quality than OpenAI; 1024-dimensional vectors |
 | taste_regen   | GPT-4o-mini             | Cost-effective for taste profile summarization |

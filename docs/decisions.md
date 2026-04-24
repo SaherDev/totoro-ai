@@ -15,6 +15,16 @@ Format:
 
 ---
 
+## ADR-068: Runtime orchestrator selection via AGENT_MODEL env var
+
+**Date:** 2026-04-24\
+**Status:** accepted\
+**Context:** ADR-067 pinned the orchestrator role to `anthropic/claude-sonnet-4-6` in `config/app.yaml`. Swapping it — for a cost A/B, a demo-time fallback when Anthropic is degraded, or local dev iteration on a cheaper Anthropic / OpenAI model — required editing committed config and redeploying. Other roles (embedder per ADR-040, extractor, taste_regen, vision_frames, transcriber) are stable and do not need this dial.\
+**Decision:** Special-case `models.orchestrator` in `config/app.yaml` to a `{default, <option-key>: LLMRoleConfig, ...}` block. The `AGENT_MODEL` env var (added to `EnvConfig`, default `None`) selects the active option key at boot. Resolution rules: unset → `default`; matches an option key → that option; set but unknown → log warning and fall back to `default`; `default` missing or naming a missing option key → raise at startup. Resolution happens once in `get_config()` before `AppConfig` validation; `get_llm("orchestrator")` and `get_langchain_chat_model("orchestrator")` signatures are unchanged. Other roles remain flat `LLMRoleConfig` — generalising the shape was rejected as YAGNI; promote to a generalised schema only when a second role needs it.\
+**Consequences:** Supersedes the orchestrator portion of ADR-016 — `models.orchestrator` no longer matches the flat `provider/model/...` shape that other roles use. The legacy flat shape is no longer accepted for orchestrator (boot fails with a clear schema error), so this is a breaking change for any branch carrying the old shape. Adding a new orchestrator option is a YAML-only edit. Switching options at runtime is `AGENT_MODEL=<key>` + restart, no code change. Mistyped `AGENT_MODEL` values do not crash the service — they degrade silently with a logged warning, which Langfuse / log-monitoring should surface. Prompt caching (ADR-067) only takes effect for the Anthropic options; the `agent.prompt_caching_enabled` flag in `app.yaml` remains the per-deploy switch.
+
+---
+
 ## ADR-067: Claude Sonnet 4.6 as agent orchestrator with prompt caching
 
 **Date:** 2026-04-23\
@@ -604,10 +614,10 @@ and 100% top-3 retrieval accuracy with Voyage 4-lite embeddings.
 ## ADR-016: app.yaml logical-role-to-provider mapping
 
 **Date:** 2026-03-07 (revised 2026-03-24)\
-**Status:** accepted\
+**Status:** accepted (orchestrator portion superseded by ADR-068)\
 **Context:** The codebase must never hardcode model names. Provider switching must be a config change, not a code change.\
 **Decision:** `config/app.yaml` under the `models:` key maps logical roles — `intent_parser`, `orchestrator`, `embedder`, `evaluator` — to provider name, model identifier, and inference parameters. Read by `providers/llm.py` via `get_config().models[role]` (singleton, no per-call file I/O). Current assignments: `intent_parser` → `openai/gpt-4o-mini`, `orchestrator` → `anthropic/claude-sonnet-4-6`, `embedder` → `voyage/voyage-4-lite`.\
-**Consequences:** Swapping any model requires one line change in `app.yaml`. Code that references model names by role rather than string literals is automatically correct after a config change. Adding a new role requires a new YAML entry and a new factory case in the provider layer.
+**Consequences:** Swapping any model requires one line change in `app.yaml`. Code that references model names by role rather than string literals is automatically correct after a config change. Adding a new role requires a new YAML entry and a new factory case in the provider layer. ADR-068 supersedes the flat-shape requirement for the `orchestrator` role specifically (it now uses a `{default, <option-key>: LLMRoleConfig, ...}` block resolved against `AGENT_MODEL` at boot); all other roles remain flat.
 
 ---
 
