@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from totoro_ai.core.config import ExtractionConfig
 from totoro_ai.core.emit import EmitFn
-from totoro_ai.core.extraction.dedup import dedup_validated_by_provider_id
+from totoro_ai.core.extraction.dedup import (
+    dedup_candidates,
+    dedup_validated_by_provider_id,
+)
 from totoro_ai.core.extraction.enrichment_level import EnrichmentLevel
+from totoro_ai.core.extraction.protocols import Enricher
 from totoro_ai.core.extraction.types import (
     ExtractionContext,
     ValidatedCandidate,
@@ -80,15 +84,19 @@ def _enforce_candidate_limit(
 class ExtractionPipeline:
     """Level-driven extraction runner (ADR-008 — sequential async, not LangGraph).
 
-    A list of `EnrichmentLevel`s is run in order. After each level the
-    pipeline emits the level's summary, enforces the candidate cap, and
-    asks the validator for a verdict. The first level whose validated
+    A list of `EnrichmentLevel`s is run in order. After each executed
+    level the pipeline runs the shared `finalizer` (typically
+    `LLMNEREnricher` — one consolidated NER call over the just-populated
+    text fields), emits the level's summary, enforces the candidate cap,
+    and asks the validator for a verdict. The first level whose validated
     set is non-empty short-circuits and returns. Levels that declare
     `requires_url=True` are skipped silently when the input has no URL.
 
     Default configuration wires two levels:
-    - "enrich"           — TikTok oEmbed + yt-dlp + LLM NER (text + metadata).
+    - "enrich"           — TikTok oEmbed + yt-dlp (text/metadata producers).
     - "deep_enrichment"  — subtitle, whisper, vision (URL-only fallback).
+    Plus one shared finalizer: LLMNEREnricher, which harvests candidates
+    from the text fields after each level runs.
     """
 
     def __init__(
@@ -96,10 +104,12 @@ class ExtractionPipeline:
         levels: list[EnrichmentLevel],
         validator: PlacesValidatorProtocol,
         extraction_config: ExtractionConfig,
+        finalizer: Enricher | None = None,
     ) -> None:
         self._levels = levels
         self._validator = validator
         self._extraction_config = extraction_config
+        self._finalizer = finalizer
 
     async def run(
         self,
@@ -130,6 +140,9 @@ class ExtractionPipeline:
             executed, summary = await level.run(context)
             if not executed:
                 continue
+            if self._finalizer is not None:
+                await self._finalizer.enrich(context)
+                dedup_candidates(context)
             _emit(f"save.{level.name}", summary)
             _enforce_candidate_limit(context, effective_limit, _emit)
 

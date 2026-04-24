@@ -199,15 +199,13 @@ def get_extraction_persistence(
 def _make_inline_level() -> EnrichmentLevel:
     """Build the inline enrichment level with singleton circuit breakers.
 
-    Enrichers are pure caption/text producers. NER is the level
-    finalizer — runs after them, harvests candidates from the
-    populated text fields.
+    Enrichers are pure caption/text producers. NER lives at the
+    pipeline as the shared finalizer — runs after every executed level.
     """
     from totoro_ai.core.extraction.circuit_breaker import (
         CircuitBreakerEnricher,
         ParallelEnricherGroup,
     )
-    from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
     from totoro_ai.core.extraction.enrichers.tiktok_oembed import TikTokOEmbedEnricher
     from totoro_ai.core.extraction.enrichers.ytdlp_metadata import YtDlpMetadataEnricher
 
@@ -221,7 +219,6 @@ def _make_inline_level() -> EnrichmentLevel:
                 ]
             ),
         ],
-        finalizer=LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         summary_fn=inline_summary,
     )
 
@@ -238,16 +235,15 @@ def _get_inline_level() -> EnrichmentLevel:
 
 
 def _make_deep_level() -> EnrichmentLevel:
-    """Build the URL-only deep enrichment level (subtitle/audio/vision + NER).
+    """Build the URL-only deep enrichment level (subtitle/audio/vision).
 
     Subtitle and Whisper are pure text producers — they populate
     `context.transcript`. Vision goes image → place names directly via
-    a vision LLM (no text intermediate). `LLMNEREnricher` is the level
-    finalizer — runs after the producers, sees the just-populated
-    transcript alongside any caption / supplementary text, and emits
-    one consolidated NER call instead of three per-source ones.
+    a vision LLM (no text intermediate). NER lives at the pipeline as
+    the shared finalizer — runs after this level, sees the
+    just-populated transcript alongside any caption / supplementary
+    text, and emits one consolidated NER call.
     """
-    from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
     from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
     from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
     from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
@@ -261,7 +257,6 @@ def _make_deep_level() -> EnrichmentLevel:
             ),
             VisionFramesEnricher(vision_extractor=get_vision_extractor()),
         ],
-        finalizer=LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         summary_fn=deep_summary,
         requires_url=True,
     )
@@ -283,6 +278,7 @@ def get_extraction_pipeline(
     extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
 ) -> ExtractionPipeline:
     """FastAPI dependency providing ExtractionPipeline with all levels wired."""
+    from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
     from totoro_ai.core.places import GooglePlacesClient
 
@@ -294,6 +290,9 @@ def get_extraction_pipeline(
         levels=[_get_inline_level(), _get_deep_level()],
         validator=validator,
         extraction_config=extraction_config,
+        finalizer=LLMNEREnricher(
+            instructor_client=get_instructor_client("extractor")
+        ),
     )
 
 

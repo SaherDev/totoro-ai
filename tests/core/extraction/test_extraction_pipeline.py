@@ -44,12 +44,15 @@ def _make_pipeline(
     background_enrichers=None,
     enrichment_seeds_candidates=0,
     max_candidates=25,
+    finalizer=None,
 ) -> tuple:
     """Returns (pipeline, inline_level, validator_mock, bg_enrichers).
 
     `enrichment_seeds_candidates`: when non-zero, the inline level's
     enricher appends that many `CandidatePlace`s to context.candidates
     so the cap check has something real to count.
+    `finalizer`: optional pipeline-level enricher that runs after every
+    executed level (in production this is `LLMNEREnricher`).
     """
     from totoro_ai.core.config import (
         ConfidenceWeights,
@@ -122,6 +125,7 @@ def _make_pipeline(
         levels=[inline_level, deep_level],
         validator=validator,
         extraction_config=extraction_config,
+        finalizer=finalizer,
     )
     return pipeline, inline_level, validator, background_enrichers
 
@@ -243,6 +247,47 @@ async def test_validator_receives_only_candidates() -> None:
     args = validator.validate.call_args.args
     kwargs = validator.validate.call_args.kwargs
     assert len(args) + len(kwargs) == 1
+
+
+async def test_pipeline_finalizer_runs_after_each_executed_level() -> None:
+    """The pipeline-level finalizer (typically NER) runs after every
+    executed level — both inline and deep when both fire — and never
+    when a level was skipped via requires_url."""
+    finalizer = MagicMock()
+    finalizer.enrich = AsyncMock()
+
+    bg_enricher = MagicMock()
+    bg_enricher.enrich = AsyncMock()
+
+    # Inline returns nothing → deep level fires → both should call finalizer.
+    pipeline, _, _, _ = _make_pipeline(
+        inline_validator_returns=None,
+        background_validator_returns=None,
+        background_enrichers=[bg_enricher],
+        finalizer=finalizer,
+    )
+
+    await pipeline.run(url="https://tiktok.com/x", user_id="u1")
+
+    assert finalizer.enrich.await_count == 2
+
+
+async def test_pipeline_finalizer_skipped_when_level_skipped() -> None:
+    """A requires_url level on a text-only input is skipped — and the
+    finalizer must not run for that skipped level."""
+    finalizer = MagicMock()
+    finalizer.enrich = AsyncMock()
+
+    pipeline, _, _, _ = _make_pipeline(
+        inline_validator_returns=None,
+        background_enrichers=[MagicMock(enrich=AsyncMock())],
+        finalizer=finalizer,
+    )
+
+    # url=None → deep level is skipped, only inline fires the finalizer.
+    await pipeline.run(url=None, user_id="u1", supplementary_text="something")
+
+    assert finalizer.enrich.await_count == 1
 
 
 async def test_too_many_candidates_drops_request_before_validation() -> None:
