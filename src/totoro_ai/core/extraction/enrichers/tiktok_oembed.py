@@ -2,27 +2,32 @@
 
 import httpx
 
+from totoro_ai.core.extraction.source_filtered_enricher import SourceFilteredEnricher
 from totoro_ai.core.extraction.types import ExtractionContext
+from totoro_ai.core.places import PlaceSource
 
 _TIKTOK_OEMBED_URL = "https://www.tiktok.com/oembed"
 _TIMEOUT_SECONDS = 10.0  # TODO: move to config if oEmbed URL needs per-env override
 
 
-class TikTokOEmbedEnricher:
+class TikTokOEmbedEnricher(SourceFilteredEnricher):
     """Fetches TikTok video caption via oEmbed API.
 
     Caption enricher: populates context.caption (first-write-wins).
     Does NOT catch exceptions — they propagate to CircuitBreakerEnricher.
-    Skips if context.url is None or context.caption is already set.
+    The base class's source-filter guard short-circuits anything other
+    than `PlaceSource.tiktok` so non-TikTok URLs never hit the oEmbed
+    endpoint and trip the circuit breaker on guaranteed failures.
     """
 
-    async def enrich(self, context: ExtractionContext) -> None:
-        if not context.url:
-            return
+    def __init__(self) -> None:
+        super().__init__(allowed_sources={PlaceSource.tiktok})
+
+    async def _run(self, context: ExtractionContext) -> None:
         if context.caption is not None:
             return  # first-write-wins
 
-        caption = await self._fetch_caption(context.url)
+        caption = await self._fetch_caption(context.url)  # type: ignore[arg-type]
         if caption and context.caption is None:
             context.caption = caption
         if context.platform is None:

@@ -71,11 +71,21 @@ class TestYtDlpMetadataEnricher:
     async def test_platform_defaults_to_unknown_when_extractor_absent(
         self, enricher: YtDlpMetadataEnricher
     ) -> None:
-        ctx = ExtractionContext(url="https://example.com/v/123", user_id="u1")
+        ctx = ExtractionContext(url="https://youtube.com/watch?v=123", user_id="u1")
         proc = _mock_proc({"description": "caption"})
         with patch("asyncio.create_subprocess_exec", return_value=proc):
             await enricher.enrich(ctx)
         assert ctx.platform == "unknown"
+
+    async def test_skips_when_host_not_supported(
+        self, enricher: YtDlpMetadataEnricher
+    ) -> None:
+        ctx = ExtractionContext(url="https://example.com/v/123", user_id="u1")
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            await enricher.enrich(ctx)
+        mock_exec.assert_not_called()
+        assert ctx.caption is None
+        assert ctx.platform is None
 
     async def test_first_write_wins_caption(
         self, enricher: YtDlpMetadataEnricher

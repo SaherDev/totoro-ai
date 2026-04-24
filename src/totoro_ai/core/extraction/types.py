@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from totoro_ai.core.places import PlaceCreate, PlaceObject
+from totoro_ai.core.places import PlaceCreate, PlaceObject, PlaceSource
 
 __all__ = [
     "ExtractionLevel",
@@ -57,7 +57,13 @@ class CandidatePlace:
 
 @dataclass
 class ExtractionContext:
-    """Shared mutable state threaded through all enrichers."""
+    """Shared mutable state threaded through all enrichers.
+
+    `source` is auto-derived from `url` in `__post_init__` so every
+    consumer (enrichers, persistence, the service) reads the same
+    canonical `PlaceSource` without re-parsing the URL. Callers may pass
+    `source` explicitly to override (e.g. tests).
+    """
 
     url: str | None
     user_id: str
@@ -69,6 +75,13 @@ class ExtractionContext:
     title: str | None = None
     hashtags: list[str] = field(default_factory=list)
     location_tag: str | None = None
+    source: PlaceSource | None = None
+
+    def __post_init__(self) -> None:
+        if self.source is None:
+            from totoro_ai.core.extraction.url_source import source_from_url
+
+            self.source = source_from_url(self.url)
 
 
 @dataclass
