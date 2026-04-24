@@ -125,6 +125,7 @@ Secrets go in `.env` at the project root (gitignored). Copy `.env.example` to ge
 | `LANGFUSE_PUBLIC_KEY` | yes      | Langfuse — LLM tracing                                                  |
 | `LANGFUSE_SECRET_KEY` | yes      | Langfuse secret                                                         |
 | `LANGFUSE_HOST`       | yes      | Langfuse host URL                                                       |
+| `APIFY_TOKEN`         | no       | Apify Personal API token — enables Google Maps shared-list import via the `parseforge/google-maps-shared-list-scraper` actor. When unset, Maps list URLs short-circuit silently with no candidates. Get one at [console.apify.com](https://console.apify.com/account/integrations) (free tier covers ~hundreds of list pulls/month). |
 
 Non-secret config (model assignments, extraction weights, service tuning) lives in `config/app.yaml`.
 
