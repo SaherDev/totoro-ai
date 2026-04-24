@@ -197,7 +197,12 @@ def get_extraction_persistence(
 
 
 def _make_inline_level() -> EnrichmentLevel:
-    """Build the inline enrichment level with singleton circuit breakers."""
+    """Build the inline enrichment level with singleton circuit breakers.
+
+    Enrichers are pure caption/text producers. NER is the level
+    finalizer — runs after them, harvests candidates from the
+    populated text fields.
+    """
     from totoro_ai.core.extraction.circuit_breaker import (
         CircuitBreakerEnricher,
         ParallelEnricherGroup,
@@ -215,8 +220,8 @@ def _make_inline_level() -> EnrichmentLevel:
                     CircuitBreakerEnricher(YtDlpMetadataEnricher()),
                 ]
             ),
-            LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         ],
+        finalizer=LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         summary_fn=inline_summary,
     )
 
@@ -237,10 +242,10 @@ def _make_deep_level() -> EnrichmentLevel:
 
     Subtitle and Whisper are pure text producers — they populate
     `context.transcript`. Vision goes image → place names directly via
-    a vision LLM (no text intermediate). `LLMNEREnricher` runs LAST so
-    it sees the just-populated transcript alongside any caption /
-    supplementary text and emits one consolidated NER call instead of
-    three per-source ones.
+    a vision LLM (no text intermediate). `LLMNEREnricher` is the level
+    finalizer — runs after the producers, sees the just-populated
+    transcript alongside any caption / supplementary text, and emits
+    one consolidated NER call instead of three per-source ones.
     """
     from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
     from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
@@ -255,8 +260,8 @@ def _make_deep_level() -> EnrichmentLevel:
                 transcription_client=get_transcription_client(),
             ),
             VisionFramesEnricher(vision_extractor=get_vision_extractor()),
-            LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         ],
+        finalizer=LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
         summary_fn=deep_summary,
         requires_url=True,
     )

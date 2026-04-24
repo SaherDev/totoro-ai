@@ -17,22 +17,29 @@ SummaryFn = Callable[[ExtractionContext, list[str]], str]
 class EnrichmentLevel:
     """One level of the extraction cascade.
 
-    A level bundles a list of enrichers with the bookkeeping that used
-    to live inline in `ExtractionPipeline.run`: a name (used as the
-    emit step suffix — `f"save.{name}"`), an optional URL requirement
-    (so URL-only levels skip cleanly on text-only inputs), and a
-    summary function that turns the post-enrichment state into a
-    user-facing reasoning step.
+    Two phases run inside a level:
 
-    The pipeline runs levels in order; each level returns
-    `(executed, summary)` so the pipeline knows whether to emit and
-    whether to attempt validation after this pass.
+    1. **enrichers** — text/signal producers. Each one mutates context
+       (sets caption/transcript/title, or appends candidates from
+       sources like a vision model). They run sequentially; after they
+       finish, `dedup_candidates` collapses near-duplicate candidates.
+    2. **finalizer** (optional) — a "harvester" enricher that reads the
+       text fields the producers just populated and emits candidates
+       from them. In practice this is `LLMNEREnricher`, which performs
+       one consolidated NER call over caption + transcript +
+       supplementary_text. A second dedup runs after the finalizer.
+
+    A level skips entirely when `requires_url=True` and `context.url`
+    is `None`. The pipeline calls `level.run(context)` and uses the
+    returned `(executed, summary)` to decide whether to emit a step
+    and run validation.
     """
 
     name: str
     enrichers: list[Enricher]
     summary_fn: SummaryFn
     requires_url: bool = False
+    finalizer: Enricher | None = None
     fired: list[str] = field(default_factory=list, init=False, repr=False)
 
     async def run(self, context: ExtractionContext) -> tuple[bool, str]:
@@ -43,4 +50,8 @@ class EnrichmentLevel:
             await enricher.enrich(context)
             fired.append(type(enricher).__name__)
         dedup_candidates(context)
+        if self.finalizer is not None:
+            await self.finalizer.enrich(context)
+            fired.append(type(self.finalizer).__name__)
+            dedup_candidates(context)
         return True, self.summary_fn(context, fired)
