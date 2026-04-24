@@ -4,14 +4,21 @@ Google Maps shared lists (`maps.app.goo.gl/<short>` that resolves to a
 URL with `!3e3` in its data parameter) cannot be scraped from plain
 HTML — the page is fully client-side rendered. We delegate to the
 Apify `parseforge/google-maps-shared-list-scraper` actor, which runs
-its own browser pool and returns a JSON dataset with real Google
-Place IDs.
+the scrape and returns each list entry with its name, lat/lng,
+rating, and category.
 
-Each list item comes back already identified (`placeId` is a
-canonical `ChIJ...` Google Place ID), so we attach the provider /
-external_id directly on the `PlaceCreate`. The validator still runs
-downstream — it'll confirm the place exists and fill in geo data —
-but it doesn't need to discover the identity.
+The actor returns a Google Maps internal FID for each place
+(`0x...:0x...`), which is **not** the same as the Places API Place
+ID (`ChIJ...`). We deliberately drop the FID and let
+`GooglePlacesValidator` discover the canonical Place ID downstream
+via name + city — this keeps `external_id` consistent with what the
+rest of the system uses for dedup. Coords from the actor are not
+plumbed through today because `PlaceCreate` doesn't carry raw
+lat/lng; the validator finds places from name alone.
+
+The actor's default proxy (`useApifyProxy: true` → residential) is
+a paid feature on Apify. We pass `useApifyProxy: false` to skip it;
+the actor falls back to its own scraping path.
 """
 
 from __future__ import annotations
@@ -31,7 +38,6 @@ from totoro_ai.core.extraction.types import (
 from totoro_ai.core.places import (
     PlaceAttributes,
     PlaceCreate,
-    PlaceProvider,
     PlaceSource,
     PlaceType,
 )
@@ -43,6 +49,7 @@ _APIFY_ENDPOINT = (
     "parseforge~google-maps-shared-list-scraper/run-sync-get-dataset-items"
 )
 _DEFAULT_TIMEOUT_SECONDS = 60.0
+_DEFAULT_MAX_PLACES = 100
 
 
 class GoogleMapsListEnricher(SourceFilteredEnricher):
@@ -87,11 +94,20 @@ class GoogleMapsListEnricher(SourceFilteredEnricher):
                 context.candidates.append(candidate)
 
     async def _fetch_list(self, url: str, token: str) -> list[dict[str, Any]]:
+        body = {
+            "listUrls": [url],
+            "outputFormat": "json",
+            "maxPlacesPerList": _DEFAULT_MAX_PLACES,
+            # Skip Apify's residential proxy — it's a paid-tier feature
+            # and the actor falls back to a working scraping path
+            # without it.
+            "proxyConfiguration": {"useApifyProxy": False},
+        }
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 _APIFY_ENDPOINT,
                 params={"token": token},
-                json={"startUrls": [{"url": url}]},
+                json=body,
                 timeout=self._timeout_seconds,
             )
             response.raise_for_status()
@@ -103,21 +119,21 @@ class GoogleMapsListEnricher(SourceFilteredEnricher):
     def _item_to_candidate(
         self, item: dict[str, Any], user_id: str
     ) -> CandidatePlace | None:
-        name = item.get("title") or item.get("name")
+        name = item.get("name") or item.get("title")
         if not name:
             return None
-        place_id = item.get("placeId") or item.get("place_id")
+        # `placeId` from Apify is a Google Maps FID (`0x...:0x...`), not
+        # a Places API ChIJ Place ID. Drop it and let the validator
+        # resolve the canonical ID downstream so external_id stays
+        # consistent across all extraction paths.
         place = PlaceCreate(
             user_id=user_id,
             place_name=str(name),
-            # Apify's payload mixes restaurants, attractions, etc. — the
-            # NER prompt vocabulary doesn't apply here. Default to
-            # food_and_drink (the dominant share-list type) and let the
-            # validator + downstream classification refine if needed.
+            # Apify's payload mixes restaurants, attractions, etc. —
+            # default to food_and_drink (dominant share-list type) and
+            # let downstream classification refine if needed.
             place_type=PlaceType.food_and_drink,
             attributes=PlaceAttributes(),
-            provider=PlaceProvider.google if place_id else None,
-            external_id=str(place_id) if place_id else None,
         )
         return CandidatePlace(
             place=place,
