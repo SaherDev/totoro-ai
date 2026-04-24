@@ -11,7 +11,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -196,6 +196,17 @@ class PlacesRepository:
         if row is None:
             return None
         return self._orm_to_place_object(row)
+
+    async def count_for_user(self, user_id: str) -> int:
+        try:
+            result = await self._session.execute(
+                select(func.count()).select_from(Place).where(Place.user_id == user_id)
+            )
+            return int(result.scalar_one() or 0)
+        except SQLAlchemyError as exc:
+            raise RuntimeError(
+                f"PlacesRepository.count_for_user failed: {exc}"
+            ) from exc
 
     async def get_batch(self, place_ids: list[str]) -> list[PlaceObject]:
         if not place_ids:

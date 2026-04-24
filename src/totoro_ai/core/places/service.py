@@ -81,6 +81,9 @@ class PlacesService:
     ) -> PlaceObject | None:
         return await self._repo.get_by_external_id(provider, external_id)
 
+    async def count_for_user(self, user_id: str) -> int:
+        return await self._repo.count_for_user(user_id)
+
     # ------------------------------------------------------------------
     # Enrichment
     # ------------------------------------------------------------------

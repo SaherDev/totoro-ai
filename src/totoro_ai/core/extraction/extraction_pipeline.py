@@ -16,6 +16,21 @@ from totoro_ai.core.extraction.types import (
 )
 from totoro_ai.core.extraction.validator import PlacesValidatorProtocol
 
+_ENRICHER_LABELS = {
+    "SubtitleCheckEnricher": "subtitles",
+    "WhisperAudioEnricher": "audio transcript",
+    "VisionFramesEnricher": "video frames",
+    "TikTokOEmbedEnricher": "TikTok metadata",
+    "YtDlpMetadataEnricher": "video metadata",
+    "LLMNEREnricher": "text analysis",
+    "CircuitBreakerEnricher": "fallback extractor",
+    "ParallelEnricherGroup": "parallel extractors",
+}
+
+
+def _friendly(class_name: str) -> str:
+    return _ENRICHER_LABELS.get(class_name, class_name)
+
 
 class ExtractionPipeline:
     """Three-phase extraction runner (ADR-008 — sequential async, not LangGraph).
@@ -58,9 +73,9 @@ class ExtractionPipeline:
         await self._enrichment.run(context)
         _emit(
             "save.enrich",
-            f"{len(context.candidates)} candidates from caption + NER"
+            f"Found {len(context.candidates)} possible place(s) in the text"
             if context.candidates
-            else "no candidates found",
+            else "No places found in the text",
         )
 
         # Phase 2: validate candidates, then dedup by provider_id
@@ -68,7 +83,7 @@ class ExtractionPipeline:
         if results:
             _emit(
                 "save.validate",
-                f"{len(results)} validated via place lookup",
+                f"Confirmed {len(results)} place(s) via Google Places",
             )
             return dedup_validated_by_provider_id(
                 results, self._extraction_config.confidence
@@ -87,16 +102,18 @@ class ExtractionPipeline:
         dedup_candidates(context)
         _emit(
             "save.deep_enrichment",
-            f"Phase 3 fired: {'+'.join(enrichers_fired) or 'none'}",
+            "Taking a closer look: " + ", ".join(_friendly(n) for n in enrichers_fired)
+            if enrichers_fired
+            else "No extra checks needed",
         )
 
         results = await self._validator.validate(context.candidates)
         validated_count = len(results) if results else 0
         _emit(
             "save.validate",
-            f"{validated_count} validated via place lookup"
+            f"Confirmed {validated_count} place(s) via Google Places"
             if validated_count
-            else "not validated",
+            else "Could not confirm any places",
         )
         if results:
             return dedup_validated_by_provider_id(

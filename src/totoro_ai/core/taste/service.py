@@ -24,8 +24,8 @@ from totoro_ai.core.taste.schemas import (
     Chip,
     ChipView,
     TasteArtifacts,
+    TasteContext,
     TasteProfile,
-    UserContext,
 )
 from totoro_ai.core.taste.tier import derive_signal_tier, selection_round_name
 from totoro_ai.db.models import InteractionType
@@ -103,33 +103,22 @@ class TasteModelService:
             generated_from_log_count=taste_model.generated_from_log_count,
         )
 
-    async def get_user_context(self, user_id: str) -> UserContext:
-        """Build the full GET /v1/user/context response.
+    async def get_taste_context(self, user_id: str) -> TasteContext:
+        """Return the tier + chips slice of GET /v1/user/context.
 
-        Single DB read, no LLM call. Derives signal_tier from config-driven
-        chip_selection_stages so the route handler is a pure facade
-        (ADR-034). Cold users (no taste_model row) get tier="cold" and an
-        empty chips array.
+        The route handler composes this with `saved_places_count` from
+        PlacesService — the count never touches this service. Cold users
+        (no taste_model row) get tier="cold" and an empty chips array.
         """
         profile = await self.get_taste_profile(user_id)
         stages = self._config.taste_model.chip_selection_stages
         chip_threshold = self._config.taste_model.chip_threshold
 
         if profile is None:
-            return UserContext(
-                saved_places_count=0,
+            return TasteContext(
                 signal_tier=derive_signal_tier(0, [], stages, chip_threshold),
                 chips=[],
             )
-
-        saved_count = 0
-        totals = (
-            profile.signal_counts.get("totals")
-            if isinstance(profile.signal_counts, dict)
-            else None
-        )
-        if isinstance(totals, dict):
-            saved_count = int(totals.get("saves", 0))
 
         signal_tier = derive_signal_tier(
             signal_count=profile.generated_from_log_count,
@@ -156,8 +145,7 @@ class TasteModelService:
             for chip in profile.chips
         ]
 
-        return UserContext(
-            saved_places_count=saved_count,
+        return TasteContext(
             signal_tier=signal_tier,
             chips=chips,
         )

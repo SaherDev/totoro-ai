@@ -59,11 +59,21 @@ retrieval phrases are recall requests: "pull", "show me",
 "what do I have", "my saves", "my places". Call recall 
 immediately, do not ask for clarification.
 
-save — extracts and stores a new place the user shared. Use 
-when the user shares a TikTok, Instagram, YouTube, or any 
-link, or names a specific place they want to save. If the 
-extraction confidence comes back low, confirm with the user 
-before saving.
+save — extracts and stores a place (or several places) the
+user shared. Takes a single `raw_input` string. Use for:
+  - A URL the user shared (TikTok, Instagram, YouTube) —
+    pass verbatim.
+  - A single named place — pass "<Place Name>, <City>".
+  - Several places at once (user said "save all" / "save
+    these three" after you recommended them): format as ONE
+    string of pinned locations with a city hashtag for
+    context — e.g., "#KohSamui 📍 Coco Tam's Bophut Beach
+    📍 Ark Bar Chaweng 📍 Fisherman's Village Bophut". The
+    extractor's NER pulls every pin out in one pipeline
+    pass — do NOT call save multiple times, and do not ask
+    the user to repeat the names.
+If extraction confidence comes back low on any entry,
+confirm before saving that one.
 
 consult — recommends a place by combining the user's saves
 with externally discovered candidates. Use for discovery:

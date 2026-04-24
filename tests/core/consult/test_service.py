@@ -136,6 +136,7 @@ async def test_emit_callback_fires_pipeline_steps_in_order(
         query="Thai food",
         saved_places=[_place("saved_1")],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         emit=spy,
     )
@@ -169,6 +170,7 @@ async def test_emit_geocode_fires_when_search_location_name_set(
         query="Thai food",
         saved_places=[],
         filters=ConsultFilters(search_location_name="Shibuya"),
+        limit=3,
         location=None,
         emit=spy,
     )
@@ -191,6 +193,7 @@ async def test_no_matches_raises_when_everything_empty(
             query="Thai food",
             saved_places=[],
             filters=ConsultFilters(),
+            limit=3,
             location=Location(lat=13.75, lng=100.5),
         )
 
@@ -221,6 +224,7 @@ async def test_warming_tier_applies_candidate_blend(
         query="Thai food",
         saved_places=saved_places,
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="warming",
         emit=spy,
@@ -233,8 +237,8 @@ async def test_warming_tier_applies_candidate_blend(
 
     tier_blend_summaries = [s for step, s in emitted if step == "consult.tier_blend"]
     assert len(tier_blend_summaries) == 1
-    assert "discovered=2" in tier_blend_summaries[0]
-    assert "saved=1" in tier_blend_summaries[0]
+    assert "1 from your saves" in tier_blend_summaries[0]
+    assert "2 new discoveries" in tier_blend_summaries[0]
 
 
 @pytest.mark.asyncio
@@ -296,6 +300,7 @@ async def test_active_tier_excludes_rejected_chip_candidates(
         query="food",
         saved_places=[],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
         emit=spy,
@@ -307,7 +312,7 @@ async def test_active_tier_excludes_rejected_chip_candidates(
 
     chip_filter_summaries = [s for step, s in emitted if step == "consult.chip_filter"]
     # One filter emit (rejected) — no confirmed chips here.
-    assert any("filtered 1/" in s for s in chip_filter_summaries)
+    assert any("Removed 1 place" in s for s in chip_filter_summaries)
 
 
 @pytest.mark.asyncio
@@ -340,13 +345,17 @@ async def test_active_tier_surfaces_confirmed_chips(
         query="Ramen nearby",
         saved_places=[_place("saved_1")],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
         emit=spy,
     )
 
     chip_filter_summaries = [s for step, s in emitted if step == "consult.chip_filter"]
-    assert any("confirmed: Ramen lover" in s for s in chip_filter_summaries)
+    assert any(
+        "Honoring your confirmed preferences: Ramen lover" in s
+        for s in chip_filter_summaries
+    )
 
 
 @pytest.mark.asyncio
@@ -369,6 +378,7 @@ async def test_non_warming_tier_skips_blend_emit(
         query="Ramen nearby",
         saved_places=[_place("saved_1"), _place("saved_2")],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
         signal_tier="active",
         emit=spy,
@@ -395,6 +405,7 @@ async def test_response_has_no_reasoning_steps_attribute(
         query="Thai food",
         saved_places=[],
         filters=ConsultFilters(),
+        limit=3,
         location=Location(lat=13.75, lng=100.5),
     )
 

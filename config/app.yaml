@@ -193,7 +193,6 @@ consult:
   nearby_radius_m: 500
   named_location_radius_m: 10000
   walking_radius_m: 1000
-  total_cap: 3
 
 # ---------------------------------------------------------------------------
 # Embeddings configuration

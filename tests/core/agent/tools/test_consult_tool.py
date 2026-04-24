@@ -28,7 +28,13 @@ def _place(pid: str) -> PlaceObject:
 def test_llm_visible_schema_hides_saved_places_user_id_location() -> None:
     schema = ConsultToolInput.model_json_schema()
     props = set(schema["properties"].keys())
-    assert props == {"query", "filters", "preference_context", "place_suggestions"}
+    assert props == {
+        "query",
+        "filters",
+        "limit",
+        "preference_context",
+        "place_suggestions",
+    }
 
 
 def test_consult_summary_nothing_matched() -> None:
@@ -81,6 +87,7 @@ async def test_consult_tool_reads_saved_places_from_state() -> None:
     result = await tool.coroutine(
         query="ramen",
         filters=ConsultFilters(),
+        limit=3,
         preference_context=None,
         state=state,
         tool_call_id="tc-1",

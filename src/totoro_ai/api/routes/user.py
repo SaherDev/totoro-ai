@@ -2,7 +2,12 @@
 
 from fastapi import APIRouter, Depends, Query, status
 
-from totoro_ai.api.deps import get_taste_service, get_user_data_deletion_service
+from totoro_ai.api.deps import (
+    get_places_service,
+    get_taste_service,
+    get_user_data_deletion_service,
+)
+from totoro_ai.core.places.service import PlacesService
 from totoro_ai.core.taste.schemas import UserContext
 from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.core.user.service import UserDataDeletionService
@@ -14,9 +19,20 @@ router = APIRouter()
 async def get_user_context(
     user_id: str = Query(..., description="User identifier"),  # noqa: B008
     taste_service: TasteModelService = Depends(get_taste_service),  # noqa: B008
+    places_service: PlacesService = Depends(get_places_service),  # noqa: B008
 ) -> UserContext:
-    """Thin facade — delegates to TasteModelService.get_user_context (ADR-034)."""
-    return await taste_service.get_user_context(user_id)
+    """Compose `saved_places_count` (from the `places` table via
+    PlacesService) with the taste-model-derived tier + chips. The count
+    is owned outside TasteModelService so cold users (no taste_model row
+    yet) still see their real save total.
+    """
+    saved_places_count = await places_service.count_for_user(user_id)
+    taste_context = await taste_service.get_taste_context(user_id)
+    return UserContext(
+        saved_places_count=saved_places_count,
+        signal_tier=taste_context.signal_tier,
+        chips=taste_context.chips,
+    )
 
 
 @router.delete("/user/{user_id}/data", status_code=status.HTTP_204_NO_CONTENT)
