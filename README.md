@@ -76,14 +76,15 @@ Domain surface under `src/totoro_ai/core/`:
 
 ## Endpoints
 
-| Route                             | Purpose                                                              |
-| --------------------------------- | -------------------------------------------------------------------- |
-| `POST /v1/chat`                   | Unified conversational entry — agent dispatches recall/save/consult  |
-| `POST /v1/chat/stream`            | Same as `/v1/chat`, streamed as SSE (reasoning steps + final result) |
-| `POST /v1/signal`                 | Behavioral signals — recommendation accept/reject, chip confirm      |
-| `GET  /v1/user/context`           | Signal tier + onboarding chips (drives tier routing in the product)  |
-| `GET  /v1/extraction/{request_id}`| Poll status for background place extractions                         |
-| `GET  /v1/health`                 | Service health check                                                 |
+| Route                                | Purpose                                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `POST   /v1/chat`                    | Unified conversational entry — agent dispatches recall/save/consult                                     |
+| `POST   /v1/chat/stream`             | Same as `/v1/chat`, streamed as SSE (reasoning steps + final result)                                    |
+| `POST   /v1/signal`                  | Behavioral signals — recommendation accept/reject, chip confirm                                         |
+| `GET    /v1/user/context`            | Signal tier + onboarding chips (drives tier routing in the product)                                     |
+| `DELETE /v1/user/{user_id}/data`     | Erase user's AI-owned data (places, taste model, agent history) — called by NestJS on account deletion  |
+| `GET    /v1/extraction/{request_id}` | Poll status for background place extractions                                                            |
+| `GET    /v1/health`                  | Service health check                                                                                    |
 
 ## Setup
 
