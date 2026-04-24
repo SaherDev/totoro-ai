@@ -38,7 +38,6 @@ class PlaceSource(str, Enum):
     youtube = "youtube"
     google_maps = "google_maps"
     manual = "manual"
-    link = "link"
 
 
 class PlaceProvider(str, Enum):

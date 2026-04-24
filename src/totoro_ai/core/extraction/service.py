@@ -36,25 +36,32 @@ _SOURCE_LABELS: dict[PlaceSource, str] = {
     PlaceSource.instagram: "the Instagram post",
     PlaceSource.youtube: "the YouTube video",
     PlaceSource.google_maps: "the Google Maps list",
-    PlaceSource.link: "the link",
     PlaceSource.manual: "what you added or wrote",
 }
 
 
-def _source_label(source: PlaceSource | None) -> str:
-    if source is None:
-        return "the link"
-    return _SOURCE_LABELS.get(source, "the link")
+def _source_label(source: PlaceSource) -> str:
+    # Unsupported-URL requests are rejected before we'd ever need to
+    # label `None` — see `_unsupported_url_message`.
+    return _SOURCE_LABELS.get(source, "what you shared")
+
+
+def _unsupported_url_message(url: str) -> str:
+    return (
+        f"Sorry — I can't read links from this site yet. "
+        f"I currently support TikTok, Instagram, YouTube, and Google Maps "
+        f"share links. Try sharing the place name directly, or paste a "
+        f"link from one of those. ({url})"
+    )
 
 
 def _build_parse_summary(source: PlaceSource | None, has_text: bool) -> str:
     # The text branch covers both free-form notes and bare lists of places
     # (e.g. "Fuji Ramen, Pizza Place"). "What you shared" stays neutral
     # across both since we don't classify the text at parse time.
-    has_url = source is not None
-    if has_url and has_text:
+    if source is not None and has_text:
         return f"Reading {_source_label(source)} and what you shared"
-    if has_url:
+    if source is not None:
         return f"Reading {_source_label(source)}"
     return "Reading what you shared"
 
@@ -138,6 +145,25 @@ class ExtractionService:
         parsed = parse_input(raw_input)
         source = source_from_url(parsed.url)
         rid = request_id or uuid4().hex
+
+        # Unsupported URL: caller passed a real URL but its host isn't a
+        # source we can extract from. Reject up-front with a clear message
+        # rather than running the cascade and timing out on it.
+        if parsed.url is not None and source is None:
+            _emit("save.unsupported_url", _unsupported_url_message(parsed.url))
+            response = ExtractPlaceResponse(
+                status="failed",
+                results=[],
+                raw_input=raw_input,
+                request_id=rid,
+            )
+            _emit(
+                "save.persist",
+                "Skipped — this kind of link isn't supported yet",
+            )
+            await self._status_repo.write(rid, response.model_dump(mode="json"))
+            return response
+
         parse_summary = _build_parse_summary(source, bool(parsed.supplementary_text))
         _emit("save.parse_input", parse_summary)
 

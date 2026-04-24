@@ -329,6 +329,36 @@ async def test_pipeline_called_with_url_none_for_plain_text(
 
 
 # ---------------------------------------------------------------------------
+# Unsupported-URL early exit
+# ---------------------------------------------------------------------------
+
+
+async def test_unsupported_url_returns_failed_without_running_pipeline(
+    service: ExtractionService, pipeline: MagicMock
+) -> None:
+    """A URL whose host isn't a supported source must short-circuit before
+    the pipeline runs. The user gets a clear `save.unsupported_url`
+    reasoning step instead of the cascade-timeout cliff."""
+    emitted: list[tuple[str, str]] = []
+
+    def spy(step: str, summary: str, duration_ms: float | None = None) -> None:
+        emitted.append((step, summary))
+
+    response = await service.run(
+        "https://example.com/some-blog-post", user_id="u1", emit=spy
+    )
+
+    assert response.status == "failed"
+    assert response.results == []
+    pipeline.run.assert_not_called()
+    steps = [s for s, _ in emitted]
+    assert "save.unsupported_url" in steps
+    msg = next(m for s, m in emitted if s == "save.unsupported_url")
+    assert "TikTok" in msg and "Instagram" in msg
+    assert "YouTube" in msg and "Google Maps" in msg
+
+
+# ---------------------------------------------------------------------------
 # emit callback contract (feature 028 M4)
 # ---------------------------------------------------------------------------
 

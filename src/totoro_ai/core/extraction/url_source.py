@@ -6,12 +6,17 @@ from totoro_ai.core.places import PlaceSource
 
 
 def source_from_url(url: str | None) -> PlaceSource | None:
-    """Return the `PlaceSource` for a URL, or `None` when no URL is given.
+    """Return the `PlaceSource` for a URL, or `None` for "no source".
 
-    Returns `PlaceSource.link` for URLs whose host doesn't map to a
-    specific platform — i.e. "we have a URL but no recognized source".
-    Enrichers that only support specific platforms should treat `link`
-    as unsupported and short-circuit.
+    `None` is returned in two distinct cases:
+    - `url is None` — caller passed nothing.
+    - URL host doesn't map to any supported platform (e.g. a blog
+      post, a generic short link). The service distinguishes the two
+      by checking the original `url` value: a URL with `source is None`
+      is an unsupported URL and gets rejected with a clear message
+      before the cascade runs.
+
+    Supported sources: TikTok, Instagram, YouTube, Google Maps.
     """
     if url is None:
         return None
@@ -29,4 +34,4 @@ def source_from_url(url: str | None) -> PlaceSource | None:
         or "maps.google.com" in lowered
     ):
         return PlaceSource.google_maps
-    return PlaceSource.link
+    return None
