@@ -12,8 +12,12 @@ from totoro_ai.core.config import AppConfig, ExtractionConfig, get_config, get_e
 from totoro_ai.core.consult.service import ConsultService
 from totoro_ai.core.events.dispatcher import EventDispatcher
 from totoro_ai.core.events.handlers import EventHandlers
-from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
-from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
+from totoro_ai.core.extraction.enrichment_level import EnrichmentLevel
+from totoro_ai.core.extraction.extraction_pipeline import (
+    ExtractionPipeline,
+    deep_summary,
+    inline_summary,
+)
 from totoro_ai.core.extraction.persistence import ExtractionPersistenceService
 from totoro_ai.core.extraction.service import ExtractionService
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
@@ -192,72 +196,107 @@ def get_extraction_persistence(
     )
 
 
-def _make_enrichment_pipeline() -> EnrichmentPipeline:
-    """Build EnrichmentPipeline with singleton circuit breaker instances."""
+def _make_inline_level() -> EnrichmentLevel:
+    """Build the inline enrichment level with singleton circuit breakers.
+
+    Enrichers are pure caption/text producers. NER lives at the
+    pipeline as the shared finalizer — runs after every executed level.
+    """
     from totoro_ai.core.extraction.circuit_breaker import (
         CircuitBreakerEnricher,
         ParallelEnricherGroup,
     )
-    from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
+    from totoro_ai.core.extraction.enrichers.google_maps_list import (
+        GoogleMapsListEnricher,
+    )
     from totoro_ai.core.extraction.enrichers.tiktok_oembed import TikTokOEmbedEnricher
     from totoro_ai.core.extraction.enrichers.ytdlp_metadata import YtDlpMetadataEnricher
-    from totoro_ai.core.extraction.enrichment_pipeline import EnrichmentPipeline
 
-    return EnrichmentPipeline(
-        [
+    return EnrichmentLevel(
+        name="enrich",
+        enrichers=[
             ParallelEnricherGroup(
                 [
                     CircuitBreakerEnricher(TikTokOEmbedEnricher()),
                     CircuitBreakerEnricher(YtDlpMetadataEnricher()),
+                    CircuitBreakerEnricher(GoogleMapsListEnricher()),
                 ]
             ),
-            LLMNEREnricher(instructor_client=get_instructor_client("extractor")),
-        ]
+        ],
+        summary_fn=inline_summary,
     )
 
 
 # Module-level singleton so circuit breaker state persists across requests.
-_enrichment_pipeline: EnrichmentPipeline | None = None
+_inline_level: EnrichmentLevel | None = None
 
 
-def _get_enrichment_pipeline() -> EnrichmentPipeline:
-    global _enrichment_pipeline
-    if _enrichment_pipeline is None:
-        _enrichment_pipeline = _make_enrichment_pipeline()
-    return _enrichment_pipeline
+def _get_inline_level() -> EnrichmentLevel:
+    global _inline_level
+    if _inline_level is None:
+        _inline_level = _make_inline_level()
+    return _inline_level
+
+
+def _make_deep_level() -> EnrichmentLevel:
+    """Build the URL-only deep enrichment level (subtitle/audio/vision).
+
+    Subtitle and Whisper are pure text producers — they populate
+    `context.transcript`. Vision goes image → place names directly via
+    a vision LLM (no text intermediate). NER lives at the pipeline as
+    the shared finalizer — runs after this level, sees the
+    just-populated transcript alongside any caption / supplementary
+    text, and emits one consolidated NER call.
+    """
+    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
+    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
+    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
+
+    return EnrichmentLevel(
+        name="deep_enrichment",
+        enrichers=[
+            SubtitleCheckEnricher(),
+            WhisperAudioEnricher(
+                transcription_client=get_transcription_client(),
+            ),
+            VisionFramesEnricher(vision_extractor=get_vision_extractor()),
+        ],
+        summary_fn=deep_summary,
+        requires_url=True,
+    )
+
+
+# Cached so the underlying instructor/transcription/vision clients are
+# built once at process start, not rebuilt per request.
+_deep_level: EnrichmentLevel | None = None
+
+
+def _get_deep_level() -> EnrichmentLevel:
+    global _deep_level
+    if _deep_level is None:
+        _deep_level = _make_deep_level()
+    return _deep_level
 
 
 def get_extraction_pipeline(
     extraction_config: ExtractionConfig = Depends(get_extraction_config),  # noqa: B008
 ) -> ExtractionPipeline:
-    """FastAPI dependency providing ExtractionPipeline with all enrichers wired."""
-    from totoro_ai.core.extraction.enrichers.subtitle_check import SubtitleCheckEnricher
-    from totoro_ai.core.extraction.enrichers.vision_frames import VisionFramesEnricher
-    from totoro_ai.core.extraction.enrichers.whisper_audio import WhisperAudioEnricher
-    from totoro_ai.core.extraction.protocols import Enricher
+    """FastAPI dependency providing ExtractionPipeline with all levels wired."""
+    from totoro_ai.core.extraction.enrichers.llm_ner import LLMNEREnricher
     from totoro_ai.core.extraction.validator import GooglePlacesValidator
     from totoro_ai.core.places import GooglePlacesClient
 
-    enrichment = _get_enrichment_pipeline()
     validator = GooglePlacesValidator(
         places_client=GooglePlacesClient(),
         confidence_config=extraction_config.confidence,
     )
-    background_enrichers: list[Enricher] = [
-        SubtitleCheckEnricher(
-            instructor_client=get_instructor_client("extractor"),
-        ),
-        WhisperAudioEnricher(
-            transcription_client=get_transcription_client(),
-            instructor_client=get_instructor_client("extractor"),
-        ),
-        VisionFramesEnricher(vision_extractor=get_vision_extractor()),
-    ]
     return ExtractionPipeline(
-        enrichment=enrichment,
+        levels=[_get_inline_level(), _get_deep_level()],
         validator=validator,
-        background_enrichers=background_enrichers,
         extraction_config=extraction_config,
+        finalizer=LLMNEREnricher(
+            instructor_client=get_instructor_client("extractor")
+        ),
     )
 
 

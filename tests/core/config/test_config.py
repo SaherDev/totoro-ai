@@ -23,7 +23,7 @@ class TestAgentConfigDefaults:
         assert c.checkpointer_ttl_seconds == 86400
         assert c.tool_timeouts_seconds.recall == 5
         assert c.tool_timeouts_seconds.consult == 10
-        assert c.tool_timeouts_seconds.save == 25
+        assert c.tool_timeouts_seconds.save == 60
 
     def test_app_config_exposes_agent_with_defaults(self) -> None:
         cfg = get_config()
@@ -56,7 +56,7 @@ class TestToolTimeoutsConfigValidators:
         t = ToolTimeoutsConfig()
         assert t.recall == 5
         assert t.consult == 10
-        assert t.save == 25
+        assert t.save == 60
 
     def test_rejects_zero_recall(self) -> None:
         with pytest.raises(ValidationError):

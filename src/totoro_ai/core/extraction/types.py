@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from totoro_ai.core.places import PlaceCreate, PlaceObject
+from totoro_ai.core.places import PlaceCreate, PlaceObject, PlaceSource
 
 __all__ = [
     "ExtractionLevel",
@@ -36,6 +36,7 @@ class ExtractionLevel(Enum):
     SUBTITLE_CHECK = "subtitle_check"
     WHISPER_AUDIO = "whisper_audio"
     VISION_FRAMES = "vision_frames"
+    GOOGLE_MAPS_LIST = "google_maps_list"
 
 
 @dataclass
@@ -57,7 +58,21 @@ class CandidatePlace:
 
 @dataclass
 class ExtractionContext:
-    """Shared mutable state threaded through all enrichers."""
+    """Shared mutable state threaded through all enrichers.
+
+    `source` is auto-derived from `url` in `__post_init__` so every
+    consumer (enrichers, persistence, the service) reads the same
+    canonical `PlaceSource` without re-parsing the URL. Callers may pass
+    `source` explicitly to override (e.g. tests).
+
+    `known_places` is a list of confirmed place names from external
+    sources where the system already knows the place exists (e.g. a
+    Google Maps shared list pulled via Apify). Producers append names
+    here instead of building `CandidatePlace`s directly; the NER
+    finalizer reads this list as one of its text sources and emits
+    structured candidates with inferred attributes — same path as any
+    other text-derived candidate.
+    """
 
     url: str | None
     user_id: str
@@ -69,6 +84,14 @@ class ExtractionContext:
     title: str | None = None
     hashtags: list[str] = field(default_factory=list)
     location_tag: str | None = None
+    source: PlaceSource | None = None
+    known_places: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.source is None:
+            from totoro_ai.core.extraction.url_source import source_from_url
+
+            self.source = source_from_url(self.url)
 
 
 @dataclass

@@ -9,29 +9,61 @@ from totoro_ai.api.schemas.extract_place import (
     ExtractPlaceResponse,
 )
 from totoro_ai.core.emit import EmitFn
-from totoro_ai.core.extraction.extraction_pipeline import ExtractionPipeline
+from totoro_ai.core.extraction.extraction_pipeline import (
+    ExtractionPipeline,
+    TooManyCandidatesError,
+)
 from totoro_ai.core.extraction.input_parser import parse_input
 from totoro_ai.core.extraction.persistence import (
     ExtractionPersistenceService,
     PlaceSaveOutcome,
 )
 from totoro_ai.core.extraction.status_repository import ExtractionStatusRepository
+from totoro_ai.core.extraction.url_source import source_from_url
 from totoro_ai.core.places import PlaceSource
 
 logger = logging.getLogger(__name__)
 
+# Default per-request candidate cap. Hard cap on what the pipeline will
+# hand to Google Places validation (and therefore the most places a
+# single extract request can save). Callers can tighten or loosen this
+# by passing `limit=N` to `ExtractionService.run`.
+DEFAULT_MAX_CANDIDATES = 25
 
-def _source_from_url(url: str | None) -> PlaceSource | None:
-    if url is None:
-        return None
-    lowered = url.lower()
-    if "tiktok.com" in lowered:
-        return PlaceSource.tiktok
-    if "instagram.com" in lowered:
-        return PlaceSource.instagram
-    if "youtube.com" in lowered or "youtu.be" in lowered:
-        return PlaceSource.youtube
-    return PlaceSource.link
+
+_SOURCE_LABELS: dict[PlaceSource, str] = {
+    PlaceSource.tiktok: "the TikTok video",
+    PlaceSource.instagram: "the Instagram post",
+    PlaceSource.youtube: "the YouTube video",
+    PlaceSource.google_maps: "the Google Maps list",
+    PlaceSource.manual: "what you added or wrote",
+}
+
+
+def _source_label(source: PlaceSource) -> str:
+    # Unsupported-URL requests are rejected before we'd ever need to
+    # label `None` — see `_unsupported_url_message`.
+    return _SOURCE_LABELS.get(source, "what you shared")
+
+
+def _unsupported_url_message(url: str) -> str:
+    return (
+        f"Sorry — I can't read links from this site yet. "
+        f"I currently support TikTok, Instagram, YouTube, and Google Maps "
+        f"share links. Try sharing the place name directly, or paste a "
+        f"link from one of those. ({url})"
+    )
+
+
+def _build_parse_summary(source: PlaceSource | None, has_text: bool) -> str:
+    # The text branch covers both free-form notes and bare lists of places
+    # (e.g. "Fuji Ramen, Pizza Place"). "What you shared" stays neutral
+    # across both since we don't classify the text at parse time.
+    if source is not None and has_text:
+        return f"Reading {_source_label(source)} and what you shared"
+    if source is not None:
+        return f"Reading {_source_label(source)}"
+    return "Reading what you shared"
 
 
 def _is_real(outcome: PlaceSaveOutcome) -> bool:
@@ -82,6 +114,7 @@ class ExtractionService:
         user_id: str,
         request_id: str | None = None,
         emit: EmitFn | None = None,
+        limit: int | None = None,
     ) -> ExtractPlaceResponse:
         """Run the extraction pipeline inline and return a terminal envelope.
 
@@ -98,34 +131,53 @@ class ExtractionService:
         after input parsing and `save.persist` after persistence; the
         pipeline emits `save.enrich` / `save.deep_enrichment` /
         `save.validate` at its own phase boundaries.
+
+        `limit`, when supplied, overrides `DEFAULT_MAX_CANDIDATES` for
+        this single request — callers (e.g. the agent's save tool)
+        can tighten or loosen the cap explicitly. `None` falls back to
+        the default.
         """
-        _emit: EmitFn = emit or (lambda _s, _m, _d=None: None)
+        _emit: EmitFn = emit or (lambda step, summary, duration_ms=None: None)
 
         if not raw_input or not raw_input.strip():
             raise ValueError("raw_input cannot be empty")
 
         parsed = parse_input(raw_input)
-        source = _source_from_url(parsed.url)
+        source = source_from_url(parsed.url)
         rid = request_id or uuid4().hex
-        if parsed.url and parsed.supplementary_text:
-            parse_summary = (
-                f"Reading {parsed.url} with "
-                f"{len(parsed.supplementary_text)} chars of extra context"
+
+        # Unsupported URL: caller passed a real URL but its host isn't a
+        # source we can extract from. Reject up-front with a clear message
+        # rather than running the cascade and timing out on it.
+        if parsed.url is not None and source is None:
+            _emit("save.unsupported_url", _unsupported_url_message(parsed.url))
+            response = ExtractPlaceResponse(
+                status="failed",
+                results=[],
+                raw_input=raw_input,
+                request_id=rid,
             )
-        elif parsed.url:
-            parse_summary = f"Reading {parsed.url}"
-        else:
-            parse_summary = (
-                f"Reading {len(parsed.supplementary_text)} chars of text"
+            _emit(
+                "save.persist",
+                "Skipped — this kind of link isn't supported yet",
             )
+            await self._status_repo.write(rid, response.model_dump(mode="json"))
+            return response
+
+        parse_summary = _build_parse_summary(source, bool(parsed.supplementary_text))
         _emit("save.parse_input", parse_summary)
 
+        cap_exceeded = False
         try:
+            effective_limit = (
+                limit if limit is not None else DEFAULT_MAX_CANDIDATES
+            )
             result = await self._pipeline.run(
                 url=parsed.url,
                 user_id=user_id,
                 supplementary_text=parsed.supplementary_text,
                 emit=emit,
+                limit=effective_limit,
             )
             if not result:
                 response = ExtractPlaceResponse(
@@ -149,6 +201,24 @@ class ExtractionService:
                     raw_input=raw_input,
                     request_id=rid,
                 )
+        except TooManyCandidatesError as exc:
+            # Expected outcome — not an error. Pipeline already emitted
+            # the user-facing reason via `save.cap_exceeded`; flag the
+            # final persist summary so it doesn't look like a normal failure.
+            cap_exceeded = True
+            logger.info(
+                "Extraction request %s dropped: %d candidates exceeded "
+                "limit of %d",
+                rid,
+                exc.found,
+                exc.limit,
+            )
+            response = ExtractPlaceResponse(
+                status="failed",
+                results=[],
+                raw_input=raw_input,
+                request_id=rid,
+            )
         except Exception:
             logger.exception("Extraction pipeline failed for request %s", rid)
             response = ExtractPlaceResponse(
@@ -162,6 +232,8 @@ class ExtractionService:
             persist_summary = f"Saved {len(response.results)} place(s)"
         elif response.status == "completed":
             persist_summary = "Done — nothing new to save"
+        elif cap_exceeded:
+            persist_summary = "Skipped — too many places in one request"
         else:
             persist_summary = "Could not save — no valid places found"
         _emit("save.persist", persist_summary)

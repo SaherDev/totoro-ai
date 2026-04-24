@@ -42,6 +42,16 @@ class TestTikTokOEmbedEnricher:
             await enricher.enrich(ctx)
         mock_fetch.assert_not_called()
 
+    async def test_skips_when_host_is_not_tiktok(
+        self, enricher: TikTokOEmbedEnricher
+    ) -> None:
+        ctx = ExtractionContext(url="https://youtube.com/watch?v=123", user_id="u1")
+        with patch.object(enricher, "_fetch_caption", new=AsyncMock()) as mock_fetch:
+            await enricher.enrich(ctx)
+        mock_fetch.assert_not_called()
+        assert ctx.caption is None
+        assert ctx.platform is None
+
     async def test_sets_platform_tiktok_on_successful_fetch(
         self, enricher: TikTokOEmbedEnricher
     ) -> None:

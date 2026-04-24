@@ -41,9 +41,10 @@ class TestExtractionLevel:
         assert ExtractionLevel.SUBTITLE_CHECK.value == "subtitle_check"
         assert ExtractionLevel.WHISPER_AUDIO.value == "whisper_audio"
         assert ExtractionLevel.VISION_FRAMES.value == "vision_frames"
+        assert ExtractionLevel.GOOGLE_MAPS_LIST.value == "google_maps_list"
 
-    def test_enum_has_five_members(self) -> None:
-        assert len(ExtractionLevel) == 5
+    def test_enum_has_six_members(self) -> None:
+        assert len(ExtractionLevel) == 6
 
 
 class TestCandidatePlace:

@@ -4,24 +4,37 @@ import asyncio
 import json
 import sys
 
+from totoro_ai.core.extraction.source_filtered_enricher import SourceFilteredEnricher
 from totoro_ai.core.extraction.types import ExtractionContext
+from totoro_ai.core.places import PlaceSource
 
 
-class YtDlpMetadataEnricher:
+class YtDlpMetadataEnricher(SourceFilteredEnricher):
     """Fetches video metadata via yt-dlp --dump-json.
 
     Caption enricher: populates context.caption (first-write-wins).
     Does NOT catch exceptions — they propagate to CircuitBreakerEnricher.
-    Skips if context.url is None or context.caption is already set.
+    The base class's source-filter guard short-circuits anything that
+    isn't a real video platform (`tiktok`/`instagram`/`youtube`) so
+    arbitrary URLs never spawn a yt-dlp subprocess that's guaranteed
+    to fail. `link` (unrecognized host) and `manual` (no URL) are
+    intentionally excluded.
     """
 
-    async def enrich(self, context: ExtractionContext) -> None:
-        if not context.url:
-            return
+    def __init__(self) -> None:
+        super().__init__(
+            allowed_sources={
+                PlaceSource.tiktok,
+                PlaceSource.instagram,
+                PlaceSource.youtube,
+            }
+        )
+
+    async def _run(self, context: ExtractionContext) -> None:
         if context.caption is not None:
             return  # first-write-wins
 
-        data = await self._fetch_metadata(context.url)
+        data = await self._fetch_metadata(context.url)  # type: ignore[arg-type]
         if data is None:
             return
 

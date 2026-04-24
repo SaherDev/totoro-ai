@@ -117,6 +117,8 @@ extraction:
       subtitle_check: 0.75
       whisper_audio: 0.65
       vision_frames: 0.55
+      # User-curated lists are explicit saves — treat them as ground truth.
+      google_maps_list: 0.95
     corroboration_bonus: 0.10
     max_score: 0.97
     # ADR-057: two-band save gate.
@@ -242,7 +244,12 @@ agent:
   tool_timeouts_seconds:
     recall: 5
     consult: 10
-    save: 25
+    # Save handles three flavors of input with very different latency:
+    # text-only / TikTok / IG (~3-5s), YouTube videos with deep enrichment
+    # (~15-20s), and Google Maps shared lists where Apify takes ~14s
+    # alone before NER and validation. 60s gives the slowest happy-path
+    # (~30s today) ~2x headroom.
+    save: 60
 
 # ---------------------------------------------------------------------------
 # Taste Model Configuration

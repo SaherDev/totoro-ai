@@ -36,8 +36,8 @@ class PlaceSource(str, Enum):
     tiktok = "tiktok"
     instagram = "instagram"
     youtube = "youtube"
+    google_maps = "google_maps"
     manual = "manual"
-    link = "link"
 
 
 class PlaceProvider(str, Enum):
