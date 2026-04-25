@@ -523,11 +523,26 @@ Hard-deletes every trace of a user's **AI-owned data**. Does NOT delete the user
 
 ```
 DELETE /v1/user/user_abc/data
+DELETE /v1/user/user_abc/data?scope=chat_history
+DELETE /v1/user/user_abc/data?scope=chat_history&scope=all
 ```
 
 **Response (204):** Empty body.
 
-**What gets deleted (in one DB transaction, then the checkpointer, then the in-memory debouncer):**
+**Optional query params:**
+
+| Param | Type | Description |
+| ----- | ---- | ----------- |
+| `scope` | repeated `DataScope` enum (`all` \| `chat_history`) | Selects what to delete. Repeat the param for multi-value. Omit to wipe everything (default; preserves the NestJS account-delete contract). Unknown values → 422 (FastAPI native enum validation). |
+
+`DataScope` values:
+
+- **`all`** (default) — full wipe across all 7 deletion targets below. Same as omitting the query param.
+- **`chat_history`** — clears only target #6 (LangGraph checkpoint thread) and target #7 (pending taste-regen task). Leaves all SQL data (places, taste_model, memories, interactions, recommendations) intact. Useful for resetting an agent that learned a stale pattern (e.g. "this URL always times out") without losing the user's saves.
+
+A scope set containing `all` collapses to "wipe everything" regardless of any other scopes mixed in.
+
+**What gets deleted (default / `scope=all`, in one DB transaction, then the checkpointer, then the in-memory debouncer):**
 
 1. `interactions` rows where `user_id = ?`
 2. `recommendations` rows where `user_id = ?`
@@ -544,6 +559,7 @@ DELETE /v1/user/user_abc/data
 - **Hard-delete only.** No soft-delete column, no grace window, no purge cron. This is a deliberate v1 simplification — soft-delete on `places` can be added later if a real GDPR / "oops recovery" requirement appears.
 - **No Redis cleanup.** All Redis keys in this repo are `place_id` or `request_id` scoped (see ADR-054); none are per-user.
 - **Caller trust.** No new auth — this matches every other route's "NestJS verified upstream" model.
+- **NestJS account-delete still uses no `scope`.** The product-side contract documents only the default full-wipe; `scope=chat_history` is reserved for direct frontend "Reset chat history" flows or future product features that NestJS proxies.
 
 ---
 
