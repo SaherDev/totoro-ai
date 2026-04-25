@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from enum import Enum
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from sqlalchemy import delete
@@ -31,6 +32,22 @@ logger = logging.getLogger(__name__)
 
 _CHECKPOINT_DELETE_MAX_ATTEMPTS = 3
 _CHECKPOINT_DELETE_BACKOFF_BASE_SECONDS = 0.5
+
+
+class DataScope(str, Enum):
+    """Selectable categories for `UserDataDeletionService.delete_user_data`.
+
+    `all` is the default (back-compat with the original "wipe everything"
+    behavior). Add a new value here + a branch in `delete_user_data` to
+    expose another scope (places, memories, taste_model, etc.).
+    """
+
+    all = "all"
+    # LangGraph checkpoint thread + any in-flight taste-regen task.
+    # Useful for resetting an agent that learned a bad pattern (e.g.
+    # "this URL always times out") without wiping the user's saves.
+    # User-facing label: "Clear chat history".
+    chat_history = "chat_history"
 
 
 class UserDataDeletionService:
@@ -56,37 +73,56 @@ class UserDataDeletionService:
         self._checkpointer = checkpointer
         self._regen_debouncer = regen_debouncer
 
-    async def delete_user_data(self, user_id: str) -> None:
-        async with (
-            self._session_factory() as session,
-            session.begin(),
-        ):
-            await session.execute(
-                delete(Interaction).where(Interaction.user_id == user_id)
-            )
-            await session.execute(
-                delete(Recommendation).where(Recommendation.user_id == user_id)
-            )
-            await session.execute(
-                delete(UserMemory).where(UserMemory.user_id == user_id)
-            )
-            await session.execute(
-                delete(TasteModel).where(TasteModel.user_id == user_id)
-            )
-            await session.execute(
-                delete(Place).where(Place.user_id == user_id)
-            )
+    async def delete_user_data(
+        self,
+        user_id: str,
+        scopes: set[DataScope] | None = None,
+    ) -> None:
+        """Delete the user's AI-owned data.
 
-        if self._checkpointer is not None:
-            await self._delete_thread_with_retry(user_id)
-        else:
-            logger.warning(
-                "Skipping checkpointer.adelete_thread for user_id=%s — "
-                "checkpointer is None (lifespan not run or warmup failed)",
-                user_id,
-            )
+        `scopes` selects what to delete:
+        - `None` or `{DataScope.all}` → wipe everything (SQL tables +
+          checkpoint thread + debouncer). Default — preserves the
+          original "delete my account" behavior NestJS depends on.
+        - `{DataScope.chat_history}` → only the LangGraph checkpoint
+          thread + any pending taste-regen task. SQL tables untouched.
+        - A set containing `DataScope.all` collapses to "wipe everything"
+          regardless of the other scopes (a no-op union).
+        """
+        active = scopes or {DataScope.all}
+        wipe_all = DataScope.all in active
 
-        self._regen_debouncer.cancel_pending(user_id)
+        if wipe_all:
+            async with (
+                self._session_factory() as session,
+                session.begin(),
+            ):
+                await session.execute(
+                    delete(Interaction).where(Interaction.user_id == user_id)
+                )
+                await session.execute(
+                    delete(Recommendation).where(Recommendation.user_id == user_id)
+                )
+                await session.execute(
+                    delete(UserMemory).where(UserMemory.user_id == user_id)
+                )
+                await session.execute(
+                    delete(TasteModel).where(TasteModel.user_id == user_id)
+                )
+                await session.execute(
+                    delete(Place).where(Place.user_id == user_id)
+                )
+
+        if wipe_all or DataScope.chat_history in active:
+            if self._checkpointer is not None:
+                await self._delete_thread_with_retry(user_id)
+            else:
+                logger.warning(
+                    "Skipping checkpointer.adelete_thread for user_id=%s — "
+                    "checkpointer is None (lifespan not run or warmup failed)",
+                    user_id,
+                )
+            self._regen_debouncer.cancel_pending(user_id)
 
     async def _delete_thread_with_retry(self, user_id: str) -> None:
         """Run `adelete_thread` with bounded retry.

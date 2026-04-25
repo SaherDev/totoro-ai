@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.sql import Delete
 
 from totoro_ai.core.taste.debounce import RegenDebouncer
-from totoro_ai.core.user.service import UserDataDeletionService
+from totoro_ai.core.user.service import DataScope, UserDataDeletionService
 from totoro_ai.db.models import (
     Interaction,
     Place,
@@ -257,3 +257,69 @@ async def test_adelete_thread_exhausted_retries_raises(monkeypatch: object) -> N
         assert "persistent failure" in str(exc)
     assert raised, "expected RuntimeError after retry exhaustion"
     assert checkpointer.adelete_thread.await_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Selective scopes
+# ---------------------------------------------------------------------------
+
+
+async def test_chat_history_scope_skips_sql_deletes() -> None:
+    """`scopes={chat_history}` must NOT touch the SQL tables — only the
+    LangGraph checkpoint thread + debouncer cancellation should fire."""
+    factory, session = _build_session_factory_mock()
+    checkpointer = AsyncMock()
+    debouncer = RegenDebouncer()
+
+    service = UserDataDeletionService(
+        session_factory=factory,
+        checkpointer=checkpointer,
+        regen_debouncer=debouncer,
+    )
+
+    await service.delete_user_data(
+        "user_abc", scopes={DataScope.chat_history}
+    )
+
+    # Session factory was never asked for a session.
+    factory.assert_not_called()
+    session.execute.assert_not_called()
+
+    # Checkpoint thread + debouncer still cleared.
+    checkpointer.adelete_thread.assert_awaited_once_with("user_abc")
+
+
+async def test_all_scope_explicit_is_same_as_no_scope() -> None:
+    """`scopes={all}` should behave identically to passing no scopes."""
+    factory, session = _build_session_factory_mock()
+    service = UserDataDeletionService(
+        session_factory=factory,
+        checkpointer=AsyncMock(),
+        regen_debouncer=RegenDebouncer(),
+    )
+
+    await service.delete_user_data("user_abc", scopes={DataScope.all})
+
+    assert _delete_targets(session) == [
+        Interaction,
+        Recommendation,
+        UserMemory,
+        TasteModel,
+        Place,
+    ]
+
+
+async def test_scope_set_with_all_collapses_to_all() -> None:
+    """Mixing `all` with other scopes still wipes everything (`all` wins)."""
+    factory, session = _build_session_factory_mock()
+    service = UserDataDeletionService(
+        session_factory=factory,
+        checkpointer=AsyncMock(),
+        regen_debouncer=RegenDebouncer(),
+    )
+
+    await service.delete_user_data(
+        "user_abc", scopes={DataScope.all, DataScope.chat_history}
+    )
+
+    assert len(_delete_targets(session)) == 5  # full sweep ran
