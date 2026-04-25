@@ -76,26 +76,31 @@ def test_delete_user_data_scope_all_explicit_passes_all_scope(
     )
 
 
-def test_delete_user_data_unknown_scope_returns_400(svc: AsyncMock) -> None:
+def test_delete_user_data_unknown_scope_returns_422(svc: AsyncMock) -> None:
+    """FastAPI's native enum validation rejects unknown values with 422."""
     client = _make_app(svc)
 
     response = client.delete("/v1/user/user_abc/data?scope=bogus")
 
-    assert response.status_code == 400
+    assert response.status_code == 422
     svc.delete_user_data.assert_not_awaited()
 
 
-def test_delete_user_data_empty_scope_query_treated_as_omitted(
+def test_delete_user_data_repeated_scope_param_collected_into_set(
     svc: AsyncMock,
 ) -> None:
-    """`?scope=` (empty value) should behave like the param wasn't passed
-    — fall back to "wipe everything" rather than 400."""
+    """FastAPI parses `?scope=a&scope=b` into a list; the route folds it
+    into a set before handing off to the service."""
     client = _make_app(svc)
 
-    response = client.delete("/v1/user/user_abc/data?scope=")
+    response = client.delete(
+        "/v1/user/user_abc/data?scope=chat_history&scope=all"
+    )
 
     assert response.status_code == 204
-    svc.delete_user_data.assert_awaited_once_with("user_abc", scopes=None)
+    svc.delete_user_data.assert_awaited_once_with(
+        "user_abc", scopes={DataScope.chat_history, DataScope.all}
+    )
 
 
 def test_delete_user_data_service_exception_returns_500(svc: AsyncMock) -> None:

@@ -1,6 +1,8 @@
 """User-scoped routes (/v1/user/...): taste context fetch and AI-data erase."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, status
 
 from totoro_ai.api.deps import (
     get_places_service,
@@ -13,28 +15,6 @@ from totoro_ai.core.taste.service import TasteModelService
 from totoro_ai.core.user.service import DataScope, UserDataDeletionService
 
 router = APIRouter()
-
-
-def _parse_scope_query(raw: str | None) -> set[DataScope] | None:
-    """Parse the comma-separated `scope` query param into a set of scopes.
-
-    `None` (param omitted or empty) → returns `None` so the service
-    applies its default (wipe everything). Unknown values raise 400.
-    """
-    if not raw:
-        return None
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    valid = {s.value for s in DataScope}
-    invalid = [p for p in parts if p not in valid]
-    if invalid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Unknown scope(s): {invalid}. "
-                f"Valid values: {sorted(valid)}"
-            ),
-        )
-    return {DataScope(p) for p in parts}
 
 
 @router.get("/user/context", response_model=UserContext)
@@ -60,15 +40,17 @@ async def get_user_context(
 @router.delete("/user/{user_id}/data", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user_data(
     user_id: str,
-    scope: str | None = Query(  # noqa: B008
-        default=None,
-        description=(
-            "Comma-separated list of data scopes to delete. Valid: "
-            "'all', 'chat_history'. Omit (or use 'all') to wipe "
-            "everything — current behavior preserved for the NestJS "
-            "account-delete flow."
+    scope: Annotated[
+        list[DataScope] | None,
+        Query(
+            description=(
+                "Optional list of data scopes to delete. Repeat the param "
+                "for multi-value (`?scope=chat_history&scope=...`). "
+                "Omit to wipe everything — preserves the NestJS "
+                "account-delete contract."
+            ),
         ),
-    ),
+    ] = None,
     service: UserDataDeletionService = Depends(get_user_data_deletion_service),  # noqa: B008
 ) -> None:
     """Selectively delete a user's AI-owned data.
@@ -83,9 +65,12 @@ async def delete_user_data(
     agent that learned a stale pattern (e.g. a URL that used to time
     out) without losing the user's data.
 
+    Unknown scope values are rejected by FastAPI's enum validation
+    with a 422 response — no manual error path needed.
+
     Does NOT delete the user account — NestJS owns user lifecycle. The
     product repo calls this endpoint as part of its account-delete flow
     (no `scope`).
     """
-    scopes = _parse_scope_query(scope)
+    scopes = set(scope) if scope else None
     await service.delete_user_data(user_id, scopes=scopes)
