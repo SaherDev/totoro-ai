@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from .models import HoursDict, PlaceObject, PlaceQuery
+from .models import HoursDict, LocationContext, PlaceObject, PlaceQuery
 
 logger = logging.getLogger(__name__)
 
@@ -147,9 +147,11 @@ def _map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     return PlaceObject(
         provider_id=f"google:{raw_id}",
         place_name=place_name,
-        lat=location.get("latitude"),
-        lng=location.get("longitude"),
-        address=raw.get("formattedAddress"),
+        location=LocationContext(
+            lat=location.get("latitude"),
+            lng=location.get("longitude"),
+            address=raw.get("formattedAddress"),
+        ),
         rating=raw.get("rating"),
         hours=_map_hours(raw),
         phone=raw.get("nationalPhoneNumber"),

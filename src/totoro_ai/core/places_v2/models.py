@@ -83,9 +83,7 @@ class PlaceCore(BaseModel):
     attributes: PlaceAttributes = Field(default_factory=PlaceAttributes)
 
     # location (Google-derived; wiped by nightly cron after 30 days per ToS)
-    lat: float | None = None
-    lng: float | None = None
-    address: str | None = None
+    location: LocationContext | None = None
 
     # timestamps
     created_at: datetime | None = None

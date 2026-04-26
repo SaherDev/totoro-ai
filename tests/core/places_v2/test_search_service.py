@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 from totoro_ai.core.places_v2.models import (
+    LocationContext,
     PlaceCore,
     PlaceObject,
     PlaceQuery,
@@ -46,8 +47,9 @@ def _core(pid: str, lat: float | None = 1.0) -> PlaceCore:
         id=pid,
         provider_id=f"google:{pid}",
         place_name=f"Place {pid}",
-        lat=lat,
-        address="Test St" if lat is not None else None,
+        location=(
+            LocationContext(lat=lat, address="Test St") if lat is not None else None
+        ),
     )
 
 
@@ -56,8 +58,7 @@ def _object(pid: str) -> PlaceObject:
         id=pid,
         provider_id=f"google:{pid}",
         place_name=f"Place {pid}",
-        lat=1.0,
-        address="Test St",
+        location=LocationContext(lat=1.0, address="Test St"),
         rating=4.5,
     )
 
@@ -124,8 +125,7 @@ class TestStaleRefresh:
             id="stale",
             provider_id="google:stale",
             place_name="Place stale",
-            lat=13.7,
-            address="Refreshed St",
+            location=LocationContext(lat=13.7, address="Refreshed St"),
         )
         repo = MagicMock(
             search=AsyncMock(return_value=[stale_core, fresh_core, _core("c")]),

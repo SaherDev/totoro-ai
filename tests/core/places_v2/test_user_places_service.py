@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from totoro_ai.core.places_v2.models import (
+    LocationContext,
     PlaceCore,
     PlaceObject,
     PlaceSource,
@@ -36,8 +37,7 @@ def _core(pid: str) -> PlaceCore:
         id=pid,
         provider_id=f"google:{pid}",
         place_name=f"Place {pid}",
-        lat=13.7,
-        address="Test St",
+        location=LocationContext(lat=13.7, address="Test St"),
     )
 
 
@@ -47,8 +47,7 @@ def _cached_object(pid: str) -> PlaceObject:
         provider_id=f"google:{pid}",
         place_name=f"Place {pid}",
         rating=4.2,
-        lat=13.7,
-        address="Test St",
+        location=LocationContext(lat=13.7, address="Test St"),
     )
 
 

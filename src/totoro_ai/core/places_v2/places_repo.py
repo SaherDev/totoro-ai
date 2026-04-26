@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import PlaceAttributes, PlaceCore, PlaceQuery
+from .models import LocationContext, PlaceAttributes, PlaceCore, PlaceQuery
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,7 @@ _PlacesV2Table = Table(
 
 
 def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
+    loc = core.location
     return {
         "id": core.id or str(uuid4()),
         "provider_id": core.provider_id,
@@ -205,11 +206,13 @@ def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
         "category": core.category,
         "tags": core.tags or [],
         "attributes": core.attributes.model_dump(exclude_none=True),
-        "lat": core.lat,
-        "lng": core.lng,
-        "address": core.address,
+        "lat": loc.lat if loc else None,
+        "lng": loc.lng if loc else None,
+        "address": loc.address if loc else None,
         "created_at": core.created_at or now,
-        "refreshed_at": core.refreshed_at or (now if core.lat is not None else None),
+        "refreshed_at": core.refreshed_at or (
+            now if loc and loc.lat is not None else None
+        ),
     }
 
 
@@ -222,6 +225,12 @@ def _row_to_core(row: object) -> PlaceCore:
         PlaceAttributes.model_validate(attrs_raw) if attrs_raw else PlaceAttributes()
     )
 
+    lat, lng, address = m.get("lat"), m.get("lng"), m.get("address")
+    location = (
+        LocationContext(lat=lat, lng=lng, address=address)
+        if lat is not None or lng is not None or address is not None
+        else None
+    )
     return PlaceCore(
         id=m.get("id"),
         provider_id=m.get("provider_id"),
@@ -229,9 +238,7 @@ def _row_to_core(row: object) -> PlaceCore:
         category=m.get("category"),
         tags=list(m.get("tags") or []),
         attributes=attributes,
-        lat=m.get("lat"),
-        lng=m.get("lng"),
-        address=m.get("address"),
+        location=location,
         created_at=m.get("created_at"),
         refreshed_at=m.get("refreshed_at"),
     )

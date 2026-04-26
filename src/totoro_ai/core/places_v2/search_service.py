@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from .models import PlaceCore, PlaceCoreUpsertedEvent, PlaceObject, PlaceQuery
@@ -70,16 +71,18 @@ class PlacesSearchService:
     # ------------------------------------------------------------------
 
     async def _refresh_stale(self, cores: list[PlaceCore]) -> list[PlaceCore]:
-        """Refresh cores with NULL lat/address by re-fetching from Google."""
-        stale = [c for c in cores if c.lat is None or c.address is None]
+        """Refresh stale cores (missing location) from Google in parallel."""
+        stale = [c for c in cores if c.location is None or c.location.lat is None]
         if not stale:
             return cores
 
+        all_results = await asyncio.gather(*[
+            self._client.text_search(PlaceQuery(text=c.place_name), limit=1)
+            for c in stale
+        ])
+
         fresh_map: dict[str, PlaceCore] = {}
-        for core in stale:
-            objects = await self._client.text_search(
-                PlaceQuery(text=core.place_name), limit=1
-            )
+        for core, objects in zip(stale, all_results, strict=False):
             if not objects:
                 continue
             refreshed = await self._repo.upsert_place(objects[0])

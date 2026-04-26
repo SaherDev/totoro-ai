@@ -105,9 +105,9 @@ class TestPlaceCore:
             place_name="Sukhumvit Joe's",
             category="ramen",
             tags=["quiet", "solo-ok"],
-            lat=13.756,
-            lng=100.502,
-            address="1 Sukhumvit, Bangkok",
+            location=LocationContext(
+                lat=13.756, lng=100.502, address="1 Sukhumvit, Bangkok"
+            ),
         )
         assert core.provider_id == "google:ChIJ123"
         assert core.tags == ["quiet", "solo-ok"]
