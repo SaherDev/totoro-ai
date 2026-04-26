@@ -19,6 +19,7 @@ from sqlalchemy import (
     cast,
     func,
     select,
+    update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -205,6 +206,32 @@ class PlacesRepo:
             },
         ).returning(*_PlacesV2Table.c)
 
+        result = await self._session.execute(stmt)
+        await self._session.commit()
+        return [_row_to_core(row._mapping) for row in result]
+
+    async def wipe_stale_locations(self, cutoff: datetime) -> list[PlaceCore]:
+        """Strip Google-derived location from rows last refreshed before cutoff.
+
+        Sets ``location = NULL`` and ``refreshed_at = NULL`` so the row drops
+        into the "needs refresh" branch of `find()` next time it's read. The
+        ``location IS NOT NULL`` filter makes this idempotent — re-running
+        the wipe doesn't touch already-cleared rows.
+
+        Returns the wiped rows (with location/refreshed_at already cleared)
+        so the caller can align cache state with the DB.
+        """
+        stmt = (
+            update(_PlacesV2Table)
+            .where(
+                and_(
+                    _t.location.isnot(None),
+                    _t.refreshed_at < cutoff,
+                )
+            )
+            .values(location=None, refreshed_at=None)
+            .returning(*_PlacesV2Table.c)
+        )
         result = await self._session.execute(stmt)
         await self._session.commit()
         return [_row_to_core(row._mapping) for row in result]

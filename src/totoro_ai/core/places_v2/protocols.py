@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from .models import (
@@ -31,6 +32,8 @@ class PlacesRepoProtocol(Protocol):
 
     async def upsert_places(self, cores: list[PlaceCore]) -> list[PlaceCore]: ...
 
+    async def wipe_stale_locations(self, cutoff: datetime) -> list[PlaceCore]: ...
+
 
 class UserPlacesRepoProtocol(Protocol):
     async def get_by_user(self, user_id: str) -> list[UserPlace]: ...
@@ -50,6 +53,8 @@ class PlacesCacheProtocol(Protocol):
     async def mset(
         self, places: list[PlaceObject], ttl_seconds: int = PLACE_CACHE_TTL_SECONDS
     ) -> None: ...
+
+    async def delete_many(self, provider_ids: list[str]) -> None: ...
 
 
 class PlacesClientProtocol(Protocol):
@@ -76,6 +81,10 @@ class PlaceUpsertServiceProtocol(Protocol):
     async def upsert_many(
         self, candidates: list[PlaceCore]
     ) -> list[PlaceCore]: ...
+
+
+class PlaceWipeServiceProtocol(Protocol):
+    async def wipe_stale_locations(self, retention_days: int = 30) -> int: ...
 
 
 class UserPlacesServiceProtocol(Protocol):

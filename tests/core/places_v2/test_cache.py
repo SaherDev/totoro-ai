@@ -99,3 +99,25 @@ class TestRedisPlacesCacheMset:
         # Should not raise
         obj = PlaceObject(place_name="Ramen", provider_id="google:x")
         await cache.mset([obj])
+
+
+class TestRedisPlacesCacheDeleteMany:
+    async def test_empty_list_is_noop(self, redis_mock: MagicMock) -> None:
+        redis_mock.delete = AsyncMock()
+        cache = _make_cache(redis_mock)
+        await cache.delete_many([])
+        redis_mock.delete.assert_not_called()
+
+    async def test_deletes_prefixed_keys(self, redis_mock: MagicMock) -> None:
+        redis_mock.delete = AsyncMock(return_value=2)
+        cache = _make_cache(redis_mock)
+        await cache.delete_many(["google:a", "google:b"])
+        redis_mock.delete.assert_awaited_once_with(
+            "place_v2:google:a", "place_v2:google:b"
+        )
+
+    async def test_redis_error_is_swallowed(self, redis_mock: MagicMock) -> None:
+        redis_mock.delete = AsyncMock(side_effect=Exception("Redis down"))
+        cache = _make_cache(redis_mock)
+        # Should not raise
+        await cache.delete_many(["google:a"])

@@ -35,7 +35,7 @@ def _make_repo(rows: list[dict] | None = None) -> tuple[PlacesRepo, MagicMock]:
 
 def _minimal_row(
     pid: str = "p1",
-    provider_id: str = "google:abc",
+    provider_id: str | None = "google:abc",
 ) -> dict:
     return {
         "id": pid,
@@ -284,3 +284,78 @@ class TestUpsertPlaces:
             assert f"{col} = excluded.{col}" in compiled, (
                 f"expected {col} = excluded.{col} in: {compiled}"
             )
+
+
+class TestWipeStaleLocations:
+    @staticmethod
+    def _wipe_session(
+        provider_ids: list[str | None],
+    ) -> tuple[PlacesRepo, MagicMock]:
+        rows = [
+            _minimal_row(pid=f"row-{i}", provider_id=p)
+            for i, p in enumerate(provider_ids)
+        ]
+        session = MagicMock()
+        result = MagicMock()
+        result.__iter__ = MagicMock(
+            return_value=iter([MagicMock(_mapping=r) for r in rows])
+        )
+        session.execute = AsyncMock(return_value=result)
+        session.commit = AsyncMock()
+        return PlacesRepo(session), session
+
+    async def test_returns_wiped_cores(self) -> None:
+        repo, session = self._wipe_session(["google:a", "google:b", "google:c"])
+        cutoff = datetime(2026, 1, 1, tzinfo=UTC)
+
+        wiped = await repo.wipe_stale_locations(cutoff)
+
+        assert [c.provider_id for c in wiped] == [
+            "google:a",
+            "google:b",
+            "google:c",
+        ]
+        session.execute.assert_awaited_once()
+        session.commit.assert_awaited_once()
+
+    async def test_returns_cores_with_null_provider_id_intact(self) -> None:
+        """The repo doesn't filter NULL provider_ids — that's the service's call."""
+        repo, _ = self._wipe_session(["google:a", None, "google:c"])
+        wiped = await repo.wipe_stale_locations(datetime.now(UTC))
+        assert [c.provider_id for c in wiped] == ["google:a", None, "google:c"]
+
+    async def test_empty_result_returns_empty_list(self) -> None:
+        repo, _ = self._wipe_session([])
+        assert await repo.wipe_stale_locations(datetime.now(UTC)) == []
+
+    async def test_compiled_sql_pins_set_where_and_returning(self) -> None:
+        """Lock SET, WHERE, and RETURNING clauses against silent SQL drift."""
+        repo, session = self._wipe_session([])
+        cutoff = datetime(2026, 1, 1, tzinfo=UTC)
+
+        await repo.wipe_stale_locations(cutoff)
+
+        stmt = session.execute.call_args.args[0]
+        compiled = str(
+            stmt.compile(
+                dialect=pg_dialect.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        flat = compiled.replace(" ", "")
+        # SET clears both fields
+        assert "location=NULL" in flat
+        assert "refreshed_at=NULL" in flat
+        # WHERE: idempotent guard + age cutoff
+        assert "location IS NOT NULL" in compiled
+        assert "refreshed_at <" in compiled
+        # RETURNING all columns so the caller gets PlaceCore back
+        assert "RETURNING" in compiled.upper()
+        assert "provider_id" in compiled
+        assert "place_name" in compiled
+
+    async def test_commits_after_update(self) -> None:
+        """A wipe must commit; otherwise the txn rolls back at session close."""
+        repo, session = self._wipe_session(["google:a"])
+        await repo.wipe_stale_locations(datetime.now(UTC))
+        session.commit.assert_awaited_once()

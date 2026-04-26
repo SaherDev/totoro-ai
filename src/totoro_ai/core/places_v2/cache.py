@@ -77,3 +77,17 @@ class RedisPlacesCache:
                 await pipe.execute()
         except Exception:
             logger.exception("places_v2_cache_mset_error")
+
+    async def delete_many(self, provider_ids: list[str]) -> None:
+        """Drop cache entries for the given provider_ids.
+
+        Used by the wipe service to keep cache aligned with the DB wipe.
+        Missing keys are a no-op in Redis — safe to call with stale ids.
+        """
+        if not provider_ids:
+            return
+        keys = [f"{_KEY_PREFIX}{pid}" for pid in provider_ids]
+        try:
+            await self._redis.delete(*keys)
+        except Exception:
+            logger.exception("places_v2_cache_delete_error")

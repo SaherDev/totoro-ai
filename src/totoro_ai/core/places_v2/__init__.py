@@ -18,6 +18,7 @@ from .models import (
     SavedPlaceView,
     UserPlace,
 )
+from .place_wipe_service import PlaceWipeService
 from .places_repo import PlacesRepo
 from .protocols import (
     PlacesCacheProtocol,
@@ -25,6 +26,7 @@ from .protocols import (
     PlacesRepoProtocol,
     PlacesSearchServiceProtocol,
     PlaceUpsertServiceProtocol,
+    PlaceWipeServiceProtocol,
     UserPlacesRepoProtocol,
     UserPlacesServiceProtocol,
 )
@@ -77,6 +79,7 @@ __all__ = [
     "PlacesRepoProtocol",
     "PlacesSearchServiceProtocol",
     "PlaceUpsertServiceProtocol",
+    "PlaceWipeServiceProtocol",
     "UserPlacesRepoProtocol",
     "UserPlacesServiceProtocol",
     # implementations
@@ -87,5 +90,6 @@ __all__ = [
     # services
     "PlacesSearchService",
     "PlaceUpsertService",
+    "PlaceWipeService",
     "UserPlacesService",
 ]
