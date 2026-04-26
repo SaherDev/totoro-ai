@@ -189,3 +189,19 @@ class SeasonTag(str, Enum):
     spring = "spring"           # mild — outdoor, light food
     autumn = "autumn"           # mild — outdoor, comfort food
     all_season = "all_season"   # works in any weather
+
+
+# Union of all known tag value enums — or plain str for LLM / custom tags.
+# Use this as the type for PlaceTag.value.
+TagValue = (
+    CuisineTag
+    | DietaryTag
+    | FeatureTag
+    | AtmosphereTag
+    | ServiceTag
+    | PriceTag
+    | AccessibilityTag
+    | TimeTag
+    | SeasonTag
+    | str
+)

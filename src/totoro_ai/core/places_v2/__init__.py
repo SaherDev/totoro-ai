@@ -40,6 +40,7 @@ from .tags import (
     SeasonTag,
     ServiceTag,
     TagType,
+    TagValue,
     TimeTag,
 )
 from .upsert_service import PlaceUpsertService
@@ -58,6 +59,7 @@ __all__ = [
     "AccessibilityTag",
     "TimeTag",
     "SeasonTag",
+    "TagValue",
     # models
     "HoursDict",
     "LocationContext",

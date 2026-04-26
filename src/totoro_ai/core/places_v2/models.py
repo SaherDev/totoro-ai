@@ -14,7 +14,7 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .tags import TagType
+from .tags import TagType, TagValue
 
 
 class PlaceSource(str, Enum):
@@ -157,7 +157,7 @@ class LocationContext(BaseModel):
 
 class PlaceTag(BaseModel):
     type: TagType | str  # TagType for known types; plain str for LLM custom types
-    value: str           # use tag enum values (CuisineTag, FeatureTag, …) or free text
+    value: TagValue      # known enum value (CuisineTag, FeatureTag, …) or free-text str
     source: str          # "google" | "llm" | "manual" | "tiktok" | ...
 
 
