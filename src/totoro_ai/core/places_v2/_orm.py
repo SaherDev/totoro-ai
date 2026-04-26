@@ -30,7 +30,7 @@ class PlaceV2(Base):
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: str(uuid4())
     )
-    provider_id: Mapped[str | None] = mapped_column(String, nullable=True, index=False)
+    provider_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
 
     place_name: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str | None] = mapped_column(String, nullable=True)

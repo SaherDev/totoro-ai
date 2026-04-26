@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from ._place_utils import overlay_with_cache
 from .models import PlaceCore, PlaceCoreUpsertedEvent, PlaceObject, PlaceQuery
 from .protocols import (
     PlaceEventDispatcherProtocol,
@@ -37,7 +38,17 @@ class PlacesSearchService:
         if not db_hits:
             return await self._google_fallback(query, limit)
 
-        return self._overlay(db_hits, await self._mget_by_cores(db_hits))
+        results = overlay_with_cache(db_hits, await self._mget_by_cores(db_hits))
+
+        # min_rating: applied post-overlay because rating lives in cache, not DB.
+        # Places with no cached rating (None) are kept — we don't know their rating.
+        if query.min_rating is not None:
+            results = [
+                r for r in results
+                if r.rating is None or r.rating >= query.min_rating
+            ]
+
+        return results
 
     async def get_by_ids(self, provider_ids: list[str]) -> dict[str, PlaceObject]:
         """Cache mget only — used to enrich a known set of places with live fields."""
@@ -70,6 +81,13 @@ class PlacesSearchService:
         stale = [c for c in cores if c.location is None or c.location.lat is None]
         if not stale:
             return cores
+
+        no_id = [c for c in stale if not c.id]
+        if no_id:
+            logger.warning(
+                "refresh_stale_cores_missing_id",
+                extra={"count": len(no_id), "names": [c.place_name for c in no_id]},
+            )
 
         all_results = await asyncio.gather(*[
             self._client.text_search(PlaceQuery(place_name=c.place_name), limit=1)
@@ -106,29 +124,6 @@ class PlacesSearchService:
         if not provider_ids:
             return {}
         return await self._cache.mget(provider_ids)
-
-    @staticmethod
-    def _overlay(
-        cores: list[PlaceCore],
-        cached: dict[str, PlaceObject],
-    ) -> list[PlaceObject]:
-        result = []
-        for core in cores:
-            if core.provider_id and core.provider_id in cached:
-                cached_obj = cached[core.provider_id]
-                obj = PlaceObject(
-                    **core.model_dump(),
-                    rating=cached_obj.rating,
-                    hours=cached_obj.hours,
-                    phone=cached_obj.phone,
-                    website=cached_obj.website,
-                    popularity=cached_obj.popularity,
-                    cached_at=cached_obj.cached_at,
-                )
-            else:
-                obj = PlaceObject(**core.model_dump())
-            result.append(obj)
-        return result
 
 
 # ---------------------------------------------------------------------------

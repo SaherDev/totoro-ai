@@ -180,7 +180,14 @@ class PlacesRepo:
         """Single-row UPSERT with additive merge for curated fields.
 
         category coalesces (keep existing); tags and location take newest non-NULL.
+        Requires provider_id — without it the conflict target won't fire and
+        concurrent calls can create duplicate rows.
         """
+        if core.provider_id is None:
+            logger.warning(
+                "upsert_place_no_provider_id",
+                extra={"place_name": core.place_name},
+            )
         now = datetime.now(UTC)
         row = _core_to_dict(core, now)
 

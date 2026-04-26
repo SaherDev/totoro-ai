@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .tags import TagType, TagValue
 
@@ -140,6 +140,8 @@ class PlaceCategory(str, Enum):
 # weekday → list of "HH:MM-HH:MM" ranges, plus "timezone" key for IANA string
 HoursDict: TypeAlias = dict[str, list[str] | str]
 
+PLACE_CACHE_TTL_SECONDS: int = 2_592_000  # 30 days — Google ToS compliance
+
 
 class LocationContext(BaseModel):
     """Location container used in PlaceQuery and optionally PlaceCore.attributes."""
@@ -189,6 +191,16 @@ class PlaceQuery(BaseModel):
     open_now: bool | None = None     # only return currently open places
     min_rating: float | None = None  # e.g. 4.0 — filters results
 
+    @model_validator(mode="after")
+    def _validate_geo_location(self) -> PlaceQuery:
+        loc = self.location
+        has_coords = loc and (loc.lat is not None or loc.lng is not None)
+        if has_coords and loc.radius_m is None:  # type: ignore[union-attr]
+            raise ValueError(
+                "location.radius_m is required when lat or lng is provided"
+            )
+        return self
+
 
 class PlaceCore(BaseModel):
     """Canonical place data. DB-side. Same for all users.
@@ -199,7 +211,17 @@ class PlaceCore(BaseModel):
 
     # identity
     id: str | None = None
-    provider_id: str | None = None  # namespaced, e.g. "google:ChIJ..."
+    # namespaced: "<provider>:<id>", e.g. "google:ChIJ..."
+    provider_id: str | None = None
+
+    @field_validator("provider_id")
+    @classmethod
+    def _validate_provider_id(cls, v: str | None) -> str | None:
+        if v is not None and ":" not in v:
+            raise ValueError(
+                f"provider_id must be namespaced (e.g. 'google:ChIJ...'), got: {v!r}"
+            )
+        return v
 
     # core (mergeable)
     place_name: str
@@ -215,7 +237,12 @@ class PlaceCore(BaseModel):
 
 
 class PlaceObject(PlaceCore):
-    """Full place: PlaceCore + Google-derived live fields. Cache-only for live half."""
+    """Full place: PlaceCore + Google-derived live fields. Cache-only for live half.
+
+    cached_at is set when this object was written to cache (always populated for
+    objects that came from Google). It is None for objects reconstructed from DB
+    cores that have no cache entry yet.
+    """
 
     rating: float | None = None
     hours: HoursDict | None = None

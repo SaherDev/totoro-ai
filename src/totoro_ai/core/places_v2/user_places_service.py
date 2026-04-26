@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from .models import PlaceObject, SavedPlaceView, UserPlace
+import logging
+
+from ._place_utils import overlay_with_cache
+from .models import SavedPlaceView, UserPlace
 from .protocols import (
     PlacesRepoProtocol,
     PlacesSearchServiceProtocol,
     UserPlacesRepoProtocol,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class UserPlacesService:
@@ -34,26 +39,21 @@ class UserPlacesService:
         provider_ids = [c.provider_id for c in cores if c.provider_id]
         cached = await self._search.get_by_ids(provider_ids) if provider_ids else {}
 
+        place_objects = {
+            obj.id: obj
+            for obj in overlay_with_cache(list(cores_by_id.values()), cached)
+            if obj.id
+        }
+
         result: list[SavedPlaceView] = []
         for up in user_places:
-            core = cores_by_id.get(up.place_id)
-            if core is None:
-                continue
-
-            if core.provider_id and core.provider_id in cached:
-                cached_obj = cached[core.provider_id]
-                place = PlaceObject(
-                    **core.model_dump(),
-                    rating=cached_obj.rating,
-                    hours=cached_obj.hours,
-                    phone=cached_obj.phone,
-                    website=cached_obj.website,
-                    popularity=cached_obj.popularity,
-                    cached_at=cached_obj.cached_at,
+            place = place_objects.get(up.place_id)
+            if place is None:
+                logger.warning(
+                    "user_place_missing_core",
+                    extra={"place_id": up.place_id, "user_id": user_id},
                 )
-            else:
-                place = PlaceObject(**core.model_dump())
-
+                continue
             result.append(SavedPlaceView(place=place, user_data=up))
 
         return result

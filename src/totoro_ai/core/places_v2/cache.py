@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .models import PlaceObject
+from .models import PLACE_CACHE_TTL_SECONDS, PlaceObject
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -47,7 +47,7 @@ class RedisPlacesCache:
         return result
 
     async def mset(
-        self, places: list[PlaceObject], ttl_seconds: int = 2_592_000
+        self, places: list[PlaceObject], ttl_seconds: int = PLACE_CACHE_TTL_SECONDS
     ) -> None:
         to_cache = [p for p in places if p.provider_id]
         if not to_cache:

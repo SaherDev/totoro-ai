@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from .models import (
+    PLACE_CACHE_TTL_SECONDS,
     PlaceCore,
     PlaceCoreUpsertedEvent,
     PlaceObject,
@@ -48,7 +49,7 @@ class PlacesCacheProtocol(Protocol):
     ) -> dict[str, PlaceObject]: ...
 
     async def mset(
-        self, places: list[PlaceObject], ttl_seconds: int = 2_592_000
+        self, places: list[PlaceObject], ttl_seconds: int = PLACE_CACHE_TTL_SECONDS
     ) -> None: ...
 
 
