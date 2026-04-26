@@ -131,8 +131,8 @@ class TestPlaceObject:
 class TestPlaceQuery:
     def test_all_optional(self) -> None:
         q = PlaceQuery()
-        assert q.text is None
         assert q.tags == []
+        assert q.location is None
 
     def test_location_context_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):

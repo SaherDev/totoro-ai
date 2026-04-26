@@ -52,14 +52,10 @@ class PlaceAttributes(BaseModel):
 
 
 class PlaceQuery(BaseModel):
-    """Structured search query. All fields optional; combine as needed.
+    """Structured search query. All fields optional; combine as needed."""
 
-    Callers compose filters explicitly — the library never parses freeform
-    strings to determine intent.
-    """
-
-    text: str | None = None
     location: LocationContext | None = None
+    category: str | None = None
     tags: list[str] = Field(default_factory=list)
     cuisine: str | None = None
     price_hint: str | None = None

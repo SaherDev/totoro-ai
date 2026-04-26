@@ -31,20 +31,22 @@ class PlacesSearchService:
         self._dispatcher = event_dispatcher
         self._db_min_hits = db_min_hits
 
-    async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
+    async def search(
+        self, query: PlaceQuery, limit: int = 20, text: str | None = None
+    ) -> list[PlaceObject]:
         """Warm path: DB → cache overlay → return if ≥ db_min_hits.
-        Cold path: Google → dual-write cache + DB → emit events → return merged.
+        Cold path (requires text): Google → dual-write cache + DB → emit events.
         """
         db_hits = await self._repo.search(query, limit)
 
         # Inline stale refresh for rows with missing location data
         db_hits = await self._refresh_stale(db_hits)
 
-        if len(db_hits) >= self._db_min_hits:
+        if len(db_hits) >= self._db_min_hits or not text:
             return self._overlay(db_hits, await self._mget_by_cores(db_hits))
 
         # Cold path
-        new_objects = await self._client.text_search(query, limit)
+        new_objects = await self._client.text_search(text, limit)
         if not new_objects:
             # Return what we have even below threshold
             return self._overlay(db_hits, await self._mget_by_cores(db_hits))
@@ -79,7 +81,7 @@ class PlacesSearchService:
 
         # Parallel Google lookups
         all_results = await asyncio.gather(*[
-            self._client.text_search(PlaceQuery(text=c.place_name), limit=1)
+            self._client.text_search(c.place_name, limit=1)
             for c in stale
         ])
 

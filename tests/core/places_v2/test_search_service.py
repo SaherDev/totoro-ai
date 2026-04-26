@@ -81,7 +81,7 @@ class TestWarmPath:
         client = MagicMock(text_search=AsyncMock(return_value=[]))
 
         svc = _make_service(repo=repo, cache=cache, client=client, db_min_hits=3)
-        results = await svc.search(PlaceQuery(text="ramen"), limit=20)
+        results = await svc.search(PlaceQuery(), limit=20)
 
         assert len(results) == 3
         # b should have live fields overlaid
@@ -109,7 +109,7 @@ class TestWarmPath:
         svc = _make_service(
             repo=repo, cache=cache, client=client, dispatcher=dispatcher, db_min_hits=3
         )
-        results = await svc.search(PlaceQuery(text="ramen"), limit=20)
+        results = await svc.search(PlaceQuery(), text="ramen", limit=20)
 
         client.text_search.assert_awaited_once()
         cache.mset.assert_awaited_once_with(new_objects)
@@ -148,7 +148,7 @@ class TestStaleRefresh:
         svc = _make_service(
             repo=repo, cache=cache, client=client, dispatcher=dispatcher, db_min_hits=3
         )
-        await svc.search(PlaceQuery(text="ramen"), limit=20)
+        await svc.search(PlaceQuery(), limit=20)
 
         repo.upsert_places.assert_awaited_once()
         dispatcher.emit_upserted.assert_awaited_once()

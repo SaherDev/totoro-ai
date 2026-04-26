@@ -88,22 +88,6 @@ def upgrade() -> None:
         """
     )
 
-    # FTS expression index over name, category, tags, and cuisine attribute.
-    op.execute(
-        """
-        CREATE INDEX places_v2_fts_idx
-        ON places_v2
-        USING gin (
-            to_tsvector('english',
-                coalesce(place_name, '') || ' ' ||
-                coalesce(category, '') || ' ' ||
-                coalesce(array_to_string(tags, ' '), '') || ' ' ||
-                coalesce(attributes->>'cuisine', '')
-            )
-        )
-        """
-    )
-
     # ------------------------------------------------------------------
     # user_places table
     # Per (user, place) pair. Status flags and provenance live here.
@@ -153,7 +137,6 @@ def downgrade() -> None:
     op.drop_index("ix_user_places_user_id", table_name="user_places")
     op.drop_table("user_places")
 
-    op.execute("DROP INDEX IF EXISTS places_v2_fts_idx")
     op.execute("DROP INDEX IF EXISTS places_v2_geo_idx")
     op.execute("DROP INDEX IF EXISTS uq_places_v2_provider_id")
     op.drop_table("places_v2")

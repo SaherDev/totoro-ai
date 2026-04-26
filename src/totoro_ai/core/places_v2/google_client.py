@@ -51,25 +51,15 @@ class GooglePlacesClient:
         self._http = http
 
     async def text_search(
-        self, query: PlaceQuery, limit: int = 20
+        self, text: str, limit: int = 20
     ) -> list[PlaceObject]:
-        if not query.text:
+        if not text:
             return []
 
         body: dict[str, Any] = {
-            "textQuery": query.text,
+            "textQuery": text,
             "maxResultCount": min(limit, 20),
         }
-
-        loc = query.location
-        if loc and loc.lat is not None and loc.lng is not None:
-            radius = loc.radius_m or 50_000
-            body["locationBias"] = {
-                "circle": {
-                    "center": {"latitude": loc.lat, "longitude": loc.lng},
-                    "radius": float(radius),
-                }
-            }
 
         return await self._post(":searchText", body, limit)
 

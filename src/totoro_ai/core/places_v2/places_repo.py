@@ -52,18 +52,9 @@ class PlacesRepo:
         conditions: list[str] = []
         params: dict[str, object] = {"limit": limit}
 
-        if query.text:
-            conditions.append(
-                """
-                to_tsvector('english',
-                    coalesce(place_name, '') || ' ' ||
-                    coalesce(category, '') || ' ' ||
-                    coalesce(array_to_string(tags, ' '), '') || ' ' ||
-                    coalesce(attributes->>'cuisine', '')
-                ) @@ plainto_tsquery('english', :fts_text)
-                """
-            )
-            params["fts_text"] = query.text
+        if query.category:
+            conditions.append("category ILIKE :category")
+            params["category"] = f"%{query.category}%"
 
         if query.tags:
             conditions.append("tags @> :tags")
