@@ -9,7 +9,11 @@ from typing import Any
 import httpx
 
 from ._google_mapper import map_place
-from ._google_query_builder import query_to_google_text, query_to_google_types
+from ._google_query_builder import (
+    build_text_search_params,
+    query_to_google_text,
+    query_to_google_types,
+)
 from .models import PlaceObject, PlaceQuery
 
 logger = logging.getLogger(__name__)
@@ -81,7 +85,7 @@ class GooglePlacesClient:
         query: PlaceQuery,
         limit: int = 20,
     ) -> list[PlaceObject]:
-        text = query_to_google_text(query)
+        text, included_type = build_text_search_params(query)
         if not text:
             return []
         loc = query.location
@@ -101,9 +105,8 @@ class GooglePlacesClient:
                     "radius": float(loc.radius_m),
                 }
             }
-        google_types = query_to_google_types(query)
-        if google_types:
-            body["includedType"] = google_types[0]  # text search accepts one type
+        if included_type:
+            body["includedType"] = included_type
         _apply_common_filters(body, query)
         return await self._post(":searchText", body)
 

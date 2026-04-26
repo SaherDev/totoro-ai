@@ -176,6 +176,53 @@ def query_to_google_types(query: PlaceQuery) -> list[str]:
     return types
 
 
+def build_text_search_params(query: PlaceQuery) -> tuple[str, str | None]:
+    """Build (textQuery, includedType) for Google searchText.
+
+    The first term mappable to a Google type ID (category checked before
+    tags) becomes includedType, and that same term is omitted from
+    textQuery to avoid sending the same concept twice.
+
+    Edge case: searchText requires a non-empty textQuery. If stripping
+    the type-mapped term would leave textQuery empty, the term is kept
+    in text (the duplication is forced by Google's API contract).
+    """
+    primary_type: str | None = None
+    primary_term: str | None = None
+    text_parts: list[str] = []
+
+    if query.place_name:
+        text_parts.append(query.place_name)
+
+    if query.category:
+        cat_text = query.category.value.replace("_", " ")
+        gtype = _CATEGORY_TO_GOOGLE_TYPE.get(query.category.value)
+        if gtype and primary_type is None:
+            primary_type = gtype
+            primary_term = cat_text
+        else:
+            text_parts.append(cat_text)
+
+    if query.tags:
+        for tag_val in query.tags:
+            if tag_val in GOOGLE_SKIP_VALUES:
+                continue
+            tag_text = str(tag_val).replace("_", " ")
+            gtype = _TAG_TO_GOOGLE_TYPE.get(str(tag_val))
+            if gtype and primary_type is None:
+                primary_type = gtype
+                primary_term = tag_text
+            else:
+                text_parts.append(tag_text)
+
+    # If everything else was empty, keep the type-mapped term in text —
+    # Google searchText rejects an empty textQuery.
+    if not text_parts and primary_term is not None:
+        text_parts.append(primary_term)
+
+    return " ".join(dict.fromkeys(text_parts)), primary_type
+
+
 def query_to_google_text(query: PlaceQuery) -> str:
     """Convert a PlaceQuery into a natural-language Google textQuery string.
 
