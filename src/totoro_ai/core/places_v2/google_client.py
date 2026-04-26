@@ -137,6 +137,12 @@ class GooglePlacesClient:
             },
             "maxResultCount": min(limit, 20),
         }
+        if query.category:
+            body["includedTypes"] = [query.category.value]
+        if query.open_now is True:
+            body["openNow"] = True
+        if query.min_rating is not None:
+            body["minRating"] = query.min_rating
         return await self._post(":searchNearby", body, limit)
 
     async def _post(
