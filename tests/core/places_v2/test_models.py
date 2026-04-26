@@ -16,6 +16,7 @@ from totoro_ai.core.places_v2.models import (
     PlaceObject,
     PlaceQuery,
     PlaceSource,
+    PlaceTag,
     SavedPlaceView,
     UserPlace,
 )
@@ -91,10 +92,38 @@ class TestUserPlaceValidation:
         assert up.liked is None
 
 
+class TestPlaceTag:
+    def test_construction(self) -> None:
+        tag = PlaceTag(type="cuisine", value="Thai", source="google")
+        assert tag.type == "cuisine"
+        assert tag.value == "Thai"
+        assert tag.source == "google"
+
+    def test_place_attributes_tags(self) -> None:
+        attrs = PlaceAttributes(
+            price_hint="$$",
+            tags=[
+                PlaceTag(type="cuisine", value="Thai", source="google"),
+                PlaceTag(type="feature", value="outdoor_seating", source="google"),
+                PlaceTag(type="dietary", value="vegan", source="llm"),
+            ],
+        )
+        assert attrs.price_hint == "$$"
+        assert len(attrs.tags) == 3
+        assert attrs.tags[0].value == "Thai"
+        assert attrs.tags[2].source == "llm"
+
+    def test_attributes_defaults(self) -> None:
+        attrs = PlaceAttributes()
+        assert attrs.price_hint is None
+        assert attrs.tags == []
+
+
 class TestPlaceCore:
     def test_defaults(self) -> None:
         core = PlaceCore(place_name="Sukhumvit Joe's")
         assert core.attributes == PlaceAttributes()
+        assert core.attributes.tags == []
         assert core.id is None
         assert core.provider_id is None
         assert isinstance(core.attributes, PlaceAttributes)
@@ -132,6 +161,8 @@ class TestPlaceQuery:
     def test_all_optional(self) -> None:
         q = PlaceQuery()
         assert q.category is None
+        assert q.tags is None
+        assert q.price_hint is None
         assert q.location is None
 
     def test_location_context_extra_forbidden(self) -> None:

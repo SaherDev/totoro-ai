@@ -153,24 +153,28 @@ class LocationContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PlaceTag(BaseModel):
+    type: str   # "cuisine" | "dietary" | "feature" | "service" | "atmosphere"
+    value: str  # e.g. "Thai", "vegan", "outdoor_seating", "takeout", "cozy"
+    source: str  # "google" | "llm" | "manual" | "tiktok" | ...
+
+
 class PlaceAttributes(BaseModel):
-    cuisine: str | None = None
     price_hint: str | None = None
-    ambiance: str | None = None
-    dietary: list[str] = Field(default_factory=list)
-    good_for: list[str] = Field(default_factory=list)
-    location_context: LocationContext | None = None
+    tags: list[PlaceTag] = Field(default_factory=list)
 
 
 SortField = Literal["created_at", "refreshed_at", "place_name", "category"]
 
 
 class PlaceQuery(BaseModel):
-    """Structured search query. Mirrors PlaceCore fields — all optional."""
+    """Structured search query. All fields optional, combined with AND."""
 
     place_name: str | None = None
     category: PlaceCategory | None = None
-    attributes: PlaceAttributes | None = None
+    # filter by tag values (all must be present, source/type ignored)
+    tags: list[str] | None = None
+    price_hint: str | None = None
     location: LocationContext | None = None
 
     # date range

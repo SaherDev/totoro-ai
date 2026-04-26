@@ -11,6 +11,7 @@ from .models import (
     PlaceAttributes,
     PlaceCategory,
     PlaceObject,
+    PlaceTag,
 )
 
 # ---------------------------------------------------------------------------
@@ -225,6 +226,30 @@ _GOOGLE_TYPE_TO_DIETARY: dict[str, list[str]] = {
     "halal_restaurant": ["halal"],
 }
 
+# Google boolean Place fields → feature/service tag values
+_GOOGLE_BOOL_TO_TAG: dict[str, tuple[str, str]] = {
+    # (tag_type, tag_value)
+    "dineIn": ("service", "dine_in"),
+    "takeout": ("service", "takeout"),
+    "delivery": ("service", "delivery"),
+    "reservable": ("service", "reservable"),
+    "servesBreakfast": ("service", "serves_breakfast"),
+    "servesBrunch": ("service", "serves_brunch"),
+    "servesLunch": ("service", "serves_lunch"),
+    "servesDinner": ("service", "serves_dinner"),
+    "servesBeer": ("service", "serves_beer"),
+    "servesWine": ("service", "serves_wine"),
+    "servesCocktails": ("service", "serves_cocktails"),
+    "servesVegetarianFood": ("dietary", "vegetarian_options"),
+    "outdoorSeating": ("feature", "outdoor_seating"),
+    "liveMusic": ("feature", "live_music"),
+    "menuForChildren": ("feature", "kids_menu"),
+    "allowsDogs": ("feature", "dog_friendly"),
+    "goodForChildren": ("feature", "family_friendly"),
+    "goodForGroups": ("feature", "group_friendly"),
+    "goodForWatchingSports": ("feature", "sports_viewing"),
+}
+
 # addressComponents type → LocationContext field name
 _ADDR_COMPONENT_TO_FIELD: dict[str, str] = {
     "locality": "city",
@@ -261,15 +286,30 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     types: list[str] = raw.get("types") or []
     category_str = _map_category(types)
     category = PlaceCategory(category_str) if category_str else None
-    cuisine = next(
-        (_GOOGLE_TYPE_TO_CUISINE[t] for t in types if t in _GOOGLE_TYPE_TO_CUISINE),
-        None,
-    )
-    dietary: list[str] = []
+
+    tags: list[PlaceTag] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add_tag(tag_type: str, value: str) -> None:
+        key = (tag_type, value)
+        if key not in seen:
+            seen.add(key)
+            tags.append(PlaceTag(type=tag_type, value=value, source="google"))
+
+    # cuisine tags from place types
+    for t in types:
+        if t in _GOOGLE_TYPE_TO_CUISINE:
+            _add_tag("cuisine", _GOOGLE_TYPE_TO_CUISINE[t])
+
+    # dietary tags from place types
     for t in types:
         for item in _GOOGLE_TYPE_TO_DIETARY.get(t, []):
-            if item not in dietary:
-                dietary.append(item)
+            _add_tag("dietary", item)
+
+    # feature/service tags from boolean fields
+    for field, (tag_type, tag_value) in _GOOGLE_BOOL_TO_TAG.items():
+        if raw.get(field) is True:
+            _add_tag(tag_type, tag_value)
 
     price_hint = _PRICE_LEVEL_MAP.get(raw.get("priceLevel") or "")
 
@@ -281,9 +321,8 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
         place_name=place_name,
         category=category,
         attributes=PlaceAttributes(
-            cuisine=cuisine,
             price_hint=price_hint,
-            dietary=dietary,
+            tags=tags,
         ),
         location=LocationContext(
             lat=raw_loc.get("latitude"),

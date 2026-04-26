@@ -15,6 +15,7 @@ from .models import (
     PlaceObject,
     PlaceQuery,
     PlaceSource,
+    PlaceTag,
     SavedPlaceView,
     UserPlace,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "PlaceObject",
     "PlaceQuery",
     "PlaceSource",
+    "PlaceTag",
     "SavedPlaceView",
     "UserPlace",
     # protocols

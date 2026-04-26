@@ -89,29 +89,18 @@ class PlacesRepo:
         if query.category:
             conditions.append(_t.category == query.category.value)
 
-        attrs = query.attributes
-        if attrs and attrs.cuisine:
+        if query.price_hint:
             conditions.append(
-                _t.attributes["cuisine"].astext.ilike(f"%{attrs.cuisine}%")
+                _t.attributes["price_hint"].astext == query.price_hint
             )
-        if attrs and attrs.price_hint:
-            conditions.append(_t.attributes["price_hint"].astext == attrs.price_hint)
-        if attrs and attrs.ambiance:
-            conditions.append(
-                _t.attributes["ambiance"].astext.ilike(f"%{attrs.ambiance}%")
-            )
-        if attrs and attrs.dietary:
-            conditions.append(
-                _t.attributes["dietary"].op("@>")(
-                    cast(json.dumps(attrs.dietary), JSONB)
+        if query.tags:
+            # AND semantics: every requested tag value must be present
+            for tag_val in query.tags:
+                conditions.append(
+                    _t.attributes["tags"].op("@>")(
+                        cast(json.dumps([{"value": tag_val}]), JSONB)
+                    )
                 )
-            )
-        if attrs and attrs.good_for:
-            conditions.append(
-                _t.attributes["good_for"].op("@>")(
-                    cast(json.dumps(attrs.good_for), JSONB)
-                )
-            )
 
         loc = query.location
         if loc and loc.city:
