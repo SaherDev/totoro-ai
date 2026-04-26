@@ -10,7 +10,6 @@ from .models import (
     LocationContext,
     PlaceCategory,
     PlaceCore,
-    PlaceCoreUpsertedEvent,
     PlaceNameAlias,
     PlaceObject,
     PlaceQuery,
@@ -21,7 +20,6 @@ from .models import (
 )
 from .places_repo import PlacesRepo
 from .protocols import (
-    PlaceEventDispatcherProtocol,
     PlacesCacheProtocol,
     PlacesClientProtocol,
     PlacesRepoProtocol,
@@ -66,7 +64,6 @@ __all__ = [
     "LocationContext",
     "PlaceCategory",
     "PlaceCore",
-    "PlaceCoreUpsertedEvent",
     "PlaceNameAlias",
     "PlaceObject",
     "PlaceQuery",
@@ -75,7 +72,6 @@ __all__ = [
     "SavedPlaceView",
     "UserPlace",
     # protocols
-    "PlaceEventDispatcherProtocol",
     "PlacesCacheProtocol",
     "PlacesClientProtocol",
     "PlacesRepoProtocol",

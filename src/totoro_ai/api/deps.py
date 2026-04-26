@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging as _logging
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, Request
@@ -31,8 +30,6 @@ from totoro_ai.core.places_v2 import (
     GooglePlacesClient as GooglePlacesClientV2,
 )
 from totoro_ai.core.places_v2 import (
-    PlaceCoreUpsertedEvent,
-    PlaceEventDispatcherProtocol,
     PlacesRepo,
     PlacesSearchService,
     PlaceUpsertService,
@@ -476,23 +473,6 @@ async def get_chat_service(
 # places_v2 dependencies
 # ---------------------------------------------------------------------------
 
-_places_v2_logger = _logging.getLogger(__name__)
-
-
-class _LogPlaceEventDispatcher:
-    """Stub event dispatcher that logs upserted events.
-
-    Real embedding subscriber is wired here once the embeddings module
-    exposes a PlaceCoreUpsertedEvent handler.
-    """
-
-    async def emit_upserted(self, event: PlaceCoreUpsertedEvent) -> None:
-        for core in event.place_cores:
-            _places_v2_logger.info(
-                "place_core_upserted",
-                extra={"place_id": core.id, "provider_id": core.provider_id},
-            )
-
 
 def _build_places_v2_cache() -> RedisPlacesCache:
     """Construct a RedisPlacesCache from the Redis URL in secrets."""
@@ -529,22 +509,11 @@ def get_google_places_client_v2() -> GooglePlacesClientV2:
     return GooglePlacesClientV2(api_key=api_key, http=httpx.AsyncClient())
 
 
-def get_place_event_dispatcher_v2() -> PlaceEventDispatcherProtocol:
-    """FastAPI dependency providing PlaceEventDispatcherProtocol (places_v2).
-
-    Returns the stub log-only dispatcher. Wire real embedding subscriber here.
-    """
-    return _LogPlaceEventDispatcher()  # type: ignore[return-value]
-
-
 def get_place_upsert_service(
     repo: PlacesRepo = Depends(get_places_v2_repo),  # noqa: B008
-    event_dispatcher: PlaceEventDispatcherProtocol = Depends(  # noqa: B008
-        get_place_event_dispatcher_v2
-    ),
 ) -> PlaceUpsertService:
     """FastAPI dependency providing PlaceUpsertService (places_v2)."""
-    return PlaceUpsertService(repo=repo, event_dispatcher=event_dispatcher)
+    return PlaceUpsertService(repo=repo)
 
 
 def get_places_search_service(

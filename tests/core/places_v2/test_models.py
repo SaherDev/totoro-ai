@@ -11,7 +11,6 @@ from totoro_ai.core.places_v2.models import (
     LocationContext,
     PlaceCategory,
     PlaceCore,
-    PlaceCoreUpsertedEvent,
     PlaceObject,
     PlaceQuery,
     PlaceSource,
@@ -175,10 +174,3 @@ class TestSavedPlaceView:
         )
         view = SavedPlaceView(place=place, user_data=up)
         assert view.place.place_name == "Cafe X"
-
-
-class TestPlaceCoreUpsertedEvent:
-    def test_construction(self) -> None:
-        core = PlaceCore(place_name="Test")
-        event = PlaceCoreUpsertedEvent(place_cores=[core])
-        assert event.place_cores[0].place_name == "Test"

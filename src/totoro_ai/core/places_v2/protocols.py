@@ -7,7 +7,6 @@ from typing import Protocol
 from .models import (
     PLACE_CACHE_TTL_SECONDS,
     PlaceCore,
-    PlaceCoreUpsertedEvent,
     PlaceObject,
     PlaceQuery,
     SavedPlaceView,
@@ -63,10 +62,6 @@ class PlacesClientProtocol(Protocol):
     async def nearby_search(
         self, query: PlaceQuery, limit: int = 20
     ) -> list[PlaceObject]: ...
-
-
-class PlaceEventDispatcherProtocol(Protocol):
-    async def emit_upserted(self, event: PlaceCoreUpsertedEvent) -> None: ...
 
 
 class PlacesSearchServiceProtocol(Protocol):

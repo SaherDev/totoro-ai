@@ -8,7 +8,6 @@ import pytest
 
 from totoro_ai.core.places_v2.models import (
     PlaceCore,
-    PlaceCoreUpsertedEvent,
     PlaceNameAlias,
     PlaceTag,
 )
@@ -24,15 +23,8 @@ def mock_repo() -> MagicMock:
 
 
 @pytest.fixture
-def mock_dispatcher() -> MagicMock:
-    dispatcher = MagicMock()
-    dispatcher.emit_upserted = AsyncMock()
-    return dispatcher
-
-
-@pytest.fixture
-def service(mock_repo: MagicMock, mock_dispatcher: MagicMock) -> PlaceUpsertService:
-    return PlaceUpsertService(repo=mock_repo, event_dispatcher=mock_dispatcher)
+def service(mock_repo: MagicMock) -> PlaceUpsertService:
+    return PlaceUpsertService(repo=mock_repo)
 
 
 class TestUpsertMany:
@@ -40,19 +32,16 @@ class TestUpsertMany:
         self,
         service: PlaceUpsertService,
         mock_repo: MagicMock,
-        mock_dispatcher: MagicMock,
     ) -> None:
         result = await service.upsert_many([])
         assert result == []
         mock_repo.get_by_provider_ids.assert_not_called()
         mock_repo.upsert_places.assert_not_called()
-        mock_dispatcher.emit_upserted.assert_not_called()
 
     async def test_first_write_passes_candidate_through(
         self,
         service: PlaceUpsertService,
         mock_repo: MagicMock,
-        mock_dispatcher: MagicMock,
     ) -> None:
         candidate = PlaceCore(place_name="Ramen Spot", provider_id="google:abc")
         persisted = PlaceCore(
@@ -69,41 +58,6 @@ class TestUpsertMany:
         passed = mock_repo.upsert_places.call_args.args[0]
         assert passed[0].place_name == "Ramen Spot"
         assert result == [persisted]
-
-    async def test_emits_event_with_persisted_cores(
-        self,
-        service: PlaceUpsertService,
-        mock_repo: MagicMock,
-        mock_dispatcher: MagicMock,
-    ) -> None:
-        persisted = PlaceCore(
-            id="x", place_name="Cafe", provider_id="google:c"
-        )
-        mock_repo.upsert_places.return_value = [persisted]
-
-        await service.upsert_many(
-            [PlaceCore(place_name="Cafe", provider_id="google:c")]
-        )
-
-        mock_dispatcher.emit_upserted.assert_awaited_once()
-        event: PlaceCoreUpsertedEvent = (
-            mock_dispatcher.emit_upserted.call_args.args[0]
-        )
-        assert event.place_cores == [persisted]
-
-    async def test_no_event_when_repo_returns_empty(
-        self,
-        service: PlaceUpsertService,
-        mock_repo: MagicMock,
-        mock_dispatcher: MagicMock,
-    ) -> None:
-        mock_repo.upsert_places.return_value = []
-
-        await service.upsert_many(
-            [PlaceCore(place_name="Cafe", provider_id="google:c")]
-        )
-
-        mock_dispatcher.emit_upserted.assert_not_called()
 
     async def test_merges_existing_against_candidate(
         self,

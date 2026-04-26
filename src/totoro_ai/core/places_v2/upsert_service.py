@@ -1,30 +1,25 @@
 """PlaceUpsertService — single gateway for all place writes.
 
 Reads existing rows by provider_id, applies the merge policy, hands the
-result to the repo, and emits an upserted event. The repo never sees raw
-candidates and never applies merge logic of its own.
+result to the repo. The repo never sees raw candidates and never applies
+merge logic of its own.
 """
 
 from __future__ import annotations
 
 from ._place_merge import merge_place
-from .models import PlaceCore, PlaceCoreUpsertedEvent
-from .protocols import PlaceEventDispatcherProtocol, PlacesRepoProtocol
+from .models import PlaceCore
+from .protocols import PlacesRepoProtocol
 
 
 class PlaceUpsertService:
-    def __init__(
-        self,
-        repo: PlacesRepoProtocol,
-        event_dispatcher: PlaceEventDispatcherProtocol,
-    ) -> None:
+    def __init__(self, repo: PlacesRepoProtocol) -> None:
         self._repo = repo
-        self._dispatcher = event_dispatcher
 
     async def upsert_many(
         self, candidates: list[PlaceCore]
     ) -> list[PlaceCore]:
-        """Read existing → merge per candidate → bulk write → emit event.
+        """Read existing → merge per candidate → bulk write.
 
         Requires every candidate to carry a provider_id (identity must be
         resolved upstream before reaching this layer). The repo enforces
@@ -45,9 +40,4 @@ class PlaceUpsertService:
             for c in candidates
         ]
 
-        persisted = await self._repo.upsert_places(merged)
-        if persisted:
-            await self._dispatcher.emit_upserted(
-                PlaceCoreUpsertedEvent(place_cores=persisted)
-            )
-        return persisted
+        return await self._repo.upsert_places(merged)
