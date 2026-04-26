@@ -272,6 +272,12 @@ class PlaceObject(PlaceCore):
     popularity: int | None = None
     cached_at: datetime | None = None
 
+    def to_core(self) -> PlaceCore:
+        """Strip live fields to get the persistable PlaceCore."""
+        return PlaceCore.model_validate(
+            self.model_dump(include=set(PlaceCore.model_fields))
+        )
+
 
 class UserPlace(BaseModel):
     """One row per (user, place). Holds everything the user owns about this place."""

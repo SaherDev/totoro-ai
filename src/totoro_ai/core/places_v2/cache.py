@@ -28,7 +28,8 @@ def _shared_redis_client(url: str) -> Redis:
     across every RedisPlacesCache instance. Closed at process exit."""
     from redis.asyncio import Redis
 
-    return Redis.from_url(url, decode_responses=True)
+    client: Redis = Redis.from_url(url, decode_responses=True)
+    return client
 
 
 class RedisPlacesCache:

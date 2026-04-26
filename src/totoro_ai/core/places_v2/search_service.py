@@ -83,7 +83,7 @@ class PlacesSearchService:
         if not results:
             return results
 
-        await self._upsert.upsert_many([_to_core(o) for o in results])
+        await self._upsert.upsert_many([o.to_core() for o in results])
         await self._cache.mset(results)
         return results
 
@@ -119,7 +119,7 @@ class PlacesSearchService:
         if not found:
             return cores
 
-        refreshed = await self._upsert.upsert_many([_to_core(o) for o in found])
+        refreshed = await self._upsert.upsert_many([o.to_core() for o in found])
 
         fresh_map = {c.id: c for c in refreshed if c.id}
         return [fresh_map.get(c.id or "", c) for c in cores]
@@ -131,12 +131,3 @@ class PlacesSearchService:
         if not provider_ids:
             return {}
         return await self._cache.mget(provider_ids)
-
-
-# ---------------------------------------------------------------------------
-# Free functions
-# ---------------------------------------------------------------------------
-
-def _to_core(obj: PlaceObject) -> PlaceCore:
-    core_fields = PlaceCore.model_fields
-    return PlaceCore(**{k: v for k, v in obj.model_dump().items() if k in core_fields})
