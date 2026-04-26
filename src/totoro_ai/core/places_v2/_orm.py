@@ -13,7 +13,6 @@ from uuid import uuid4
 from sqlalchemy import (
     Boolean,
     DateTime,
-    Float,
     ForeignKey,
     String,
     Text,
@@ -37,10 +36,7 @@ class PlaceV2(Base):
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
     attributes: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-
-    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
-    lng: Mapped[float | None] = mapped_column(Float, nullable=True)
-    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

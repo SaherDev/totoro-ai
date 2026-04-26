@@ -85,7 +85,9 @@ class PlacesRepo:
         ):
             conditions.append(
                 "earth_box(ll_to_earth(:geo_lat, :geo_lng), :geo_radius) "
-                "@> ll_to_earth(lat, lng)"
+                "@> ll_to_earth("
+                "(location->>'lat')::float8, (location->>'lng')::float8"
+                ")"
             )
             params["geo_lat"] = loc.lat
             params["geo_lng"] = loc.lng
@@ -140,10 +142,10 @@ class PlacesRepo:
             """
             INSERT INTO places_v2
                 (id, provider_id, place_name, category, tags,
-                 attributes, lat, lng, address, created_at, refreshed_at)
+                 attributes, location, created_at, refreshed_at)
             VALUES
                 (:id, :provider_id, :place_name, :category, :tags,
-                 :attributes, :lat, :lng, :address, :created_at, :refreshed_at)
+                 :attributes, :location, :created_at, :refreshed_at)
             ON CONFLICT (provider_id) WHERE provider_id IS NOT NULL
             DO UPDATE SET
                 category     = COALESCE(places_v2.category, EXCLUDED.category),
@@ -155,11 +157,9 @@ class PlacesRepo:
                     ) AS x
                 ),
                 attributes   = places_v2.attributes || EXCLUDED.attributes,
-                lat          = COALESCE(EXCLUDED.lat, places_v2.lat),
-                lng          = COALESCE(EXCLUDED.lng, places_v2.lng),
-                address      = COALESCE(EXCLUDED.address, places_v2.address),
+                location     = COALESCE(EXCLUDED.location, places_v2.location),
                 refreshed_at = CASE
-                    WHEN EXCLUDED.lat IS NOT NULL THEN EXCLUDED.refreshed_at
+                    WHEN EXCLUDED.location IS NOT NULL THEN EXCLUDED.refreshed_at
                     ELSE places_v2.refreshed_at
                 END
             RETURNING *
@@ -189,9 +189,7 @@ _PlacesV2Table = Table(
     Column("category"),
     Column("tags"),
     Column("attributes"),
-    Column("lat"),
-    Column("lng"),
-    Column("address"),
+    Column("location"),
     Column("created_at"),
     Column("refreshed_at"),
 )
@@ -206,9 +204,7 @@ def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
         "category": core.category,
         "tags": core.tags or [],
         "attributes": core.attributes.model_dump(exclude_none=True),
-        "lat": loc.lat if loc else None,
-        "lng": loc.lng if loc else None,
-        "address": loc.address if loc else None,
+        "location": loc.model_dump(exclude_none=True) if loc else None,
         "created_at": core.created_at or now,
         "refreshed_at": core.refreshed_at or (
             now if loc and loc.lat is not None else None
@@ -225,12 +221,8 @@ def _row_to_core(row: object) -> PlaceCore:
         PlaceAttributes.model_validate(attrs_raw) if attrs_raw else PlaceAttributes()
     )
 
-    lat, lng, address = m.get("lat"), m.get("lng"), m.get("address")
-    location = (
-        LocationContext(lat=lat, lng=lng, address=address)
-        if lat is not None or lng is not None or address is not None
-        else None
-    )
+    loc_raw = m.get("location")
+    location = LocationContext.model_validate(loc_raw) if loc_raw else None
     return PlaceCore(
         id=m.get("id"),
         provider_id=m.get("provider_id"),

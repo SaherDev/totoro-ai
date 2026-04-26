@@ -52,9 +52,7 @@ def upgrade() -> None:
             server_default="{}",
         ),
         sa.Column("attributes", sa.dialects.postgresql.JSONB, nullable=True),
-        sa.Column("lat", sa.Float, nullable=True),
-        sa.Column("lng", sa.Float, nullable=True),
-        sa.Column("address", sa.Text, nullable=True),
+        sa.Column("location", sa.dialects.postgresql.JSONB, nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -73,14 +71,20 @@ def upgrade() -> None:
         """
     )
 
-    # Geo GiST index via cube+earthdistance.
-    # NULL lat/lng rows are excluded automatically by the expression.
+    # Geo GiST index via cube+earthdistance. Extracts lat/lng from location JSONB.
     op.execute(
         """
         CREATE INDEX places_v2_geo_idx
         ON places_v2
-        USING gist (ll_to_earth(lat, lng))
-        WHERE lat IS NOT NULL AND lng IS NOT NULL
+        USING gist (
+            ll_to_earth(
+                (location->>'lat')::float8,
+                (location->>'lng')::float8
+            )
+        )
+        WHERE location IS NOT NULL
+          AND location->>'lat' IS NOT NULL
+          AND location->>'lng' IS NOT NULL
         """
     )
 
