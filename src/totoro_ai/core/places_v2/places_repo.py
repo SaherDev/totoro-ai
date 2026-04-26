@@ -27,7 +27,13 @@ from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import LocationContext, PlaceAttributes, PlaceCore, PlaceQuery
+from .models import (
+    LocationContext,
+    PlaceAttributes,
+    PlaceCategory,
+    PlaceCore,
+    PlaceQuery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +90,7 @@ class PlacesRepo:
             conditions.append(_t.place_name.ilike(f"%{query.place_name}%"))
 
         if query.category:
-            conditions.append(_t.category.ilike(f"%{query.category}%"))
+            conditions.append(_t.category == query.category.value)
 
         if query.tags:
             conditions.append(_t.tags.contains(query.tags))
@@ -241,7 +247,7 @@ def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
         "id": core.id or str(uuid4()),
         "provider_id": core.provider_id,
         "place_name": core.place_name,
-        "category": core.category,
+        "category": core.category.value if core.category else None,
         "tags": core.tags or [],
         "attributes": core.attributes.model_dump(exclude_none=True),
         "location": loc.model_dump(exclude_none=True) if loc else None,
@@ -265,7 +271,7 @@ def _row_to_core(row: object) -> PlaceCore:
         id=m.get("id"),
         provider_id=m.get("provider_id"),
         place_name=m["place_name"],
-        category=m.get("category"),
+        category=PlaceCategory(m["category"]) if m.get("category") else None,
         tags=list(m.get("tags") or []),
         attributes=attributes,
         location=location,

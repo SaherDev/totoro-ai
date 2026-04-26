@@ -24,6 +24,117 @@ class PlaceSource(str, Enum):
     totoro = "totoro"
 
 
+class PlaceCategory(str, Enum):
+    # food & drink
+    restaurant = "restaurant"
+    cafe = "cafe"
+    bar = "bar"
+    pub = "pub"
+    bakery = "bakery"
+    dessert_shop = "dessert_shop"
+    ice_cream_shop = "ice_cream_shop"
+    street_food = "street_food"
+    food_court = "food_court"
+    food_market = "food_market"
+    brewery = "brewery"
+    winery = "winery"
+    distillery = "distillery"
+    tea_house = "tea_house"
+    juice_bar = "juice_bar"
+    # retail
+    grocery_store = "grocery_store"
+    supermarket = "supermarket"
+    convenience_store = "convenience_store"
+    shopping_mall = "shopping_mall"
+    boutique = "boutique"
+    bookstore = "bookstore"
+    specialty_shop = "specialty_shop"
+    farmers_market = "farmers_market"
+    flea_market = "flea_market"
+    night_market = "night_market"
+    pharmacy = "pharmacy"
+    electronics_store = "electronics_store"
+    # culture / sightseeing
+    museum = "museum"
+    art_gallery = "art_gallery"
+    historical_site = "historical_site"
+    monument = "monument"
+    temple = "temple"
+    church = "church"
+    mosque = "mosque"
+    shrine = "shrine"
+    landmark = "landmark"
+    viewpoint = "viewpoint"
+    # entertainment
+    theme_park = "theme_park"
+    amusement_park = "amusement_park"
+    zoo = "zoo"
+    aquarium = "aquarium"
+    botanical_garden = "botanical_garden"
+    cinema = "cinema"
+    theater = "theater"
+    concert_hall = "concert_hall"
+    live_music_venue = "live_music_venue"
+    nightclub = "nightclub"
+    comedy_club = "comedy_club"
+    karaoke = "karaoke"
+    arcade = "arcade"
+    bowling_alley = "bowling_alley"
+    billiards_hall = "billiards_hall"
+    # nature / outdoors
+    park = "park"
+    beach = "beach"
+    hiking_trail = "hiking_trail"
+    lake = "lake"
+    river = "river"
+    garden = "garden"
+    campground = "campground"
+    scenic_lookout = "scenic_lookout"
+    # fitness / wellness
+    gym = "gym"
+    fitness_studio = "fitness_studio"
+    yoga_studio = "yoga_studio"
+    pilates_studio = "pilates_studio"
+    spa = "spa"
+    massage = "massage"
+    hot_spring = "hot_spring"
+    bathhouse = "bathhouse"
+    salon = "salon"
+    barber = "barber"
+    # services / utilities
+    atm = "atm"
+    bank = "bank"
+    post_office = "post_office"
+    gas_station = "gas_station"
+    parking = "parking"
+    laundry = "laundry"
+    # accommodation
+    hotel = "hotel"
+    hostel = "hostel"
+    guesthouse = "guesthouse"
+    bed_and_breakfast = "bed_and_breakfast"
+    resort = "resort"
+    vacation_rental = "vacation_rental"
+    # transit
+    airport = "airport"
+    train_station = "train_station"
+    metro_station = "metro_station"
+    bus_terminal = "bus_terminal"
+    ferry_terminal = "ferry_terminal"
+    # sport / recreation
+    stadium = "stadium"
+    arena = "arena"
+    sports_club = "sports_club"
+    swimming_pool = "swimming_pool"
+    climbing_gym = "climbing_gym"
+    skate_park = "skate_park"
+    golf_course = "golf_course"
+    # work / study
+    coworking_space = "coworking_space"
+    library = "library"
+    study_cafe = "study_cafe"
+
+
 # weekday → list of "HH:MM-HH:MM" ranges, plus "timezone" key for IANA string
 HoursDict: TypeAlias = dict[str, list[str] | str]
 
@@ -58,7 +169,7 @@ class PlaceQuery(BaseModel):
     """Structured search query. Mirrors PlaceCore fields — all optional."""
 
     place_name: str | None = None
-    category: str | None = None
+    category: PlaceCategory | None = None
     tags: list[str] = Field(default_factory=list)
     attributes: PlaceAttributes | None = None
     location: LocationContext | None = None
@@ -85,7 +196,7 @@ class PlaceCore(BaseModel):
 
     # core (mergeable)
     place_name: str
-    category: str | None = None
+    category: PlaceCategory | None = None
     tags: list[str] = Field(default_factory=list)
     attributes: PlaceAttributes = Field(default_factory=PlaceAttributes)
 

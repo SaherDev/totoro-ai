@@ -15,7 +15,14 @@ from typing import Any
 
 import httpx
 
-from .models import HoursDict, LocationContext, PlaceAttributes, PlaceObject, PlaceQuery
+from .models import (
+    HoursDict,
+    LocationContext,
+    PlaceAttributes,
+    PlaceCategory,
+    PlaceObject,
+    PlaceQuery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +31,7 @@ _FIELD_MASK = (
     "places.id,"
     "places.displayName,"
     "places.formattedAddress,"
+    "places.addressComponents,"
     "places.location,"
     "places.rating,"
     "places.regularOpeningHours,"
@@ -209,6 +217,48 @@ _PRICE_LEVEL_MAP: dict[str, str] = {
     "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$",
 }
 
+# Google restaurant-specific types → cuisine label
+_GOOGLE_TYPE_TO_CUISINE: dict[str, str] = {
+    "thai_restaurant": "Thai",
+    "chinese_restaurant": "Chinese",
+    "japanese_restaurant": "Japanese",
+    "sushi_restaurant": "Japanese",
+    "ramen_restaurant": "Japanese",
+    "korean_restaurant": "Korean",
+    "indian_restaurant": "Indian",
+    "italian_restaurant": "Italian",
+    "pizza_restaurant": "Italian",
+    "american_restaurant": "American",
+    "burger_restaurant": "American",
+    "mexican_restaurant": "Mexican",
+    "french_restaurant": "French",
+    "mediterranean_restaurant": "Mediterranean",
+    "greek_restaurant": "Greek",
+    "spanish_restaurant": "Spanish",
+    "vietnamese_restaurant": "Vietnamese",
+    "indonesian_restaurant": "Indonesian",
+    "turkish_restaurant": "Turkish",
+    "middle_eastern_restaurant": "Middle Eastern",
+    "brazilian_restaurant": "Brazilian",
+    "seafood_restaurant": "Seafood",
+    "steak_house": "Steakhouse",
+}
+
+# Google types that imply a dietary restriction
+_GOOGLE_TYPE_TO_DIETARY: dict[str, list[str]] = {
+    "vegan_restaurant": ["vegan", "vegetarian"],
+    "vegetarian_restaurant": ["vegetarian"],
+    "halal_restaurant": ["halal"],
+}
+
+# addressComponents types → LocationContext field
+_ADDR_COMPONENT_TO_FIELD: dict[str, str] = {
+    "locality": "city",
+    "sublocality_level_1": "neighborhood",
+    "neighborhood": "neighborhood",
+    "country": "country",
+}
+
 _DAY_INT_TO_NAME: dict[int, str] = {
     0: "sunday",
     1: "monday",
@@ -309,7 +359,8 @@ def _map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     if not place_name:
         return None
 
-    category, tags = _map_types(raw.get("types") or [])
+    category_str, tags = _map_types(raw.get("types") or [])
+    category = PlaceCategory(category_str) if category_str else None
     price_hint = _PRICE_LEVEL_MAP.get(raw.get("priceLevel") or "")
 
     return PlaceObject(

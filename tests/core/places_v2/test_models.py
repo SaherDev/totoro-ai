@@ -103,7 +103,7 @@ class TestPlaceCore:
             id="abc",
             provider_id="google:ChIJ123",
             place_name="Sukhumvit Joe's",
-            category="ramen",
+            category="restaurant",
             tags=["quiet", "solo-ok"],
             location=LocationContext(
                 lat=13.756, lng=100.502, address="1 Sukhumvit, Bangkok"
