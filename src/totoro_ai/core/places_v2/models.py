@@ -170,7 +170,6 @@ class PlaceQuery(BaseModel):
 
     place_name: str | None = None
     category: PlaceCategory | None = None
-    tags: list[str] = Field(default_factory=list)
     attributes: PlaceAttributes | None = None
     location: LocationContext | None = None
 
@@ -197,7 +196,6 @@ class PlaceCore(BaseModel):
     # core (mergeable)
     place_name: str
     category: PlaceCategory | None = None
-    tags: list[str] = Field(default_factory=list)
     attributes: PlaceAttributes = Field(default_factory=PlaceAttributes)
 
     # location (Google-derived; wiped by nightly cron after 30 days per ToS)

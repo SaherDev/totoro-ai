@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from totoro_ai.core.places_v2.models import (
     LocationContext,
     PlaceAttributes,
+    PlaceCategory,
     PlaceCore,
     PlaceCoreUpsertedEvent,
     PlaceObject,
@@ -93,7 +94,7 @@ class TestUserPlaceValidation:
 class TestPlaceCore:
     def test_defaults(self) -> None:
         core = PlaceCore(place_name="Sukhumvit Joe's")
-        assert core.tags == []
+        assert core.attributes == PlaceAttributes()
         assert core.id is None
         assert core.provider_id is None
         assert isinstance(core.attributes, PlaceAttributes)
@@ -104,13 +105,12 @@ class TestPlaceCore:
             provider_id="google:ChIJ123",
             place_name="Sukhumvit Joe's",
             category="restaurant",
-            tags=["quiet", "solo-ok"],
             location=LocationContext(
                 lat=13.756, lng=100.502, address="1 Sukhumvit, Bangkok"
             ),
         )
         assert core.provider_id == "google:ChIJ123"
-        assert core.tags == ["quiet", "solo-ok"]
+        assert core.category == PlaceCategory.restaurant
 
 
 class TestPlaceObject:
@@ -131,7 +131,7 @@ class TestPlaceObject:
 class TestPlaceQuery:
     def test_all_optional(self) -> None:
         q = PlaceQuery()
-        assert q.tags == []
+        assert q.category is None
         assert q.location is None
 
     def test_location_context_extra_forbidden(self) -> None:

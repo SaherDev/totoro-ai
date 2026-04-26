@@ -18,12 +18,10 @@ from sqlalchemy import (
     and_,
     case,
     cast,
-    distinct,
     func,
     select,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.dialects.postgresql import array as pg_array
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,7 +46,6 @@ _PlacesV2Table = Table(
     Column("provider_id", String),
     Column("place_name", String),
     Column("category", String),
-    Column("tags", ARRAY(String)),
     Column("attributes", JSONB),
     Column("location", JSONB),
     Column("created_at", DateTime(timezone=True)),
@@ -91,9 +88,6 @@ class PlacesRepo:
 
         if query.category:
             conditions.append(_t.category == query.category.value)
-
-        if query.tags:
-            conditions.append(_t.tags.contains(query.tags))
 
         attrs = query.attributes
         if attrs and attrs.cuisine:
@@ -200,27 +194,19 @@ class PlacesRepo:
     async def upsert_place(self, core: PlaceCore) -> PlaceCore:
         """Single-row UPSERT with additive merge for curated fields.
 
-        category/tags/attributes merge additively; location takes newest non-NULL.
+        category/attributes merge additively; location takes newest non-NULL.
         """
         now = datetime.now(UTC)
         row = _core_to_dict(core, now)
 
         insert_stmt = pg_insert(_PlacesV2Table).values([row])
         excl = insert_stmt.excluded
-        empty_arr = cast(pg_array([]), ARRAY(String))
-
-        combined_tags = func.coalesce(_t.tags, empty_arr).op("||")(
-            func.coalesce(excl.tags, empty_arr)
-        )
-        x = func.unnest(combined_tags).column_valued("x")
-        tags_merge = select(func.array_agg(distinct(x))).scalar_subquery()
 
         stmt = insert_stmt.on_conflict_do_update(
             index_elements=["provider_id"],
             index_where=_t.provider_id.isnot(None),
             set_={
                 "category": func.coalesce(_t.category, excl.category),
-                "tags": tags_merge,
                 "attributes": _t.attributes.op("||")(excl.attributes),
                 "location": func.coalesce(excl.location, _t.location),
                 "refreshed_at": case(
@@ -248,7 +234,6 @@ def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
         "provider_id": core.provider_id,
         "place_name": core.place_name,
         "category": core.category.value if core.category else None,
-        "tags": core.tags or [],
         "attributes": core.attributes.model_dump(exclude_none=True),
         "location": loc.model_dump(exclude_none=True) if loc else None,
         "created_at": core.created_at or now,
@@ -272,7 +257,6 @@ def _row_to_core(row: object) -> PlaceCore:
         provider_id=m.get("provider_id"),
         place_name=m["place_name"],
         category=PlaceCategory(m["category"]) if m.get("category") else None,
-        tags=list(m.get("tags") or []),
         attributes=attributes,
         location=location,
         created_at=m.get("created_at"),

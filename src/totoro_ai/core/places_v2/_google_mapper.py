@@ -259,7 +259,7 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
         return None
 
     types: list[str] = raw.get("types") or []
-    category_str, tags = _map_types(types)
+    category_str = _map_category(types)
     category = PlaceCategory(category_str) if category_str else None
     cuisine = next(
         (_GOOGLE_TYPE_TO_CUISINE[t] for t in types if t in _GOOGLE_TYPE_TO_CUISINE),
@@ -280,7 +280,6 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
         provider_id=f"google:{raw_id}",
         place_name=place_name,
         category=category,
-        tags=tags,
         attributes=PlaceAttributes(
             cuisine=cuisine,
             price_hint=price_hint,
@@ -307,15 +306,12 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _map_types(types: list[str]) -> tuple[str | None, list[str]]:
-    seen: set[str] = set()
-    ordered: list[str] = []
+def _map_category(types: list[str]) -> str | None:
     for t in types:
         cat = _GOOGLE_TYPE_TO_CATEGORY.get(t)
-        if cat and cat not in seen:
-            seen.add(cat)
-            ordered.append(cat)
-    return (ordered[0] if ordered else None), ordered
+        if cat:
+            return cat
+    return None
 
 
 def _map_address_components(
