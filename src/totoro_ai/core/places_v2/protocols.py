@@ -5,13 +5,17 @@ from __future__ import annotations
 from typing import Protocol
 
 from .models import (
-    PLACE_CACHE_TTL_SECONDS,
     PlaceCore,
     PlaceObject,
     PlaceQuery,
     SavedPlaceView,
     UserPlace,
 )
+
+# Default TTL (seconds) for cached PlaceObjects.
+# 30 days — Google ToS compliance: cached Places data must not be retained
+# beyond this window.
+PLACE_CACHE_TTL_SECONDS: int = 2_592_000
 
 
 class PlacesRepoProtocol(Protocol):

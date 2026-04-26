@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from .models import (
     HoursDict,
@@ -416,7 +416,7 @@ def _map_hours(raw: dict[str, Any]) -> HoursDict | None:
             hours[day_name] = []
 
     hours["timezone"] = timezone_id
-    return hours
+    return cast(HoursDict, hours)
 
 
 def _fmt_clock(clock: dict[str, Any]) -> str:

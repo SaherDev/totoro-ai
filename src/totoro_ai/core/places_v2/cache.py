@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .models import PLACE_CACHE_TTL_SECONDS, PlaceObject
+from .models import PlaceObject
+from .protocols import PLACE_CACHE_TTL_SECONDS
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis

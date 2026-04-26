@@ -104,10 +104,7 @@ class GooglePlacesClient:
         google_types = query_to_google_types(query)
         if google_types:
             body["includedType"] = google_types[0]  # text search accepts one type
-        if query.open_now is True:
-            body["openNow"] = True
-        if query.min_rating is not None:
-            body["minRating"] = query.min_rating
+        _apply_common_filters(body, query)
         return await self._post(":searchText", body)
 
     async def nearby_search(
@@ -129,10 +126,7 @@ class GooglePlacesClient:
         google_types = query_to_google_types(query)
         if google_types:
             body["includedTypes"] = google_types
-        if query.open_now is True:
-            body["openNow"] = True
-        if query.min_rating is not None:
-            body["minRating"] = query.min_rating
+        _apply_common_filters(body, query)
         return await self._post(":searchNearby", body)
 
     async def _post(
@@ -162,3 +156,11 @@ class GooglePlacesClient:
             for raw in (data.get("places") or [])
             if (obj := map_place(raw, now)) is not None
         ]
+
+
+def _apply_common_filters(body: dict[str, Any], query: PlaceQuery) -> None:
+    """Decorate the request body with filters shared by text and nearby search."""
+    if query.open_now is True:
+        body["openNow"] = True
+    if query.min_rating is not None:
+        body["minRating"] = query.min_rating

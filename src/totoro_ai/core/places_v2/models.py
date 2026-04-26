@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing_extensions import TypedDict
 
 from .tags import TagType, TagValue
 
@@ -138,9 +139,15 @@ class PlaceCategory(str, Enum):
 
 
 # weekday → list of "HH:MM-HH:MM" ranges, plus "timezone" key for IANA string
-HoursDict: TypeAlias = dict[str, list[str] | str]
-
-PLACE_CACHE_TTL_SECONDS: int = 2_592_000  # 30 days — Google ToS compliance
+class HoursDict(TypedDict, total=False):
+    sunday: list[str]
+    monday: list[str]
+    tuesday: list[str]
+    wednesday: list[str]
+    thursday: list[str]
+    friday: list[str]
+    saturday: list[str]
+    timezone: str  # IANA e.g. "Asia/Tokyo" — required when any day key is present
 
 
 class LocationContext(BaseModel):
