@@ -98,7 +98,7 @@ class PlacesRepo:
         }
 
     async def find(self, query: PlaceQuery, limit: int = 20) -> list[PlaceCore]:
-        conditions = []
+        conditions: list[ColumnElement[bool]] = []
 
         if query.place_name:
             conditions.append(_t.place_name.ilike(f"%{query.place_name}%"))

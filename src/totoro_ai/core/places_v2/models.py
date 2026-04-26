@@ -138,8 +138,11 @@ class PlaceCategory(str, Enum):
     study_cafe = "study_cafe"
 
 
-# weekday → list of "HH:MM-HH:MM" ranges, plus "timezone" key for IANA string
-class HoursDict(TypedDict, total=False):
+# weekday → list of "HH:MM-HH:MM" ranges, plus "timezone" key for IANA string.
+# total=True: the only constructor (_google_mapper._map_hours) always sets all
+# 7 day keys + timezone. Empty days are stored as []; closed-all-day as
+# ["00:00-00:00"]. Any future constructor must populate every key.
+class HoursDict(TypedDict):
     sunday: list[str]
     monday: list[str]
     tuesday: list[str]
@@ -147,7 +150,7 @@ class HoursDict(TypedDict, total=False):
     thursday: list[str]
     friday: list[str]
     saturday: list[str]
-    timezone: str  # IANA e.g. "Asia/Tokyo" — required when any day key is present
+    timezone: str  # IANA e.g. "Asia/Tokyo"
 
 
 class LocationContext(BaseModel):
@@ -214,8 +217,9 @@ class PlaceQuery(BaseModel):
     @model_validator(mode="after")
     def _validate_geo_location(self) -> PlaceQuery:
         loc = self.location
-        has_coords = loc and (loc.lat is not None or loc.lng is not None)
-        if has_coords and loc.radius_m is None:  # type: ignore[union-attr]
+        if loc is None:
+            return self
+        if (loc.lat is not None or loc.lng is not None) and loc.radius_m is None:
             raise ValueError(
                 "location.radius_m is required when lat or lng is provided"
             )
