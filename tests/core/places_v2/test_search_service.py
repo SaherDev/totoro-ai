@@ -24,6 +24,8 @@ def _make_service(
         search=AsyncMock(return_value=[]),
         save_places=AsyncMock(return_value=[]),
         upsert_place=AsyncMock(),
+        upsert_places=AsyncMock(return_value=[]),
+        get_by_provider_ids=AsyncMock(return_value={}),
     )
     cache = cache or MagicMock(
         mget=AsyncMock(return_value={}),
@@ -112,8 +114,8 @@ class TestWarmPath:
         client.text_search.assert_awaited_once()
         cache.mset.assert_awaited_once_with(new_objects)
         repo.save_places.assert_awaited_once()
-        # Event emitted for each persisted core
-        assert dispatcher.emit_upserted.await_count == len(persisted)
+        # Single batch event emitted
+        dispatcher.emit_upserted.assert_awaited_once()
         assert len(results) >= 1
 
 
@@ -131,6 +133,8 @@ class TestStaleRefresh:
             search=AsyncMock(return_value=[stale_core, fresh_core, _core("c")]),
             save_places=AsyncMock(return_value=[]),
             upsert_place=AsyncMock(return_value=refreshed),
+            upsert_places=AsyncMock(return_value=[refreshed]),
+            get_by_provider_ids=AsyncMock(return_value={}),
         )
         cache = MagicMock(
             mget=AsyncMock(return_value={}),
@@ -146,8 +150,8 @@ class TestStaleRefresh:
         )
         await svc.search(PlaceQuery(text="ramen"), limit=20)
 
-        repo.upsert_place.assert_awaited_once()
-        dispatcher.emit_upserted.assert_awaited()
+        repo.upsert_places.assert_awaited_once()
+        dispatcher.emit_upserted.assert_awaited_once()
 
 
 class TestGetByIds:

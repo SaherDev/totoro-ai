@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -127,6 +128,12 @@ class PlacesRepo:
         result = await self._session.execute(stmt)
         await self._session.commit()
         return [_row_to_core(row._mapping) for row in result]
+
+    async def upsert_places(self, cores: list[PlaceCore]) -> list[PlaceCore]:
+        if not cores:
+            return []
+        results = await asyncio.gather(*[self.upsert_place(c) for c in cores])
+        return list(results)
 
     async def upsert_place(self, core: PlaceCore) -> PlaceCore:
         """Single-row UPSERT with additive COALESCE merge for curated fields.

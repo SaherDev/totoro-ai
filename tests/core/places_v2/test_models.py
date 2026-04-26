@@ -156,5 +156,5 @@ class TestSavedPlaceView:
 class TestPlaceCoreUpsertedEvent:
     def test_construction(self) -> None:
         core = PlaceCore(place_name="Test")
-        event = PlaceCoreUpsertedEvent(place_core=core)
-        assert event.place_core.place_name == "Test"
+        event = PlaceCoreUpsertedEvent(place_cores=[core])
+        assert event.place_cores[0].place_name == "Test"

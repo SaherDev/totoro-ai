@@ -54,9 +54,10 @@ class PlacesSearchService:
         new_cores_input = [_to_core(obj) for obj in new_objects]
         persisted = await self._repo.save_places(new_cores_input)
 
-        for core in persisted:
-            event = PlaceCoreUpsertedEvent(place_core=core)
-            await self._dispatcher.emit_upserted(event)
+        if persisted:
+            await self._dispatcher.emit_upserted(
+                PlaceCoreUpsertedEvent(place_cores=persisted)
+            )
 
         # Merge DB hits + new results, dedup by provider_id, cap at limit
         merged = _merge(db_hits, new_objects, persisted, limit)
@@ -76,26 +77,37 @@ class PlacesSearchService:
         if not stale:
             return cores
 
+        # Parallel Google lookups
         all_results = await asyncio.gather(*[
             self._client.text_search(PlaceQuery(text=c.place_name), limit=1)
             for c in stale
         ])
 
-        fresh_map: dict[str, PlaceCore] = {}
-        for core, objects in zip(stale, all_results, strict=False):
-            if not objects:
-                continue
-            refreshed = await self._repo.upsert_place(objects[0])
-            fresh_map[refreshed.id or core.id or ""] = refreshed
+        found: list[PlaceObject] = [r[0] for r in all_results if r]
+        if not found:
+            return cores
+
+        # Pull existing DB records by provider_id in one batch
+        pids = [o.provider_id for o in found if o.provider_id]
+        existing = await self._repo.get_by_provider_ids(pids)
+
+        # Merge: apply fresh location onto existing curated core
+        to_upsert = [
+            (existing.get(o.provider_id or "") or _to_core(o)).model_copy(
+                update={"location": o.location}
+            )
+            for o in found
+        ]
+
+        # Batch upsert + single event
+        refreshed = await self._repo.upsert_places(to_upsert)
+        if refreshed:
             await self._dispatcher.emit_upserted(
-                PlaceCoreUpsertedEvent(place_core=refreshed)
+                PlaceCoreUpsertedEvent(place_cores=refreshed)
             )
 
-        result = []
-        for core in cores:
-            key = core.id or ""
-            result.append(fresh_map.get(key, core))
-        return result
+        fresh_map = {c.id: c for c in refreshed if c.id}
+        return [fresh_map.get(c.id or "", c) for c in cores]
 
     async def _mget_by_cores(
         self, cores: list[PlaceCore]

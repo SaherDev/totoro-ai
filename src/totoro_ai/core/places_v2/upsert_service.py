@@ -19,6 +19,6 @@ class PlaceUpsertService:
         """Run additive COALESCE merge, emit event, return persisted."""
         persisted = await self._repo.upsert_place(candidate)
         await self._dispatcher.emit_upserted(
-            PlaceCoreUpsertedEvent(place_core=persisted)
+            PlaceCoreUpsertedEvent(place_cores=[persisted])
         )
         return persisted

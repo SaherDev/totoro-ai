@@ -49,7 +49,7 @@ class TestPlaceUpsertService:
         mock_repo.upsert_place.assert_awaited_once_with(candidate)
         mock_dispatcher.emit_upserted.assert_awaited_once()
         event: PlaceCoreUpsertedEvent = mock_dispatcher.emit_upserted.call_args.args[0]
-        assert event.place_core.id == "stored-id"
+        assert event.place_cores[0].id == "stored-id"
         assert result.id == "stored-id"
 
     async def test_returns_persisted_core(

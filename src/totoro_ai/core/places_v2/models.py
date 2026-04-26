@@ -143,6 +143,6 @@ class SavedPlaceView(BaseModel):
 
 
 class PlaceCoreUpsertedEvent(BaseModel):
-    """Emitted after a PlaceCore is inserted or updated."""
+    """Emitted after one or more PlaceCores are inserted or updated."""
 
-    place_core: PlaceCore
+    place_cores: list[PlaceCore]

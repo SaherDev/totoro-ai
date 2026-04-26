@@ -487,13 +487,11 @@ class _LogPlaceEventDispatcher:
     """
 
     async def emit_upserted(self, event: PlaceCoreUpsertedEvent) -> None:
-        _places_v2_logger.info(
-            "place_core_upserted",
-            extra={
-                "place_id": event.place_core.id,
-                "provider_id": event.place_core.provider_id,
-            },
-        )
+        for core in event.place_cores:
+            _places_v2_logger.info(
+                "place_core_upserted",
+                extra={"place_id": core.id, "provider_id": core.provider_id},
+            )
 
 
 def _build_places_v2_cache() -> RedisPlacesCache:
