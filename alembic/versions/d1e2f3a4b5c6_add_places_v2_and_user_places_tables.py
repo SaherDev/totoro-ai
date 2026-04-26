@@ -63,29 +63,25 @@ def upgrade() -> None:
     )
 
     # Partial unique index on provider_id (NULL values allowed, one per non-NULL)
-    op.execute(
-        """
-        CREATE UNIQUE INDEX uq_places_v2_provider_id
-        ON places_v2 (provider_id)
-        WHERE provider_id IS NOT NULL
-        """
+    op.create_index(
+        "uq_places_v2_provider_id",
+        "places_v2",
+        ["provider_id"],
+        unique=True,
+        postgresql_where=sa.text("provider_id IS NOT NULL"),
     )
 
     # Geo GiST index via cube+earthdistance. Extracts lat/lng from location JSONB.
-    op.execute(
-        """
-        CREATE INDEX places_v2_geo_idx
-        ON places_v2
-        USING gist (
-            ll_to_earth(
-                (location->>'lat')::float8,
-                (location->>'lng')::float8
-            )
-        )
-        WHERE location IS NOT NULL
-          AND location->>'lat' IS NOT NULL
-          AND location->>'lng' IS NOT NULL
-        """
+    op.create_index(
+        "places_v2_geo_idx",
+        "places_v2",
+        [sa.text("ll_to_earth((location->>'lat')::float8, (location->>'lng')::float8)")],
+        postgresql_using="gist",
+        postgresql_where=sa.text(
+            "location IS NOT NULL"
+            " AND location->>'lat' IS NOT NULL"
+            " AND location->>'lng' IS NOT NULL"
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -137,6 +133,6 @@ def downgrade() -> None:
     op.drop_index("ix_user_places_user_id", table_name="user_places")
     op.drop_table("user_places")
 
-    op.execute("DROP INDEX IF EXISTS places_v2_geo_idx")
-    op.execute("DROP INDEX IF EXISTS uq_places_v2_provider_id")
+    op.drop_index("places_v2_geo_idx", table_name="places_v2")
+    op.drop_index("uq_places_v2_provider_id", table_name="places_v2")
     op.drop_table("places_v2")
