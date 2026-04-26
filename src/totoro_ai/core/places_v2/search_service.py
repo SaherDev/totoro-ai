@@ -98,13 +98,6 @@ class PlacesSearchService:
         if not stale:
             return cores
 
-        no_id = [c for c in stale if not c.id]
-        if no_id:
-            logger.warning(
-                "refresh_stale_cores_missing_id",
-                extra={"count": len(no_id), "names": [c.place_name for c in no_id]},
-            )
-
         sem = asyncio.Semaphore(_REFRESH_STALE_CONCURRENCY)
 
         async def _bounded_text_search(core: PlaceCore) -> list[PlaceObject]:
@@ -118,6 +111,11 @@ class PlacesSearchService:
         )
 
         found: list[PlaceObject] = [r[0] for r in all_results if r]
+        if len(found) < len(stale):
+            logger.warning(
+                "refresh_stale_partial_miss",
+                extra={"missed": len(stale) - len(found), "total": len(stale)},
+            )
         if not found:
             return cores
 
