@@ -6,22 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from totoro_ai.core.places_v2.models import (
     LocationContext,
-    PlaceCategory,
     PlaceCore,
     PlaceObject,
     PlaceQuery,
 )
-from totoro_ai.core.places_v2.google_client import _query_to_google_text
 from totoro_ai.core.places_v2.search_service import PlacesSearchService
-from totoro_ai.core.places_v2.tags import (
-    AtmosphereTag,
-    CuisineTag,
-    DietaryTag,
-    FeatureTag,
-    SeasonTag,
-    ServiceTag,
-    TimeTag,
-)
+from totoro_ai.core.places_v2.tags import CuisineTag
 
 
 def _make_service(
@@ -42,6 +32,7 @@ def _make_service(
         mset=AsyncMock(),
     )
     client = client or MagicMock(
+        search=AsyncMock(return_value=[]),
         text_search=AsyncMock(return_value=[]),
         nearby_search=AsyncMock(return_value=[]),
     )
@@ -90,8 +81,8 @@ class TestWarmPath:
         )
         cache = MagicMock(mget=AsyncMock(return_value={"google:b": cached_obj}))
         client = MagicMock(
+            search=AsyncMock(return_value=[]),
             text_search=AsyncMock(return_value=[]),
-            nearby_search=AsyncMock(return_value=[]),
         )
 
         svc = _make_service(repo=repo, cache=cache, client=client)
@@ -100,7 +91,8 @@ class TestWarmPath:
         assert len(results) == 3
         b_result = next(r for r in results if r.provider_id == "google:b")
         assert b_result.rating == 4.5
-        client.text_search.assert_not_awaited()
+        # warm path — no Google call
+        client.search.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -118,130 +110,52 @@ class TestColdPath:
         )
         cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
         client = MagicMock(
-            text_search=AsyncMock(return_value=[google_result]),
-            nearby_search=AsyncMock(return_value=[]),
+            search=AsyncMock(return_value=[google_result]),
+            text_search=AsyncMock(return_value=[]),
         )
         dispatcher = MagicMock(emit_upserted=AsyncMock())
 
         svc = _make_service(
             repo=repo, cache=cache, client=client, dispatcher=dispatcher
         )
-        results = await svc.find(PlaceQuery(text="Thai restaurants Bangkok"), limit=5)
+        results = await svc.find(
+            PlaceQuery(place_name="Thai restaurants Bangkok"), limit=5
+        )
 
-        client.text_search.assert_awaited_once()
+        client.search.assert_awaited_once()
         repo.save_places.assert_awaited_once()
         cache.mset.assert_awaited_once()
         dispatcher.emit_upserted.assert_awaited_once()
         assert results == [google_result]
 
-    async def test_geo_only_uses_nearby_search(self) -> None:
-        repo = MagicMock(
-            find=AsyncMock(return_value=[]),
-            save_places=AsyncMock(return_value=[]),
-            upsert_places=AsyncMock(return_value=[]),
-            get_by_provider_ids=AsyncMock(return_value={}),
-        )
-        cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
-        client = MagicMock(
-            text_search=AsyncMock(return_value=[]),
-            nearby_search=AsyncMock(return_value=[]),
-        )
-
-        svc = _make_service(repo=repo, cache=cache, client=client)
-        # No tags, no text — only geo
-        await svc.find(
-            PlaceQuery(location=LocationContext(lat=13.7, lng=100.5, radius_m=500)),
-        )
-
-        client.nearby_search.assert_awaited_once()
-        client.text_search.assert_not_awaited()
-
-    async def test_text_with_geo_uses_text_search_with_location(self) -> None:
-        repo = MagicMock(
-            find=AsyncMock(return_value=[]),
-            save_places=AsyncMock(return_value=[]),
-            upsert_places=AsyncMock(return_value=[]),
-            get_by_provider_ids=AsyncMock(return_value={}),
-        )
-        cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
-        client = MagicMock(
-            text_search=AsyncMock(return_value=[]),
-            nearby_search=AsyncMock(return_value=[]),
-        )
-
-        svc = _make_service(repo=repo, cache=cache, client=client)
-        await svc.find(
-            PlaceQuery(
-                tags=[CuisineTag.thai],
-                location=LocationContext(lat=13.7, lng=100.5, radius_m=500),
-            ),
-        )
-
-        # Has tags → text_search; location is embedded in the PlaceQuery passed
-        client.text_search.assert_awaited_once()
-        passed_query: PlaceQuery = client.text_search.call_args.args[0]
-        assert passed_query.location is not None
-        client.nearby_search.assert_not_awaited()
-
-    async def test_no_text_no_geo_returns_empty(self) -> None:
+    async def test_passes_full_query_to_client_search(self) -> None:
+        """Service passes the PlaceQuery unchanged — client owns routing."""
         repo = MagicMock(find=AsyncMock(return_value=[]))
         client = MagicMock(
+            search=AsyncMock(return_value=[]),
             text_search=AsyncMock(return_value=[]),
-            nearby_search=AsyncMock(return_value=[]),
         )
+        q = PlaceQuery(
+            tags=[CuisineTag.thai],
+            location=LocationContext(lat=13.7, lng=100.5, radius_m=500),
+        )
+        svc = _make_service(repo=repo, client=client)
+        await svc.find(q, limit=10)
 
+        client.search.assert_awaited_once()
+        passed_query: PlaceQuery = client.search.call_args.args[0]
+        assert passed_query is q
+
+    async def test_empty_google_result_returns_empty(self) -> None:
+        repo = MagicMock(find=AsyncMock(return_value=[]))
+        client = MagicMock(
+            search=AsyncMock(return_value=[]),
+            text_search=AsyncMock(return_value=[]),
+        )
         svc = _make_service(repo=repo, client=client)
         results = await svc.find(PlaceQuery())
 
         assert results == []
-        client.text_search.assert_not_awaited()
-        client.nearby_search.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# _query_to_google_text
-# ---------------------------------------------------------------------------
-
-class TestQueryToGoogleText:
-    def test_explicit_text_wins(self) -> None:
-        q = PlaceQuery(text="ramen near Shibuya", category=PlaceCategory.restaurant)
-        assert _query_to_google_text(q) == "ramen near Shibuya"
-
-    def test_builds_from_category_and_tags(self) -> None:
-        q = PlaceQuery(
-            category=PlaceCategory.restaurant,
-            tags=[CuisineTag.thai, FeatureTag.outdoor_seating],
-        )
-        text = _query_to_google_text(q)
-        assert "restaurant" in text
-        assert "Thai" in text
-        assert "outdoor seating" in text
-
-    def test_underscores_converted_to_spaces(self) -> None:
-        q = PlaceQuery(tags=[ServiceTag.serves_cocktails, AtmosphereTag.laid_back])
-        text = _query_to_google_text(q)
-        assert "serves cocktails" in text
-        assert "laid back" in text
-
-    def test_time_tags_skipped(self) -> None:
-        q = PlaceQuery(tags=[CuisineTag.japanese, TimeTag.evening])
-        text = _query_to_google_text(q)
-        assert "Japanese" in text
-        assert "evening" not in text
-
-    def test_season_tags_skipped(self) -> None:
-        q = PlaceQuery(tags=[DietaryTag.vegan, SeasonTag.summer])
-        text = _query_to_google_text(q)
-        assert "vegan" in text
-        assert "summer" not in text
-
-    def test_deduplicates_parts(self) -> None:
-        q = PlaceQuery(place_name="Ramen", tags=["Ramen"])
-        text = _query_to_google_text(q)
-        assert text.count("Ramen") == 1
-
-    def test_empty_query_returns_empty_string(self) -> None:
-        assert _query_to_google_text(PlaceQuery()) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +180,7 @@ class TestStaleRefresh:
         )
         cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
         client = MagicMock(
+            search=AsyncMock(return_value=[]),
             text_search=AsyncMock(return_value=[_object("stale")]),
             nearby_search=AsyncMock(return_value=[]),
         )

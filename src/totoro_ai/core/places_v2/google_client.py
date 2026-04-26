@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from ._google_mapper import map_place
-from .models import LocationContext, PlaceObject, PlaceQuery
+from .models import PlaceObject, PlaceQuery
 from .tags import AccessibilityTag, SeasonTag, TimeTag
 
 logger = logging.getLogger(__name__)
@@ -68,13 +68,10 @@ def _query_to_google_text(query: PlaceQuery) -> str:
     """
     parts: list[str] = []
 
-    if query.text:
-        parts.append(query.text)
-    else:
-        if query.place_name:
-            parts.append(query.place_name)
-        if query.category:
-            parts.append(query.category.value.replace("_", " "))
+    if query.place_name:
+        parts.append(query.place_name)
+    if query.category:
+        parts.append(query.category.value.replace("_", " "))
 
     if query.tags:
         for tag_val in query.tags:
@@ -89,6 +86,26 @@ class GooglePlacesClient:
     def __init__(self, api_key: str, http: httpx.AsyncClient) -> None:
         self._api_key = api_key
         self._http = http
+
+    async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
+        """Route to text_search or nearby_search based on what the query can express.
+
+        Tags like TimeTag/SeasonTag/AccessibilityTag are skipped in text building,
+        so a query with only those tags routes to nearby_search when geo is present.
+        """
+        loc = query.location
+        has_geo = (
+            loc is not None
+            and loc.lat is not None
+            and loc.lng is not None
+            and loc.radius_m is not None
+        )
+        text = _query_to_google_text(query)
+        if text:
+            return await self.text_search(query, limit)
+        if has_geo:
+            return await self.nearby_search(query, limit)
+        return []
 
     async def text_search(
         self,

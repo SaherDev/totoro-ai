@@ -53,6 +53,10 @@ class PlacesCacheProtocol(Protocol):
 
 
 class PlacesClientProtocol(Protocol):
+    async def search(
+        self, query: PlaceQuery, limit: int = 20
+    ) -> list[PlaceObject]: ...
+
     async def text_search(
         self,
         query: PlaceQuery,

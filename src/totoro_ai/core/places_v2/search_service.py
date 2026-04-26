@@ -50,22 +50,8 @@ class PlacesSearchService:
     async def _google_fallback(
         self, query: PlaceQuery, limit: int
     ) -> list[PlaceObject]:
-        """Cold path: translate PlaceQuery → Google search, save, cache, return."""
-        loc = query.location
-        has_geo = (
-            loc is not None
-            and loc.lat is not None
-            and loc.lng is not None
-            and loc.radius_m is not None
-        )
-        has_text = bool(query.text or query.place_name or query.category or query.tags)
-
-        if has_text:
-            results = await self._client.text_search(query, limit)
-        elif has_geo:
-            results = await self._client.nearby_search(query, limit)
-        else:
-            return []
+        """Cold path: delegate to client.search, save, cache, return."""
+        results = await self._client.search(query, limit)
 
         if not results:
             return results
@@ -86,7 +72,7 @@ class PlacesSearchService:
             return cores
 
         all_results = await asyncio.gather(*[
-            self._client.text_search(PlaceQuery(text=c.place_name), limit=1)
+            self._client.text_search(PlaceQuery(place_name=c.place_name), limit=1)
             for c in stale
         ])
 

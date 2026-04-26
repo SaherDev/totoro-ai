@@ -168,11 +168,11 @@ class PlaceQuery(BaseModel):
     """Structured search query. All fields optional, combined with AND.
 
     DB filters:  place_name, category, tags, location, created_after/before, sort_*
-    Google-only: text (maps to textQuery), open_now, min_rating
+    Client hints: open_now, min_rating (passed through to the search client)
     """
 
     # DB filters
-    place_name: str | None = None    # ILIKE on place_name column
+    place_name: str | None = None    # ILIKE on DB; also drives client text search
     category: PlaceCategory | None = None
     tags: list[str] | None = None   # tag values; all must be present (AND)
     location: LocationContext | None = None
@@ -185,10 +185,9 @@ class PlaceQuery(BaseModel):
     sort_by: SortField | None = None
     sort_desc: bool = True
 
-    # Google pass-through (ignored for DB queries)
-    text: str | None = None          # free-text textQuery for Google
+    # client hints (ignored for DB queries)
     open_now: bool | None = None     # only return currently open places
-    min_rating: float | None = None  # e.g. 4.0 — filters Google results
+    min_rating: float | None = None  # e.g. 4.0 — filters results
 
 
 class PlaceCore(BaseModel):
