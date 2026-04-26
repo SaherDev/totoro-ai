@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
 from totoro_ai.core.places_v2._google_query_builder import build_text_search_params
-from totoro_ai.core.places_v2.google_client import GooglePlacesClient
+from totoro_ai.core.places_v2.google_client import (
+    _DETAILS_CONCURRENCY,
+    GooglePlacesClient,
+)
 from totoro_ai.core.places_v2.models import (
     LocationContext,
     PlaceCategory,
+    PlaceObject,
     PlaceQuery,
 )
 from totoro_ai.core.places_v2.tags import (
@@ -29,8 +34,8 @@ def _make_client() -> GooglePlacesClient:
     client = GooglePlacesClient(
         api_key="test", http=MagicMock(spec=httpx.AsyncClient)
     )
-    client.text_search = AsyncMock(return_value=[])
-    client.nearby_search = AsyncMock(return_value=[])
+    client._text_search = AsyncMock(return_value=[])
+    client._nearby_search = AsyncMock(return_value=[])
     return client
 
 
@@ -42,14 +47,14 @@ class TestSearchRouting:
     async def test_category_routes_to_text_search(self) -> None:
         c = _make_client()
         await c.search(PlaceQuery(category=PlaceCategory.restaurant), limit=5)
-        c.text_search.assert_awaited_once()
-        c.nearby_search.assert_not_awaited()
+        c._text_search.assert_awaited_once()
+        c._nearby_search.assert_not_awaited()
 
     async def test_cuisine_tag_routes_to_text_search(self) -> None:
         c = _make_client()
         await c.search(PlaceQuery(place_name="Thai food"), limit=5)
-        c.text_search.assert_awaited_once()
-        c.nearby_search.assert_not_awaited()
+        c._text_search.assert_awaited_once()
+        c._nearby_search.assert_not_awaited()
 
     async def test_geo_only_routes_to_nearby_search(self) -> None:
         c = _make_client()
@@ -57,8 +62,8 @@ class TestSearchRouting:
             PlaceQuery(location=LocationContext(lat=13.7, lng=100.5, radius_m=500)),
             limit=5,
         )
-        c.nearby_search.assert_awaited_once()
-        c.text_search.assert_not_awaited()
+        c._nearby_search.assert_awaited_once()
+        c._text_search.assert_not_awaited()
 
     async def test_skip_tags_only_with_geo_falls_back_to_nearby(self) -> None:
         """Skip-only tags produce no text → falls back to nearby when geo present."""
@@ -70,8 +75,8 @@ class TestSearchRouting:
             ),
             limit=5,
         )
-        c.nearby_search.assert_awaited_once()
-        c.text_search.assert_not_awaited()
+        c._nearby_search.assert_awaited_once()
+        c._text_search.assert_not_awaited()
 
     async def test_skip_tags_no_geo_returns_empty(self) -> None:
         c = _make_client()
@@ -79,18 +84,18 @@ class TestSearchRouting:
             PlaceQuery(tags=[SeasonTag.summer, TimeTag.evening]), limit=5
         )
         assert result == []
-        c.text_search.assert_not_awaited()
-        c.nearby_search.assert_not_awaited()
+        c._text_search.assert_not_awaited()
+        c._nearby_search.assert_not_awaited()
 
     async def test_empty_query_returns_empty(self) -> None:
         c = _make_client()
         result = await c.search(PlaceQuery(), limit=5)
         assert result == []
-        c.text_search.assert_not_awaited()
-        c.nearby_search.assert_not_awaited()
+        c._text_search.assert_not_awaited()
+        c._nearby_search.assert_not_awaited()
 
     async def test_tags_with_geo_uses_text_search(self) -> None:
-        """Searchable tags + geo → text_search (not nearby) so tags are applied."""
+        """Searchable tags + geo → text search (not nearby) so tags are applied."""
         c = _make_client()
         await c.search(
             PlaceQuery(
@@ -99,10 +104,10 @@ class TestSearchRouting:
             ),
             limit=5,
         )
-        c.text_search.assert_awaited_once()
-        passed_query: PlaceQuery = c.text_search.call_args.args[0]
+        c._text_search.assert_awaited_once()
+        passed_query: PlaceQuery = c._text_search.call_args.args[0]
         assert passed_query.location is not None
-        c.nearby_search.assert_not_awaited()
+        c._nearby_search.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -191,3 +196,65 @@ class TestBuildTextSearchParams:
         q = PlaceQuery(place_name="Ramen", tags=["Ramen"])
         text, _ = build_text_search_params(q)
         assert text.count("Ramen") == 1
+
+
+# ---------------------------------------------------------------------------
+# get_by_ids() — Place Details fan-out
+# ---------------------------------------------------------------------------
+
+def _stub_place(provider_id: str) -> PlaceObject:
+    return PlaceObject(
+        provider_id=provider_id,
+        place_name=provider_id.split(":", 1)[1],
+        location=LocationContext(lat=1.0, address="Test St"),
+    )
+
+
+class TestGetByIds:
+    async def test_empty_returns_empty(self) -> None:
+        c = _make_client()
+        c._get_details = AsyncMock()
+        assert await c.get_by_ids([]) == []
+        c._get_details.assert_not_awaited()
+
+    async def test_drops_failed_lookups(self) -> None:
+        c = _make_client()
+        c._get_details = AsyncMock(
+            side_effect=[_stub_place("google:a"), None, _stub_place("google:c")]
+        )
+        result = await c.get_by_ids(["google:a", "google:b", "google:c"])
+        assert [r.provider_id for r in result] == ["google:a", "google:c"]
+
+    async def test_concurrency_capped(self) -> None:
+        """get_by_ids fan-out is bounded by _DETAILS_CONCURRENCY."""
+        n = _DETAILS_CONCURRENCY * 3
+        in_flight = 0
+        max_in_flight = 0
+
+        async def slow_details(provider_id: str) -> PlaceObject | None:
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            try:
+                # Yield twice so concurrent callers can pile up to the cap.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                return _stub_place(provider_id)
+            finally:
+                in_flight -= 1
+
+        c = _make_client()
+        c._get_details = AsyncMock(side_effect=slow_details)
+
+        await c.get_by_ids([f"google:p{i}" for i in range(n)])
+
+        assert c._get_details.await_count == n
+        assert max_in_flight <= _DETAILS_CONCURRENCY
+
+    async def test_unsupported_provider_returns_none(self) -> None:
+        """_get_details rejects non-google provider_ids without a network call."""
+        c = _make_client()
+        c._request = AsyncMock()  # would explode if called
+        result = await c._get_details("foursquare:abc")
+        assert result is None
+        c._request.assert_not_awaited()

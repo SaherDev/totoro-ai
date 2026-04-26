@@ -37,11 +37,11 @@ class UserPlacesService:
         cores_by_id = {c.id: c for c in cores if c.id}
 
         provider_ids = [c.provider_id for c in cores if c.provider_id]
-        cached = await self._search.get_by_ids(provider_ids) if provider_ids else {}
+        fresh = await self._search.get_by_ids(provider_ids) if provider_ids else {}
 
         place_objects = {
             obj.id: obj
-            for obj in overlay_with_cache(list(cores_by_id.values()), cached)
+            for obj in overlay_with_cache(list(cores_by_id.values()), fresh)
             if obj.id
         }
 

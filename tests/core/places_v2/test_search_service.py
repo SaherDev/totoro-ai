@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from totoro_ai.core.places_v2.models import (
@@ -11,10 +10,7 @@ from totoro_ai.core.places_v2.models import (
     PlaceObject,
     PlaceQuery,
 )
-from totoro_ai.core.places_v2.search_service import (
-    _REFRESH_STALE_CONCURRENCY,
-    PlacesSearchService,
-)
+from totoro_ai.core.places_v2.search_service import PlacesSearchService
 from totoro_ai.core.places_v2.tags import CuisineTag
 
 
@@ -34,8 +30,7 @@ def _make_service(
     )
     client = client or MagicMock(
         search=AsyncMock(return_value=[]),
-        text_search=AsyncMock(return_value=[]),
-        nearby_search=AsyncMock(return_value=[]),
+        get_by_ids=AsyncMock(return_value=[]),
     )
     upsert_service = upsert_service or MagicMock(
         upsert_many=AsyncMock(return_value=[]),
@@ -84,7 +79,7 @@ class TestWarmPath:
         cache = MagicMock(mget=AsyncMock(return_value={"google:b": cached_obj}))
         client = MagicMock(
             search=AsyncMock(return_value=[]),
-            text_search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[]),
         )
 
         svc = _make_service(repo=repo, cache=cache, client=client)
@@ -111,7 +106,7 @@ class TestColdPath:
         cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
         client = MagicMock(
             search=AsyncMock(return_value=[google_result]),
-            text_search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[]),
         )
         upsert = MagicMock(upsert_many=AsyncMock(return_value=[_core("g1")]))
 
@@ -132,7 +127,7 @@ class TestColdPath:
         repo = MagicMock(find=AsyncMock(return_value=[]))
         client = MagicMock(
             search=AsyncMock(return_value=[]),
-            text_search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[]),
         )
         q = PlaceQuery(
             tags=[CuisineTag.thai],
@@ -149,7 +144,7 @@ class TestColdPath:
         repo = MagicMock(find=AsyncMock(return_value=[]))
         client = MagicMock(
             search=AsyncMock(return_value=[]),
-            text_search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[]),
         )
         svc = _make_service(repo=repo, client=client)
         results = await svc.find(PlaceQuery())
@@ -158,79 +153,61 @@ class TestColdPath:
 
 
 # ---------------------------------------------------------------------------
-# Stale refresh
+# Stale-row handling in find()
 # ---------------------------------------------------------------------------
 
-class TestStaleRefresh:
-    async def test_stale_rows_are_refreshed(self) -> None:
-        stale_core = _core("stale", lat=None)
-        refreshed = PlaceCore(
-            id="stale",
-            provider_id="google:stale",
-            place_name="Place stale",
-            location=LocationContext(lat=13.7, address="Refreshed St"),
-        )
+class TestFindEnrichment:
+    async def test_full_cache_hit_skips_provider(self) -> None:
+        """When every DB hit is in cache, no provider call is made."""
         repo = MagicMock(
-            find=AsyncMock(return_value=[stale_core, _core("c")]),
+            find=AsyncMock(return_value=[_core("a"), _core("b")]),
             get_by_provider_ids=AsyncMock(return_value={}),
         )
-        cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
+        cache = MagicMock(
+            mget=AsyncMock(
+                return_value={
+                    "google:a": _object("a"),
+                    "google:b": _object("b"),
+                }
+            ),
+            mset=AsyncMock(),
+        )
         client = MagicMock(
             search=AsyncMock(return_value=[]),
-            text_search=AsyncMock(return_value=[_object("stale")]),
-            nearby_search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[]),
         )
-        upsert = MagicMock(upsert_many=AsyncMock(return_value=[refreshed]))
+        svc = _make_service(repo=repo, cache=cache, client=client)
+        await svc.find(PlaceQuery(), limit=20)
 
+        cache.mget.assert_awaited_once()
+        client.get_by_ids.assert_not_awaited()
+        cache.mset.assert_not_awaited()
+
+    async def test_stale_row_falls_back_to_provider(self) -> None:
+        """A stale row → cache miss → client.get_by_ids → upsert + mset."""
+        stale = _core("stale", lat=None)
+        fresh = _core("fresh")
+        repo = MagicMock(
+            find=AsyncMock(return_value=[stale, fresh]),
+            get_by_provider_ids=AsyncMock(return_value={}),
+        )
+        cache = MagicMock(
+            mget=AsyncMock(return_value={"google:fresh": _object("fresh")}),
+            mset=AsyncMock(),
+        )
+        client = MagicMock(
+            search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[_object("stale")]),
+        )
+        upsert = MagicMock(upsert_many=AsyncMock(return_value=[]))
         svc = _make_service(
             repo=repo, cache=cache, client=client, upsert_service=upsert
         )
         await svc.find(PlaceQuery(), limit=20)
 
+        client.get_by_ids.assert_awaited_once_with(["google:stale"])
         upsert.upsert_many.assert_awaited_once()
-
-    async def test_refresh_concurrency_capped(self) -> None:
-        """Verify the semaphore bounds parallel Google calls."""
-        stale_count = _REFRESH_STALE_CONCURRENCY * 3  # plenty of work to queue
-        stale_cores = [_core(f"s{i}", lat=None) for i in range(stale_count)]
-
-        in_flight = 0
-        max_in_flight = 0
-
-        async def slow_text_search(
-            query: PlaceQuery, limit: int = 1
-        ) -> list[PlaceObject]:
-            nonlocal in_flight, max_in_flight
-            in_flight += 1
-            max_in_flight = max(max_in_flight, in_flight)
-            try:
-                # Yield control so concurrent callers can pile up to the cap
-                # before any single call resolves.
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
-                return [_object(query.place_name or "x")]
-            finally:
-                in_flight -= 1
-
-        repo = MagicMock(
-            find=AsyncMock(return_value=stale_cores),
-            get_by_provider_ids=AsyncMock(return_value={}),
-        )
-        cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
-        client = MagicMock(
-            search=AsyncMock(return_value=[]),
-            text_search=AsyncMock(side_effect=slow_text_search),
-            nearby_search=AsyncMock(return_value=[]),
-        )
-        upsert = MagicMock(upsert_many=AsyncMock(return_value=[]))
-
-        svc = _make_service(
-            repo=repo, cache=cache, client=client, upsert_service=upsert
-        )
-        await svc.find(PlaceQuery(), limit=stale_count)
-
-        assert client.text_search.await_count == stale_count
-        assert max_in_flight <= _REFRESH_STALE_CONCURRENCY
+        cache.mset.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -238,18 +215,63 @@ class TestStaleRefresh:
 # ---------------------------------------------------------------------------
 
 class TestGetByIds:
-    async def test_delegates_to_cache_only(self) -> None:
-        cached = {"google:a": _object("a")}
+    async def test_full_cache_hit_skips_provider(self) -> None:
+        cached = {"google:a": _object("a"), "google:b": _object("b")}
         cache = MagicMock(mget=AsyncMock(return_value=cached), mset=AsyncMock())
-        svc = _make_service(cache=cache)
+        client = MagicMock(
+            search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[]),
+        )
+        svc = _make_service(cache=cache, client=client)
 
-        result = await svc.get_by_ids(["google:a", "google:miss"])
+        result = await svc.get_by_ids(["google:a", "google:b"])
 
-        cache.mget.assert_awaited_once_with(["google:a", "google:miss"])
-        assert "google:a" in result
-        assert "google:miss" not in result
+        cache.mget.assert_awaited_once_with(["google:a", "google:b"])
+        client.get_by_ids.assert_not_awaited()
+        cache.mset.assert_not_awaited()
+        assert set(result) == {"google:a", "google:b"}
+
+    async def test_cache_miss_falls_back_to_provider(self) -> None:
+        """Misses are fetched, upserted, cached, and merged with hits."""
+        cached = {"google:a": _object("a")}
+        fetched = _object("b")
+        cache = MagicMock(mget=AsyncMock(return_value=cached), mset=AsyncMock())
+        client = MagicMock(
+            search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[fetched]),
+        )
+        upsert = MagicMock(upsert_many=AsyncMock(return_value=[]))
+        svc = _make_service(cache=cache, client=client, upsert_service=upsert)
+
+        result = await svc.get_by_ids(["google:a", "google:b"])
+
+        client.get_by_ids.assert_awaited_once_with(["google:b"])
+        upsert.upsert_many.assert_awaited_once()
+        cache.mset.assert_awaited_once_with([fetched])
+        assert result["google:a"].provider_id == "google:a"
+        assert result["google:b"] is fetched
+
+    async def test_unresolvable_id_absent_from_result(self) -> None:
+        """Ids the provider can't resolve are simply omitted from the result."""
+        cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
+        client = MagicMock(
+            search=AsyncMock(return_value=[]),
+            get_by_ids=AsyncMock(return_value=[]),
+        )
+        upsert = MagicMock(upsert_many=AsyncMock(return_value=[]))
+        svc = _make_service(cache=cache, client=client, upsert_service=upsert)
+
+        result = await svc.get_by_ids(["google:ghost"])
+
+        client.get_by_ids.assert_awaited_once_with(["google:ghost"])
+        upsert.upsert_many.assert_not_awaited()
+        cache.mset.assert_not_awaited()
+        assert result == {}
 
     async def test_empty_input(self) -> None:
         cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
-        svc = _make_service(cache=cache)
+        client = MagicMock(get_by_ids=AsyncMock(return_value=[]))
+        svc = _make_service(cache=cache, client=client)
         assert await svc.get_by_ids([]) == {}
+        cache.mget.assert_not_awaited()
+        client.get_by_ids.assert_not_awaited()

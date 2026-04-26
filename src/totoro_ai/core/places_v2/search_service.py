@@ -1,9 +1,14 @@
-"""PlacesSearchService — DB → stale refresh → cache overlay → external fallback.
+"""PlacesSearchService — DB → cache overlay → provider fallback.
 
 Reads only. All writes are delegated to PlaceUpsertService, which owns the
 merge policy and event emission. This service touches the cache directly
 because cache stores the live half (PlaceObject) which is shaped differently
 from the persisted PlaceCore.
+
+`find` returns search results by query; `get_by_ids` returns enriched places
+by namespaced provider_id. Stale DB rows (location wiped by the 30-day TTL
+cron) are detected inline in `find` and routed through `get_by_ids` so the
+provider repopulates both DB and cache in one pass.
 
 Provider-agnostic: collaborates with PlacesClientProtocol; the concrete
 implementation (Google, Foursquare, ...) is injected.
@@ -11,11 +16,10 @@ implementation (Google, Foursquare, ...) is injected.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from ._place_utils import overlay_with_cache
-from .models import PlaceCore, PlaceObject, PlaceQuery
+from .models import PlaceObject, PlaceQuery
 from .protocols import (
     PlacesCacheProtocol,
     PlacesClientProtocol,
@@ -24,13 +28,6 @@ from .protocols import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Cap on parallel external-provider text_search calls during stale refresh.
-# Stale rows are rare in steady state (post-30-day-TTL wipe is the main
-# source), but a wipe can leave many rows stale at once. Without a cap, a
-# single search could fan out into N paid provider calls and trigger 429s.
-# Hardcoded for now; lift to config when other places knobs land.
-_REFRESH_STALE_CONCURRENCY = 5
 
 
 class PlacesSearchService:
@@ -47,28 +44,40 @@ class PlacesSearchService:
         self._upsert = upsert_service
 
     async def find(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
-        """DB → stale refresh → cache overlay → external fallback if empty."""
+        """DB → enrich (cache + provider fallback) → external query fallback
+        if no DB hits."""
         db_hits = await self._repo.find(query, limit)
-        db_hits = await self._refresh_stale(db_hits)
-
         if not db_hits:
             return await self._external_fallback(query, limit)
 
-        results = overlay_with_cache(db_hits, await self._mget_by_cores(db_hits))
+        # get_by_ids hits cache first; only misses (incl. TTL-wiped stale
+        # rows) go to the provider, with upsert + mset on the way back.
+        provider_ids = [c.provider_id for c in db_hits if c.provider_id]
+        enriched = await self.get_by_ids(provider_ids)
 
-        # min_rating: applied post-overlay because rating lives in cache, not DB.
-        # Places with no cached rating (None) are kept — we don't know their rating.
-        if query.min_rating is not None:
-            results = [
-                r for r in results
-                if r.rating is None or r.rating >= query.min_rating
-            ]
-
-        return results
+        return overlay_with_cache(db_hits, enriched)
 
     async def get_by_ids(self, provider_ids: list[str]) -> dict[str, PlaceObject]:
-        """Cache mget only — used to enrich a known set of places with live fields."""
-        return await self._cache.mget(provider_ids)
+        """Resolve places by provider_id with cache → external fallback.
+
+        Cache hits are returned directly. Misses are fetched from the provider
+        via ``client.get_by_ids`` (Place Details), then upserted to the DB and
+        written to cache so subsequent calls stay warm. Ids the provider can't
+        resolve are simply absent from the result dict.
+        """
+        if not provider_ids:
+            return {}
+
+        cached = await self._cache.mget(provider_ids)
+        missing = [pid for pid in provider_ids if pid not in cached]
+        if not missing:
+            return cached
+
+        fetched = await self._client.get_by_ids(missing)
+        await self._persist_external(fetched)
+
+        fetched_map = {p.provider_id: p for p in fetched if p.provider_id}
+        return {**cached, **fetched_map}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -79,55 +88,17 @@ class PlacesSearchService:
     ) -> list[PlaceObject]:
         """Cold path: client.search → upsert (via service) → cache → return."""
         results = await self._client.search(query, limit)
-
-        if not results:
-            return results
-
-        await self._upsert.upsert_many([o.to_core() for o in results])
-        await self._cache.mset(results)
+        await self._persist_external(results)
         return results
 
-    async def _refresh_stale(self, cores: list[PlaceCore]) -> list[PlaceCore]:
-        """Refresh stale cores (missing location) from the external provider.
+    async def _persist_external(self, places: list[PlaceObject]) -> None:
+        """Persist a batch of provider-fetched places: upsert DB + write cache.
 
-        Concurrency is capped at _REFRESH_STALE_CONCURRENCY to bound provider
-        QPS and cost; calls beyond the cap queue rather than firing in
-        parallel.
+        Shared by the by-query cold path (``_external_fallback``) and the
+        by-id cold path (``get_by_ids``). No-op on empty input so callers
+        can stay branchless.
         """
-        stale = [c for c in cores if c.location is None or c.location.lat is None]
-        if not stale:
-            return cores
-
-        sem = asyncio.Semaphore(_REFRESH_STALE_CONCURRENCY)
-
-        async def _bounded_text_search(core: PlaceCore) -> list[PlaceObject]:
-            async with sem:
-                return await self._client.text_search(
-                    PlaceQuery(place_name=core.place_name), limit=1
-                )
-
-        all_results = await asyncio.gather(
-            *[_bounded_text_search(c) for c in stale]
-        )
-
-        found: list[PlaceObject] = [r[0] for r in all_results if r]
-        if len(found) < len(stale):
-            logger.warning(
-                "refresh_stale_partial_miss",
-                extra={"missed": len(stale) - len(found), "total": len(stale)},
-            )
-        if not found:
-            return cores
-
-        refreshed = await self._upsert.upsert_many([o.to_core() for o in found])
-
-        fresh_map = {c.id: c for c in refreshed if c.id}
-        return [fresh_map.get(c.id or "", c) for c in cores]
-
-    async def _mget_by_cores(
-        self, cores: list[PlaceCore]
-    ) -> dict[str, PlaceObject]:
-        provider_ids = [c.provider_id for c in cores if c.provider_id]
-        if not provider_ids:
-            return {}
-        return await self._cache.mget(provider_ids)
+        if not places:
+            return
+        await self._upsert.upsert_many([p.to_core() for p in places])
+        await self._cache.mset(places)

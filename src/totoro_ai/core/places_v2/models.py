@@ -193,7 +193,7 @@ class PlaceQuery(BaseModel):
     """Structured search query. All fields optional, combined with AND.
 
     DB filters:  place_name, category, tags, location, created_after/before, sort_*
-    Client hints: open_now, min_rating (passed through to the search client)
+    Client hints: open_now (passed through to the search client)
     """
 
     # DB filters
@@ -212,7 +212,6 @@ class PlaceQuery(BaseModel):
 
     # client hints (ignored for DB queries)
     open_now: bool | None = None     # only return currently open places
-    min_rating: float | None = None  # e.g. 4.0 — filters results
 
     @model_validator(mode="after")
     def _validate_geo_location(self) -> PlaceQuery:

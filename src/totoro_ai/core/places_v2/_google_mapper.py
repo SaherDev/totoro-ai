@@ -23,6 +23,12 @@ from .tags import (
     TagValue,
 )
 
+# Namespace tag on every Google-sourced provider_id (e.g. "google:ChIJ...").
+# Owned here because this module is what stamps it onto PlaceObject; clients
+# strip it again when calling Place Details by id.
+GOOGLE_PROVIDER_PREFIX = "google:"
+
+
 # ---------------------------------------------------------------------------
 # Lookup tables
 # ---------------------------------------------------------------------------
@@ -343,7 +349,7 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     addr = _map_address_components(raw.get("addressComponents") or [])
 
     return PlaceObject(
-        provider_id=f"google:{raw_id}",
+        provider_id=f"{GOOGLE_PROVIDER_PREFIX}{raw_id}",
         place_name=place_name,
         category=category,
         tags=tags,

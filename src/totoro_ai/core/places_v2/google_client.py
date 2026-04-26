@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 from datetime import UTC, datetime
@@ -9,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from ._google_mapper import map_place
+from ._google_mapper import GOOGLE_PROVIDER_PREFIX, map_place
 from ._google_query_builder import build_text_search_params, query_to_google_types
 from .models import PlaceObject, PlaceQuery
 
@@ -51,6 +52,12 @@ _FIELD_MASK = (
     "places.goodForWatchingSports,"
     "places.accessibilityOptions"
 )
+# Place Details endpoint returns a single Place; the field mask must omit
+# the `places.` prefix that the search endpoints require.
+_DETAILS_FIELD_MASK = _FIELD_MASK.replace("places.", "")
+# Cap on parallel Place Details GETs. Bounds provider QPS and cost when a
+# caller asks for many ids at once (e.g. post-TTL stale refresh).
+_DETAILS_CONCURRENCY = 5
 
 
 @functools.cache
@@ -68,10 +75,11 @@ class GooglePlacesClient:
         self._http = http if http is not None else _shared_http_client()
 
     async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
-        """Route to text_search or nearby_search based on what the query can express.
+        """Route to Google's :searchText or :searchNearby based on what the
+        query can express.
 
         Tags like TimeTag/SeasonTag/AccessibilityTag produce no text, so a query
-        with only those tags falls back to nearby_search when geo is present.
+        with only those tags falls back to nearby search when geo is present.
         """
         loc = query.location
         has_geo = (
@@ -81,12 +89,42 @@ class GooglePlacesClient:
             and loc.radius_m is not None
         )
         if build_text_search_params(query)[0]:
-            return await self.text_search(query, limit)
+            return await self._text_search(query, limit)
         if has_geo:
-            return await self.nearby_search(query, limit)
+            return await self._nearby_search(query, limit)
         return []
 
-    async def text_search(
+    async def get_by_ids(self, provider_ids: list[str]) -> list[PlaceObject]:
+        """Fetch places by namespaced provider_ids (Place Details), in parallel.
+
+        Used to refresh DB rows whose location was wiped by the 30-day TTL
+        cron — provider_id is the stable identity, place_name is not.
+        Concurrency is capped at _DETAILS_CONCURRENCY to bound provider QPS
+        and cost; results are filtered to the ids that resolved.
+        """
+        if not provider_ids:
+            return []
+        sem = asyncio.Semaphore(_DETAILS_CONCURRENCY)
+
+        async def _bounded(provider_id: str) -> PlaceObject | None:
+            async with sem:
+                return await self._get_details(provider_id)
+
+        results = await asyncio.gather(*[_bounded(p) for p in provider_ids])
+        return [r for r in results if r is not None]
+
+    async def _get_details(self, provider_id: str) -> PlaceObject | None:
+        if not provider_id.startswith(GOOGLE_PROVIDER_PREFIX):
+            logger.warning(
+                "get_by_ids_unsupported_provider",
+                extra={"provider_id": provider_id},
+            )
+            return None
+        google_id = provider_id[len(GOOGLE_PROVIDER_PREFIX):]
+        results = await self._request("GET", f"/{google_id}", _DETAILS_FIELD_MASK)
+        return results[0] if results else None
+
+    async def _text_search(
         self,
         query: PlaceQuery,
         limit: int = 20,
@@ -114,9 +152,11 @@ class GooglePlacesClient:
         if included_type:
             body["includedType"] = included_type
         _apply_common_filters(body, query)
-        return await self._post(":searchText", body)
+        return await self._request(
+            "POST", ":searchText", _FIELD_MASK, body=body
+        )
 
-    async def nearby_search(
+    async def _nearby_search(
         self, query: PlaceQuery, limit: int = 20
     ) -> list[PlaceObject]:
         loc = query.location
@@ -136,33 +176,48 @@ class GooglePlacesClient:
         if google_types:
             body["includedTypes"] = google_types
         _apply_common_filters(body, query)
-        return await self._post(":searchNearby", body)
+        return await self._request(
+            "POST", ":searchNearby", _FIELD_MASK, body=body
+        )
 
-    async def _post(
-        self, endpoint: str, body: dict[str, Any]
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        field_mask: str,
+        body: dict[str, Any] | None = None,
     ) -> list[PlaceObject]:
+        """Shared HTTP path: auth, error handling, JSON decode, Place parsing.
+
+        Search endpoints return ``{"places": [...]}``; the Place Details
+        endpoint returns a flat Place dict. Both shapes are normalized to
+        ``list[PlaceObject]`` here. Returns ``[]`` on transport/HTTP errors so
+        callers degrade gracefully instead of bubbling exceptions to the agent.
+        """
         try:
-            response = await self._http.post(
-                f"{_PLACES_API_BASE}{endpoint}",
+            response = await self._http.request(
+                method,
+                f"{_PLACES_API_BASE}{path}",
                 json=body,
                 headers={
                     "X-Goog-Api-Key": self._api_key,
-                    "X-Goog-FieldMask": _FIELD_MASK,
+                    "X-Goog-FieldMask": field_mask,
                 },
                 timeout=10.0,
             )
             response.raise_for_status()
-            data = response.json()
+            data: dict[str, Any] = response.json()
         except Exception:
             logger.exception(
-                "google_places_request_error", extra={"endpoint": endpoint}
+                "google_places_request_error",
+                extra={"method": method, "path": path},
             )
             return []
-
+        raws = data.get("places") if "places" in data else [data]
         now = datetime.now(UTC)
         return [
             obj
-            for raw in (data.get("places") or [])
+            for raw in (raws or [])
             if (obj := map_place(raw, now)) is not None
         ]
 
@@ -171,5 +226,3 @@ def _apply_common_filters(body: dict[str, Any], query: PlaceQuery) -> None:
     """Decorate the request body with filters shared by text and nearby search."""
     if query.open_now is True:
         body["openNow"] = True
-    if query.min_rating is not None:
-        body["minRating"] = query.min_rating
