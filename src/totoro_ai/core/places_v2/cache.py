@@ -1,0 +1,62 @@
+"""RedisPlacesCache — flat PlaceObject cache keyed by provider_id.
+
+Cache key: `place_v2:{provider_id}`. TTL: 30 days (2_592_000 s) by default.
+Live fields only (rating, hours, phone, website, popularity, cached_at).
+The full PlaceObject is stored so overlays are a simple JSON parse + field copy.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from .models import PlaceObject
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
+logger = logging.getLogger(__name__)
+
+_KEY_PREFIX = "place_v2:"
+
+
+class RedisPlacesCache:
+    def __init__(self, redis: Redis) -> None:
+        self._redis = redis
+
+    async def mget(self, provider_ids: list[str]) -> dict[str, PlaceObject]:
+        if not provider_ids:
+            return {}
+        keys = [f"{_KEY_PREFIX}{pid}" for pid in provider_ids]
+        try:
+            values = await self._redis.mget(*keys)
+        except Exception:
+            logger.exception("places_v2_cache_mget_error")
+            return {}
+
+        result: dict[str, PlaceObject] = {}
+        for pid, val in zip(provider_ids, values, strict=False):
+            if val is not None:
+                try:
+                    result[pid] = PlaceObject.model_validate_json(val)
+                except Exception:
+                    logger.warning(
+                        "places_v2_cache_decode_error",
+                        extra={"provider_id": pid},
+                    )
+        return result
+
+    async def mset(
+        self, places: list[PlaceObject], ttl_seconds: int = 2_592_000
+    ) -> None:
+        to_cache = [p for p in places if p.provider_id]
+        if not to_cache:
+            return
+        try:
+            async with self._redis.pipeline(transaction=False) as pipe:
+                for place in to_cache:
+                    key = f"{_KEY_PREFIX}{place.provider_id}"
+                    pipe.set(key, place.model_dump_json(), ex=ttl_seconds)
+                await pipe.execute()
+        except Exception:
+            logger.exception("places_v2_cache_mset_error")

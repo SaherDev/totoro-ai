@@ -388,10 +388,14 @@ class PlacesConfig(BaseModel):
     - max_enrichment_batch: per-request cap on external provider fetches
       in PlacesService.enrich_batch(geo_only=False). Counts unique provider_id,
       not input positions.
+    - db_min_hits: minimum DB result count before PlacesSearchService (places_v2)
+      skips the Google cold path. Below this count the service calls Google and
+      warms both cache and DB.
     """
 
     cache_ttl_days: int = 30
     max_enrichment_batch: int = 10
+    db_min_hits: int = 3
 
 
 class PromptConfig(BaseModel):
