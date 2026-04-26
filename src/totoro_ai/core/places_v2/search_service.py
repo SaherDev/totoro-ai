@@ -12,43 +12,8 @@ from .protocols import (
     PlacesClientProtocol,
     PlacesRepoProtocol,
 )
-from .tags import AccessibilityTag, SeasonTag, TimeTag
 
 logger = logging.getLogger(__name__)
-
-# Tag values that add noise to a Google text query — Google doesn't interpret
-# time-of-day, seasons, or accessibility codes as place descriptors.
-_GOOGLE_SKIP_VALUES: frozenset[str] = frozenset(
-    {t.value for t in TimeTag}
-    | {t.value for t in SeasonTag}
-    | {t.value for t in AccessibilityTag}
-)
-
-
-def _query_to_google_text(query: PlaceQuery) -> str:
-    """Convert a PlaceQuery into a natural-language Google textQuery string.
-
-    Uses query.text if provided; otherwise builds from category + tags.
-    Tag values that don't translate to text search (time, season, accessibility)
-    are skipped automatically.
-    """
-    parts: list[str] = []
-
-    if query.text:
-        parts.append(query.text)
-    else:
-        if query.place_name:
-            parts.append(query.place_name)
-        if query.category:
-            parts.append(query.category.value.replace("_", " "))
-
-    if query.tags:
-        for tag_val in query.tags:
-            if tag_val not in _GOOGLE_SKIP_VALUES:
-                parts.append(str(tag_val).replace("_", " "))
-
-    # dict.fromkeys preserves insertion order and deduplicates
-    return " ".join(dict.fromkeys(parts))
 
 
 class PlacesSearchService:
@@ -93,20 +58,11 @@ class PlacesSearchService:
             and loc.lng is not None
             and loc.radius_m is not None
         )
+        has_text = bool(query.text or query.place_name or query.category or query.tags)
 
-        text = _query_to_google_text(query)
-
-        if text:
-            # text_search handles both plain and geo-restricted queries
-            results = await self._client.text_search(
-                text,
-                limit,
-                location=loc if has_geo else None,
-                open_now=query.open_now,
-                min_rating=query.min_rating,
-            )
+        if has_text:
+            results = await self._client.text_search(query, limit)
         elif has_geo:
-            # geo-only (no text, no tags) — nearby search
             results = await self._client.nearby_search(query, limit)
         else:
             return []
@@ -130,7 +86,7 @@ class PlacesSearchService:
             return cores
 
         all_results = await asyncio.gather(*[
-            self._client.text_search(c.place_name, limit=1)
+            self._client.text_search(PlaceQuery(text=c.place_name), limit=1)
             for c in stale
         ])
 

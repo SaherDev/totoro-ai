@@ -10,6 +10,7 @@ import httpx
 
 from ._google_mapper import map_place
 from .models import LocationContext, PlaceObject, PlaceQuery
+from .tags import AccessibilityTag, SeasonTag, TimeTag
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,39 @@ _FIELD_MASK = (
     "places.accessibilityOptions"
 )
 
+# Tag values that add noise to a Google text query — Google doesn't interpret
+# time-of-day, seasons, or accessibility codes as place descriptors.
+_GOOGLE_SKIP_VALUES: frozenset[str] = frozenset(
+    {t.value for t in TimeTag}
+    | {t.value for t in SeasonTag}
+    | {t.value for t in AccessibilityTag}
+)
+
+
+def _query_to_google_text(query: PlaceQuery) -> str:
+    """Convert a PlaceQuery into a natural-language Google textQuery string.
+
+    Uses query.text if provided; otherwise builds from category + tags.
+    Tag values that don't translate well (time, season, accessibility) are skipped.
+    """
+    parts: list[str] = []
+
+    if query.text:
+        parts.append(query.text)
+    else:
+        if query.place_name:
+            parts.append(query.place_name)
+        if query.category:
+            parts.append(query.category.value.replace("_", " "))
+
+    if query.tags:
+        for tag_val in query.tags:
+            if tag_val not in _GOOGLE_SKIP_VALUES:
+                parts.append(str(tag_val).replace("_", " "))
+
+    # dict.fromkeys preserves insertion order and deduplicates
+    return " ".join(dict.fromkeys(parts))
+
 
 class GooglePlacesClient:
     def __init__(self, api_key: str, http: httpx.AsyncClient) -> None:
@@ -58,34 +92,33 @@ class GooglePlacesClient:
 
     async def text_search(
         self,
-        text: str,
+        query: PlaceQuery,
         limit: int = 20,
-        location: LocationContext | None = None,
-        open_now: bool | None = None,
-        min_rating: float | None = None,
     ) -> list[PlaceObject]:
+        text = _query_to_google_text(query)
         if not text:
             return []
+        loc = query.location
         body: dict[str, Any] = {
             "textQuery": text,
             "maxResultCount": min(limit, 20),
         }
         if (
-            location
-            and location.lat is not None
-            and location.lng is not None
-            and location.radius_m is not None
+            loc
+            and loc.lat is not None
+            and loc.lng is not None
+            and loc.radius_m is not None
         ):
             body["locationRestriction"] = {
                 "circle": {
-                    "center": {"latitude": location.lat, "longitude": location.lng},
-                    "radius": float(location.radius_m),
+                    "center": {"latitude": loc.lat, "longitude": loc.lng},
+                    "radius": float(loc.radius_m),
                 }
             }
-        if open_now is True:
+        if query.open_now is True:
             body["openNow"] = True
-        if min_rating is not None:
-            body["minRating"] = min_rating
+        if query.min_rating is not None:
+            body["minRating"] = query.min_rating
         return await self._post(":searchText", body, limit)
 
     async def nearby_search(

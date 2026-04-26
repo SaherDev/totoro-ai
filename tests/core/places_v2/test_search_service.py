@@ -11,10 +11,8 @@ from totoro_ai.core.places_v2.models import (
     PlaceObject,
     PlaceQuery,
 )
-from totoro_ai.core.places_v2.search_service import (
-    PlacesSearchService,
-    _query_to_google_text,
-)
+from totoro_ai.core.places_v2.google_client import _query_to_google_text
+from totoro_ai.core.places_v2.search_service import PlacesSearchService
 from totoro_ai.core.places_v2.tags import (
     AtmosphereTag,
     CuisineTag,
@@ -179,10 +177,10 @@ class TestColdPath:
             ),
         )
 
-        # Has tags → builds text → text_search with location, not nearby_search
+        # Has tags → text_search; location is embedded in the PlaceQuery passed
         client.text_search.assert_awaited_once()
-        call_kwargs = client.text_search.call_args
-        assert call_kwargs.kwargs.get("location") is not None
+        passed_query: PlaceQuery = client.text_search.call_args.args[0]
+        assert passed_query.location is not None
         client.nearby_search.assert_not_awaited()
 
     async def test_no_text_no_geo_returns_empty(self) -> None:
