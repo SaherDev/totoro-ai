@@ -9,11 +9,7 @@ from typing import Any
 import httpx
 
 from ._google_mapper import map_place
-from ._google_query_builder import (
-    build_text_search_params,
-    query_to_google_text,
-    query_to_google_types,
-)
+from ._google_query_builder import build_text_search_params, query_to_google_types
 from .models import PlaceObject, PlaceQuery
 
 logger = logging.getLogger(__name__)
@@ -74,7 +70,7 @@ class GooglePlacesClient:
             and loc.lng is not None
             and loc.radius_m is not None
         )
-        if query_to_google_text(query):
+        if build_text_search_params(query)[0]:
             return await self.text_search(query, limit)
         if has_geo:
             return await self.nearby_search(query, limit)

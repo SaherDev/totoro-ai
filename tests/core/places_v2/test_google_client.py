@@ -6,10 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
-from totoro_ai.core.places_v2._google_query_builder import (
-    build_text_search_params,
-    query_to_google_text,
-)
+from totoro_ai.core.places_v2._google_query_builder import build_text_search_params
 from totoro_ai.core.places_v2.google_client import GooglePlacesClient
 from totoro_ai.core.places_v2.models import (
     LocationContext,
@@ -109,58 +106,6 @@ class TestSearchRouting:
 
 
 # ---------------------------------------------------------------------------
-# _query_to_google_text
-# ---------------------------------------------------------------------------
-
-class TestQueryToGoogleText:
-    def test_place_name_is_first_part(self) -> None:
-        q = PlaceQuery(place_name="ramen near Shibuya")
-        assert query_to_google_text(q) == "ramen near Shibuya"
-
-    def test_builds_from_category_and_tags(self) -> None:
-        q = PlaceQuery(
-            category=PlaceCategory.restaurant,
-            tags=[CuisineTag.thai, FeatureTag.outdoor_seating],
-        )
-        text = query_to_google_text(q)
-        assert "restaurant" in text
-        assert "Thai" in text
-        assert "outdoor seating" in text
-
-    def test_underscores_converted_to_spaces(self) -> None:
-        q = PlaceQuery(tags=[ServiceTag.serves_cocktails, AtmosphereTag.laid_back])
-        text = query_to_google_text(q)
-        assert "serves cocktails" in text
-        assert "laid back" in text
-
-    def test_time_tags_skipped(self) -> None:
-        q = PlaceQuery(tags=[CuisineTag.japanese, TimeTag.evening])
-        text = query_to_google_text(q)
-        assert "Japanese" in text
-        assert "evening" not in text
-
-    def test_season_tags_skipped(self) -> None:
-        q = PlaceQuery(tags=[DietaryTag.vegan, SeasonTag.summer])
-        text = query_to_google_text(q)
-        assert "vegan" in text
-        assert "summer" not in text
-
-    def test_accessibility_tags_skipped(self) -> None:
-        q = PlaceQuery(tags=[CuisineTag.thai, AccessibilityTag.wheelchair_entrance])
-        text = query_to_google_text(q)
-        assert "Thai" in text
-        assert "wheelchair" not in text
-
-    def test_deduplicates_parts(self) -> None:
-        q = PlaceQuery(place_name="Ramen", tags=["Ramen"])
-        text = query_to_google_text(q)
-        assert text.count("Ramen") == 1
-
-    def test_empty_query_returns_empty_string(self) -> None:
-        assert query_to_google_text(PlaceQuery()) == ""
-
-
-# ---------------------------------------------------------------------------
 # build_text_search_params — text/type dedup
 # ---------------------------------------------------------------------------
 
@@ -224,3 +169,25 @@ class TestBuildTextSearchParams:
         text, included_type = build_text_search_params(PlaceQuery())
         assert text == ""
         assert included_type is None
+
+    def test_place_name_only(self) -> None:
+        q = PlaceQuery(place_name="ramen near Shibuya")
+        text, included_type = build_text_search_params(q)
+        assert text == "ramen near Shibuya"
+        assert included_type is None
+
+    def test_underscores_in_unmapped_tags_converted_to_spaces(self) -> None:
+        # ServiceTag and AtmosphereTag have no Google type mapping → fall to text.
+        q = PlaceQuery(
+            place_name="bar",
+            tags=[ServiceTag.serves_cocktails, AtmosphereTag.laid_back],
+        )
+        text, _ = build_text_search_params(q)
+        assert "serves cocktails" in text
+        assert "laid back" in text
+
+    def test_deduplicates_repeated_parts(self) -> None:
+        # place_name and a tag with the same value collapse to a single token.
+        q = PlaceQuery(place_name="Ramen", tags=["Ramen"])
+        text, _ = build_text_search_params(q)
+        assert text.count("Ramen") == 1

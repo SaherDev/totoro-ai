@@ -221,24 +221,3 @@ def build_text_search_params(query: PlaceQuery) -> tuple[str, str | None]:
         text_parts.append(primary_term)
 
     return " ".join(dict.fromkeys(text_parts)), primary_type
-
-
-def query_to_google_text(query: PlaceQuery) -> str:
-    """Convert a PlaceQuery into a natural-language Google textQuery string.
-
-    Builds from place_name + category + tags. Time, season, and accessibility
-    tag values are skipped — Google doesn't interpret them as place descriptors.
-    """
-    parts: list[str] = []
-
-    if query.place_name:
-        parts.append(query.place_name)
-    if query.category:
-        parts.append(query.category.value.replace("_", " "))
-
-    if query.tags:
-        for tag_val in query.tags:
-            if tag_val not in GOOGLE_SKIP_VALUES:
-                parts.append(str(tag_val).replace("_", " "))
-
-    return " ".join(dict.fromkeys(parts))
