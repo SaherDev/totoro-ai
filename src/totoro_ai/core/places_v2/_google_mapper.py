@@ -12,7 +12,16 @@ from .models import (
     PlaceObject,
     PlaceTag,
 )
-from .tags import AccessibilityTag, TagType
+from .tags import (
+    AccessibilityTag,
+    CuisineTag,
+    DietaryTag,
+    FeatureTag,
+    PriceTag,
+    ServiceTag,
+    TagType,
+    TagValue,
+)
 
 # ---------------------------------------------------------------------------
 # Lookup tables
@@ -184,74 +193,74 @@ _GOOGLE_TYPE_TO_CATEGORY: dict[str, str] = {
     "library": "library",
 }
 
-_PRICE_LEVEL_MAP: dict[str, str] = {
-    "PRICE_LEVEL_FREE": "free",
-    "PRICE_LEVEL_INEXPENSIVE": "budget",
-    "PRICE_LEVEL_MODERATE": "moderate",
-    "PRICE_LEVEL_EXPENSIVE": "expensive",
-    "PRICE_LEVEL_VERY_EXPENSIVE": "very_expensive",
+_PRICE_LEVEL_MAP: dict[str, PriceTag] = {
+    "PRICE_LEVEL_FREE": PriceTag.free,
+    "PRICE_LEVEL_INEXPENSIVE": PriceTag.budget,
+    "PRICE_LEVEL_MODERATE": PriceTag.moderate,
+    "PRICE_LEVEL_EXPENSIVE": PriceTag.expensive,
+    "PRICE_LEVEL_VERY_EXPENSIVE": PriceTag.very_expensive,
 }
 
-# Restaurant-specific Google types → cuisine label
-_GOOGLE_TYPE_TO_CUISINE: dict[str, str] = {
-    "thai_restaurant": "Thai",
-    "chinese_restaurant": "Chinese",
-    "japanese_restaurant": "Japanese",
-    "sushi_restaurant": "Japanese",
-    "ramen_restaurant": "Japanese",
-    "korean_restaurant": "Korean",
-    "indian_restaurant": "Indian",
-    "italian_restaurant": "Italian",
-    "pizza_restaurant": "Italian",
-    "american_restaurant": "American",
-    "burger_restaurant": "American",
-    "mexican_restaurant": "Mexican",
-    "french_restaurant": "French",
-    "mediterranean_restaurant": "Mediterranean",
-    "greek_restaurant": "Greek",
-    "spanish_restaurant": "Spanish",
-    "vietnamese_restaurant": "Vietnamese",
-    "indonesian_restaurant": "Indonesian",
-    "turkish_restaurant": "Turkish",
-    "middle_eastern_restaurant": "Middle Eastern",
-    "brazilian_restaurant": "Brazilian",
-    "seafood_restaurant": "Seafood",
-    "steak_house": "Steakhouse",
+# Restaurant-specific Google types → cuisine tag
+_GOOGLE_TYPE_TO_CUISINE: dict[str, CuisineTag] = {
+    "thai_restaurant": CuisineTag.thai,
+    "chinese_restaurant": CuisineTag.chinese,
+    "japanese_restaurant": CuisineTag.japanese,
+    "sushi_restaurant": CuisineTag.japanese,
+    "ramen_restaurant": CuisineTag.japanese,
+    "korean_restaurant": CuisineTag.korean,
+    "indian_restaurant": CuisineTag.indian,
+    "italian_restaurant": CuisineTag.italian,
+    "pizza_restaurant": CuisineTag.italian,
+    "american_restaurant": CuisineTag.american,
+    "burger_restaurant": CuisineTag.american,
+    "mexican_restaurant": CuisineTag.mexican,
+    "french_restaurant": CuisineTag.french,
+    "mediterranean_restaurant": CuisineTag.mediterranean,
+    "greek_restaurant": CuisineTag.greek,
+    "spanish_restaurant": CuisineTag.spanish,
+    "vietnamese_restaurant": CuisineTag.vietnamese,
+    "indonesian_restaurant": CuisineTag.indonesian,
+    "turkish_restaurant": CuisineTag.turkish,
+    "middle_eastern_restaurant": CuisineTag.middle_eastern,
+    "brazilian_restaurant": CuisineTag.brazilian,
+    "seafood_restaurant": CuisineTag.seafood,
+    "steak_house": CuisineTag.steakhouse,
 }
 
 # Google types that imply dietary restrictions
-_GOOGLE_TYPE_TO_DIETARY: dict[str, list[str]] = {
-    "vegan_restaurant": ["vegan", "vegetarian"],
-    "vegetarian_restaurant": ["vegetarian"],
-    "halal_restaurant": ["halal"],
+_GOOGLE_TYPE_TO_DIETARY: dict[str, list[DietaryTag]] = {
+    "vegan_restaurant": [DietaryTag.vegan, DietaryTag.vegetarian],
+    "vegetarian_restaurant": [DietaryTag.vegetarian],
+    "halal_restaurant": [DietaryTag.halal],
 }
 
-# Google boolean Place fields → (TagType, tag value)
-_GOOGLE_BOOL_TO_TAG: dict[str, tuple[TagType, str]] = {
-    "dineIn": (TagType.service, "dine_in"),
-    "takeout": (TagType.service, "takeout"),
-    "delivery": (TagType.service, "delivery"),
-    "reservable": (TagType.service, "reservable"),
-    "servesBreakfast": (TagType.service, "serves_breakfast"),
-    "servesBrunch": (TagType.service, "serves_brunch"),
-    "servesLunch": (TagType.service, "serves_lunch"),
-    "servesDinner": (TagType.service, "serves_dinner"),
-    "servesBeer": (TagType.service, "serves_beer"),
-    "servesWine": (TagType.service, "serves_wine"),
-    "servesCocktails": (TagType.service, "serves_cocktails"),
-    "servesVegetarianFood": (TagType.dietary, "vegetarian_options"),
-    "outdoorSeating": (TagType.feature, "outdoor_seating"),
-    "liveMusic": (TagType.feature, "live_music"),
-    "menuForChildren": (TagType.feature, "kids_menu"),
-    "allowsDogs": (TagType.feature, "dog_friendly"),
-    "goodForChildren": (TagType.feature, "family_friendly"),
-    "goodForGroups": (TagType.feature, "group_friendly"),
-    "goodForWatchingSports": (TagType.feature, "sports_viewing"),
+# Google boolean Place fields → (TagType, TagValue)
+_GOOGLE_BOOL_TO_TAG: dict[str, tuple[TagType, TagValue]] = {
+    "dineIn": (TagType.service, ServiceTag.dine_in),
+    "takeout": (TagType.service, ServiceTag.takeout),
+    "delivery": (TagType.service, ServiceTag.delivery),
+    "reservable": (TagType.service, ServiceTag.reservable),
+    "servesBreakfast": (TagType.service, ServiceTag.serves_breakfast),
+    "servesBrunch": (TagType.service, ServiceTag.serves_brunch),
+    "servesLunch": (TagType.service, ServiceTag.serves_lunch),
+    "servesDinner": (TagType.service, ServiceTag.serves_dinner),
+    "servesBeer": (TagType.service, ServiceTag.serves_beer),
+    "servesWine": (TagType.service, ServiceTag.serves_wine),
+    "servesCocktails": (TagType.service, ServiceTag.serves_cocktails),
+    "servesVegetarianFood": (TagType.dietary, DietaryTag.vegetarian_options),
+    "outdoorSeating": (TagType.feature, FeatureTag.outdoor_seating),
+    "liveMusic": (TagType.feature, FeatureTag.live_music),
+    "menuForChildren": (TagType.feature, FeatureTag.kids_menu),
+    "allowsDogs": (TagType.feature, FeatureTag.dog_friendly),
+    "goodForChildren": (TagType.feature, FeatureTag.family_friendly),
+    "goodForGroups": (TagType.feature, FeatureTag.group_friendly),
+    "goodForWatchingSports": (TagType.feature, FeatureTag.sports_viewing),
 }
 
-# accessibilityOptions sub-object fields → accessibility tags
+# accessibilityOptions sub-object fields → (TagType, TagValue)
 _acc = TagType.accessibility
-_GOOGLE_ACCESSIBILITY_TO_TAG: dict[str, tuple[TagType, str]] = {
+_GOOGLE_ACCESSIBILITY_TO_TAG: dict[str, tuple[TagType, TagValue]] = {
     "wheelchairAccessibleParking": (_acc, AccessibilityTag.wheelchair_parking),
     "wheelchairAccessibleEntrance": (_acc, AccessibilityTag.wheelchair_entrance),
     "wheelchairAccessibleRestroom": (_acc, AccessibilityTag.wheelchair_restroom),
