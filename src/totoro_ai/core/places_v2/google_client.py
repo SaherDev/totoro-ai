@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from .models import HoursDict, PlaceObject, PlaceQuery, PlaceType
+from .models import HoursDict, PlaceObject, PlaceQuery
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,6 @@ _FIELD_MASK = (
     "places.timeZone"
 )
 
-# Google Places API integer day → weekday name (0 = Sunday)
 _DAY_INT_TO_NAME: dict[int, str] = {
     0: "sunday",
     1: "monday",
@@ -43,20 +42,6 @@ _DAY_INT_TO_NAME: dict[int, str] = {
     4: "thursday",
     5: "friday",
     6: "saturday",
-}
-
-# Google type → PlaceType enum value
-_GOOGLE_TYPE_MAP: dict[str, PlaceType] = {
-    "restaurant": PlaceType.restaurant,
-    "cafe": PlaceType.cafe,
-    "bar": PlaceType.bar,
-    "bakery": PlaceType.bakery,
-    "museum": PlaceType.museum,
-    "park": PlaceType.park,
-    "store": PlaceType.shopping,
-    "shopping_mall": PlaceType.shopping,
-    "lodging": PlaceType.hotel,
-    "tourist_attraction": PlaceType.attraction,
 }
 
 
@@ -86,9 +71,6 @@ class GooglePlacesClient:
                 }
             }
 
-        if query.place_type:
-            body["includedType"] = query.place_type.value
-
         return await self._post(":searchText", body, limit)
 
     async def nearby_search(
@@ -108,9 +90,6 @@ class GooglePlacesClient:
             },
             "maxResultCount": min(limit, 20),
         }
-
-        if query.place_type:
-            body["includedTypes"] = [query.place_type.value]
 
         return await self._post(":searchNearby", body, limit)
 
@@ -165,17 +144,9 @@ def _map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     if not place_name:
         return None
 
-    place_type: PlaceType | None = None
-    for t in raw.get("types") or []:
-        mapped = _GOOGLE_TYPE_MAP.get(t)
-        if mapped is not None:
-            place_type = mapped
-            break
-
     return PlaceObject(
         provider_id=f"google:{raw_id}",
         place_name=place_name,
-        place_type=place_type,
         lat=location.get("latitude"),
         lng=location.get("longitude"),
         address=raw.get("formattedAddress"),

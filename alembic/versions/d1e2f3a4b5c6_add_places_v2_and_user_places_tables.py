@@ -44,8 +44,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String, primary_key=True),
         sa.Column("provider_id", sa.String, nullable=True),
         sa.Column("place_name", sa.String, nullable=False),
-        sa.Column("place_type", sa.String, nullable=True),
-        sa.Column("subcategory", sa.String, nullable=True),
+        sa.Column("category", sa.String, nullable=True),
         sa.Column(
             "tags",
             sa.ARRAY(sa.String),
@@ -85,7 +84,7 @@ def upgrade() -> None:
         """
     )
 
-    # FTS expression index over name, subcategory, tags, and cuisine attribute.
+    # FTS expression index over name, category, tags, and cuisine attribute.
     op.execute(
         """
         CREATE INDEX places_v2_fts_idx
@@ -93,7 +92,7 @@ def upgrade() -> None:
         USING gin (
             to_tsvector('english',
                 coalesce(place_name, '') || ' ' ||
-                coalesce(subcategory, '') || ' ' ||
+                coalesce(category, '') || ' ' ||
                 coalesce(array_to_string(tags, ' '), '') || ' ' ||
                 coalesce(attributes->>'cuisine', '')
             )

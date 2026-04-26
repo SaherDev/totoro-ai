@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import PlaceAttributes, PlaceCore, PlaceQuery, PlaceType
+from .models import PlaceAttributes, PlaceCore, PlaceQuery
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +56,13 @@ class PlacesRepo:
                 """
                 to_tsvector('english',
                     coalesce(place_name, '') || ' ' ||
-                    coalesce(subcategory, '') || ' ' ||
+                    coalesce(category, '') || ' ' ||
                     coalesce(array_to_string(tags, ' '), '') || ' ' ||
                     coalesce(attributes->>'cuisine', '')
                 ) @@ plainto_tsquery('english', :fts_text)
                 """
             )
             params["fts_text"] = query.text
-
-        if query.place_type:
-            conditions.append("place_type = :place_type")
-            params["place_type"] = query.place_type.value
 
         if query.tags:
             conditions.append("tags @> :tags")
@@ -143,14 +139,14 @@ class PlacesRepo:
         stmt = text(
             """
             INSERT INTO places_v2
-                (id, provider_id, place_name, place_type, subcategory, tags,
+                (id, provider_id, place_name, category, tags,
                  attributes, lat, lng, address, created_at, refreshed_at)
             VALUES
-                (:id, :provider_id, :place_name, :place_type, :subcategory, :tags,
+                (:id, :provider_id, :place_name, :category, :tags,
                  :attributes, :lat, :lng, :address, :created_at, :refreshed_at)
             ON CONFLICT (provider_id) WHERE provider_id IS NOT NULL
             DO UPDATE SET
-                subcategory  = COALESCE(places_v2.subcategory, EXCLUDED.subcategory),
+                category     = COALESCE(places_v2.category, EXCLUDED.category),
                 tags         = (
                     SELECT array_agg(DISTINCT x)
                     FROM unnest(
@@ -190,8 +186,7 @@ _PlacesV2Table = Table(
     Column("id"),
     Column("provider_id"),
     Column("place_name"),
-    Column("place_type"),
-    Column("subcategory"),
+    Column("category"),
     Column("tags"),
     Column("attributes"),
     Column("lat"),
@@ -207,8 +202,7 @@ def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
         "id": core.id or str(uuid4()),
         "provider_id": core.provider_id,
         "place_name": core.place_name,
-        "place_type": core.place_type.value if core.place_type else None,
-        "subcategory": core.subcategory,
+        "category": core.category,
         "tags": core.tags or [],
         "attributes": core.attributes.model_dump(exclude_none=True),
         "lat": core.lat,
@@ -223,13 +217,6 @@ def _row_to_core(row: object) -> PlaceCore:
     from collections.abc import Mapping
 
     m = dict(row) if isinstance(row, Mapping) else vars(row)
-    place_type: PlaceType | None = None
-    import contextlib
-
-    with contextlib.suppress(ValueError):
-        if m.get("place_type"):
-            place_type = PlaceType(m["place_type"])
-
     attrs_raw = m.get("attributes") or {}
     attributes = (
         PlaceAttributes.model_validate(attrs_raw) if attrs_raw else PlaceAttributes()
@@ -239,8 +226,7 @@ def _row_to_core(row: object) -> PlaceCore:
         id=m.get("id"),
         provider_id=m.get("provider_id"),
         place_name=m["place_name"],
-        place_type=place_type,
-        subcategory=m.get("subcategory"),
+        category=m.get("category"),
         tags=list(m.get("tags") or []),
         attributes=attributes,
         lat=m.get("lat"),

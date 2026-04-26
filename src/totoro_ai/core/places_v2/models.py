@@ -15,19 +15,6 @@ from typing import TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class PlaceType(str, Enum):
-    restaurant = "restaurant"
-    cafe = "cafe"
-    bar = "bar"
-    bakery = "bakery"
-    museum = "museum"
-    park = "park"
-    shopping = "shopping"
-    hotel = "hotel"
-    attraction = "attraction"
-    other = "other"
-
-
 class PlaceSource(str, Enum):
     tiktok = "tiktok"
     instagram = "instagram"
@@ -72,7 +59,6 @@ class PlaceQuery(BaseModel):
 
     text: str | None = None
     location: LocationContext | None = None
-    place_type: PlaceType | None = None
     tags: list[str] = Field(default_factory=list)
     cuisine: str | None = None
     price_hint: str | None = None
@@ -91,8 +77,7 @@ class PlaceCore(BaseModel):
 
     # core (mergeable)
     place_name: str
-    place_type: PlaceType | None = None
-    subcategory: str | None = None
+    category: str | None = None
     tags: list[str] = Field(default_factory=list)
     attributes: PlaceAttributes = Field(default_factory=PlaceAttributes)
 

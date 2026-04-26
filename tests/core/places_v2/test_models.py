@@ -15,7 +15,6 @@ from totoro_ai.core.places_v2.models import (
     PlaceObject,
     PlaceQuery,
     PlaceSource,
-    PlaceType,
     SavedPlaceView,
     UserPlace,
 )
@@ -104,8 +103,7 @@ class TestPlaceCore:
             id="abc",
             provider_id="google:ChIJ123",
             place_name="Sukhumvit Joe's",
-            place_type=PlaceType.restaurant,
-            subcategory="ramen",
+            category="ramen",
             tags=["quiet", "solo-ok"],
             lat=13.756,
             lng=100.502,

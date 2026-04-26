@@ -34,8 +34,7 @@ class PlaceV2(Base):
     provider_id: Mapped[str | None] = mapped_column(String, nullable=True, index=False)
 
     place_name: Mapped[str] = mapped_column(String, nullable=False)
-    place_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    subcategory: Mapped[str | None] = mapped_column(String, nullable=True)
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
     attributes: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
 
