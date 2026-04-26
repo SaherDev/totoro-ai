@@ -143,9 +143,18 @@ class PlacesRepo:
                 ]
             )
 
+        if query.created_after:
+            conditions.append(_t.created_at >= query.created_after)
+        if query.created_before:
+            conditions.append(_t.created_at <= query.created_before)
+
         stmt = select(_PlacesV2Table)
         if conditions:
             stmt = stmt.where(and_(*conditions))
+
+        sort_col = getattr(_t, query.sort_by) if query.sort_by else _t.created_at
+        stmt = stmt.order_by(sort_col.desc() if query.sort_desc else sort_col.asc())
+
         result = await self._session.execute(stmt.limit(limit))
         return [_row_to_core(row._mapping) for row in result]
 

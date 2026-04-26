@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -51,6 +51,9 @@ class PlaceAttributes(BaseModel):
     location_context: LocationContext | None = None
 
 
+SortField = Literal["created_at", "refreshed_at", "place_name", "category"]
+
+
 class PlaceQuery(BaseModel):
     """Structured search query. Mirrors PlaceCore fields — all optional."""
 
@@ -59,6 +62,14 @@ class PlaceQuery(BaseModel):
     tags: list[str] = Field(default_factory=list)
     attributes: PlaceAttributes | None = None
     location: LocationContext | None = None
+
+    # date range
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+
+    # ordering
+    sort_by: SortField | None = None
+    sort_desc: bool = True
 
 
 class PlaceCore(BaseModel):
