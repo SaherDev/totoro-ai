@@ -206,13 +206,11 @@ class TestUpsertPlace:
         row = _minimal_row("x", "google:x")
         repo, session = _make_repo()
         mock_result = MagicMock()
-        mock_result.mappings = MagicMock(
-            return_value=MagicMock(one=MagicMock(return_value=row))
-        )
+        mock_result.__iter__ = lambda self: iter([MagicMock(_mapping=row)])
         session.execute = AsyncMock(return_value=mock_result)
 
         core = PlaceCore(place_name="Orphan Place")
         with caplog.at_level("WARNING"):
             await repo.upsert_place(core)
 
-        assert "upsert_place_no_provider_id" in caplog.text
+        assert "upsert_places_no_provider_id" in caplog.text

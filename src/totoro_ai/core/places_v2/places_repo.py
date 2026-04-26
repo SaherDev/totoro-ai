@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -171,27 +170,27 @@ class PlacesRepo:
         return [_row_to_core(row._mapping) for row in result]
 
     async def upsert_places(self, cores: list[PlaceCore]) -> list[PlaceCore]:
-        if not cores:
-            return []
-        results = await asyncio.gather(*[self.upsert_place(c) for c in cores])
-        return list(results)
-
-    async def upsert_place(self, core: PlaceCore) -> PlaceCore:
-        """Single-row UPSERT with additive merge for curated fields.
+        """Bulk UPSERT with additive merge — one INSERT, one commit.
 
         category coalesces (keep existing); tags and location take newest non-NULL.
-        Requires provider_id — without it the conflict target won't fire and
-        concurrent calls can create duplicate rows.
+        Requires provider_id per row — without it the conflict target won't fire
+        and concurrent calls can create duplicate rows. RETURNING order is not
+        guaranteed; callers re-key by id/provider_id if order matters.
         """
-        if core.provider_id is None:
-            logger.warning(
-                "upsert_place_no_provider_id",
-                extra={"place_name": core.place_name},
-            )
-        now = datetime.now(UTC)
-        row = _core_to_dict(core, now)
+        if not cores:
+            return []
 
-        insert_stmt = pg_insert(_PlacesV2Table).values([row])
+        no_provider_id = [c.place_name for c in cores if c.provider_id is None]
+        if no_provider_id:
+            logger.warning(
+                "upsert_places_no_provider_id",
+                extra={"count": len(no_provider_id), "names": no_provider_id},
+            )
+
+        now = datetime.now(UTC)
+        rows = [_core_to_dict(c, now) for c in cores]
+
+        insert_stmt = pg_insert(_PlacesV2Table).values(rows)
         excl = insert_stmt.excluded
 
         stmt = insert_stmt.on_conflict_do_update(
@@ -210,8 +209,12 @@ class PlacesRepo:
 
         result = await self._session.execute(stmt)
         await self._session.commit()
-        persisted = result.mappings().one()
-        return _row_to_core(persisted)
+        return [_row_to_core(row._mapping) for row in result]
+
+    async def upsert_place(self, core: PlaceCore) -> PlaceCore:
+        """Single-row UPSERT — thin wrapper around upsert_places."""
+        [persisted] = await self.upsert_places([core])
+        return persisted
 
 
 # ---------------------------------------------------------------------------
