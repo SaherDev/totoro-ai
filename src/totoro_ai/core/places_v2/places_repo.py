@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -93,11 +94,35 @@ class PlacesRepo:
             conditions.append(
                 _t.attributes["cuisine"].astext.ilike(f"%{attrs.cuisine}%")
             )
-
         if attrs and attrs.price_hint:
             conditions.append(_t.attributes["price_hint"].astext == attrs.price_hint)
+        if attrs and attrs.ambiance:
+            conditions.append(
+                _t.attributes["ambiance"].astext.ilike(f"%{attrs.ambiance}%")
+            )
+        if attrs and attrs.dietary:
+            conditions.append(
+                _t.attributes["dietary"].op("@>")(
+                    cast(json.dumps(attrs.dietary), JSONB)
+                )
+            )
+        if attrs and attrs.good_for:
+            conditions.append(
+                _t.attributes["good_for"].op("@>")(
+                    cast(json.dumps(attrs.good_for), JSONB)
+                )
+            )
 
         loc = query.location
+        if loc and loc.city:
+            conditions.append(_t.location["city"].astext.ilike(f"%{loc.city}%"))
+        if loc and loc.country:
+            conditions.append(_t.location["country"].astext == loc.country)
+        if loc and loc.neighborhood:
+            conditions.append(
+                _t.location["neighborhood"].astext.ilike(f"%{loc.neighborhood}%")
+            )
+
         if (
             loc
             and loc.lat is not None
