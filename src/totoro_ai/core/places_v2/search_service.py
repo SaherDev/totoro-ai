@@ -1,9 +1,12 @@
-"""PlacesSearchService — DB → stale refresh → cache overlay → Google fallback.
+"""PlacesSearchService — DB → stale refresh → cache overlay → external fallback.
 
 Reads only. All writes are delegated to PlaceUpsertService, which owns the
 merge policy and event emission. This service touches the cache directly
 because cache stores the live half (PlaceObject) which is shaped differently
 from the persisted PlaceCore.
+
+Provider-agnostic: collaborates with PlacesClientProtocol; the concrete
+implementation (Google, Foursquare, ...) is injected.
 """
 
 from __future__ import annotations
@@ -22,10 +25,10 @@ from .protocols import (
 
 logger = logging.getLogger(__name__)
 
-# Cap on parallel Google text_search calls during stale refresh.
+# Cap on parallel external-provider text_search calls during stale refresh.
 # Stale rows are rare in steady state (post-30-day-TTL wipe is the main
 # source), but a wipe can leave many rows stale at once. Without a cap, a
-# single search could fan out into N paid Google calls and trigger 429s.
+# single search could fan out into N paid provider calls and trigger 429s.
 # Hardcoded for now; lift to config when other places knobs land.
 _REFRESH_STALE_CONCURRENCY = 5
 
@@ -44,12 +47,12 @@ class PlacesSearchService:
         self._upsert = upsert_service
 
     async def find(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
-        """DB → stale refresh → cache overlay → Google fallback if empty."""
+        """DB → stale refresh → cache overlay → external fallback if empty."""
         db_hits = await self._repo.find(query, limit)
         db_hits = await self._refresh_stale(db_hits)
 
         if not db_hits:
-            return await self._google_fallback(query, limit)
+            return await self._external_fallback(query, limit)
 
         results = overlay_with_cache(db_hits, await self._mget_by_cores(db_hits))
 
@@ -71,7 +74,7 @@ class PlacesSearchService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _google_fallback(
+    async def _external_fallback(
         self, query: PlaceQuery, limit: int
     ) -> list[PlaceObject]:
         """Cold path: client.search → upsert (via service) → cache → return."""
@@ -85,9 +88,9 @@ class PlacesSearchService:
         return results
 
     async def _refresh_stale(self, cores: list[PlaceCore]) -> list[PlaceCore]:
-        """Refresh stale cores (missing location) from Google.
+        """Refresh stale cores (missing location) from the external provider.
 
-        Concurrency is capped at _REFRESH_STALE_CONCURRENCY to bound Google
+        Concurrency is capped at _REFRESH_STALE_CONCURRENCY to bound provider
         QPS and cost; calls beyond the cap queue rather than firing in
         parallel.
         """
