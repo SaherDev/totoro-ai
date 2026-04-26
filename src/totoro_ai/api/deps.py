@@ -474,14 +474,6 @@ async def get_chat_service(
 # ---------------------------------------------------------------------------
 
 
-def _build_places_v2_cache() -> RedisPlacesCache:
-    """Construct a RedisPlacesCache from the Redis URL in secrets."""
-    from redis.asyncio import Redis
-
-    redis_client = Redis.from_url(get_env().REDIS_URL, decode_responses=True)
-    return RedisPlacesCache(redis_client)
-
-
 def get_places_v2_repo(
     db_session: AsyncSession = Depends(get_session),  # noqa: B008
 ) -> PlacesRepo:
@@ -497,16 +489,19 @@ def get_user_places_repo(
 
 
 def get_places_v2_cache() -> RedisPlacesCache:
-    """FastAPI dependency providing RedisPlacesCache (place_v2: key prefix)."""
-    return _build_places_v2_cache()
+    """FastAPI dependency providing RedisPlacesCache (place_v2: key prefix).
+
+    Backed by a process-wide Redis client owned by places_v2 itself.
+    """
+    return RedisPlacesCache.from_url(get_env().REDIS_URL)
 
 
 def get_google_places_client_v2() -> GooglePlacesClientV2:
-    """FastAPI dependency providing GooglePlacesClient (places_v2)."""
-    import httpx
+    """FastAPI dependency providing GooglePlacesClient (places_v2).
 
-    api_key = get_env().GOOGLE_API_KEY or ""
-    return GooglePlacesClientV2(api_key=api_key, http=httpx.AsyncClient())
+    Backed by a process-wide httpx.AsyncClient owned by places_v2 itself.
+    """
+    return GooglePlacesClientV2(api_key=get_env().GOOGLE_API_KEY or "")
 
 
 def get_place_upsert_service(

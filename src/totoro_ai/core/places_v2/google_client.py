@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -52,10 +53,19 @@ _FIELD_MASK = (
 )
 
 
+@functools.cache
+def _shared_http_client() -> httpx.AsyncClient:
+    """Process-wide httpx.AsyncClient — shares the connection pool across
+    every GooglePlacesClient instance. Closed at process exit."""
+    return httpx.AsyncClient()
+
+
 class GooglePlacesClient:
-    def __init__(self, api_key: str, http: httpx.AsyncClient) -> None:
+    def __init__(
+        self, api_key: str, http: httpx.AsyncClient | None = None
+    ) -> None:
         self._api_key = api_key
-        self._http = http
+        self._http = http if http is not None else _shared_http_client()
 
     async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
         """Route to text_search or nearby_search based on what the query can express.
