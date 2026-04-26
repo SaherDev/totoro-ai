@@ -76,21 +76,6 @@ class PlacesRepo:
             conditions.append("attributes->>'price_hint' = :price_hint")
             params["price_hint"] = query.price_hint
 
-        loc = query.location
-        if (
-            loc
-            and loc.lat is not None
-            and loc.lng is not None
-            and loc.radius_m is not None
-        ):
-            conditions.append(
-                "earth_box(ll_to_earth(:geo_lat, :geo_lng), :geo_radius) "
-                "@> ll_to_earth(lat, lng)"
-            )
-            params["geo_lat"] = loc.lat
-            params["geo_lng"] = loc.lng
-            params["geo_radius"] = float(loc.radius_m)
-
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         sql = text(f"SELECT * FROM places_v2 {where} LIMIT :limit").bindparams(**params)
         result = await self._session.execute(sql)

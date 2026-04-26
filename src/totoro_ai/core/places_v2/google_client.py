@@ -61,37 +61,7 @@ class GooglePlacesClient:
             "maxResultCount": min(limit, 20),
         }
 
-        loc = query.location
-        if loc and loc.lat is not None and loc.lng is not None:
-            radius = loc.radius_m or 50_000
-            body["locationBias"] = {
-                "circle": {
-                    "center": {"latitude": loc.lat, "longitude": loc.lng},
-                    "radius": float(radius),
-                }
-            }
-
         return await self._post(":searchText", body, limit)
-
-    async def nearby_search(
-        self, query: PlaceQuery, limit: int = 20
-    ) -> list[PlaceObject]:
-        loc = query.location
-        if not loc or loc.lat is None or loc.lng is None or loc.radius_m is None:
-            logger.warning("nearby_search_requires_full_location")
-            return []
-
-        body: dict[str, Any] = {
-            "locationRestriction": {
-                "circle": {
-                    "center": {"latitude": loc.lat, "longitude": loc.lng},
-                    "radius": float(loc.radius_m),
-                }
-            },
-            "maxResultCount": min(limit, 20),
-        }
-
-        return await self._post(":searchNearby", body, limit)
 
     # ------------------------------------------------------------------
     # Internal

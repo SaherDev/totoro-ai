@@ -136,7 +136,7 @@ class TestPlaceQuery:
 
     def test_location_context_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):
-            LocationContext(lat=1.0, lng=2.0, unknown_field="x")  # type: ignore[call-arg]
+            LocationContext(city="Bangkok", unknown_field="x")  # type: ignore[call-arg]
 
 
 class TestSavedPlaceView:
