@@ -136,7 +136,7 @@ class GooglePlacesClient:
             body["openNow"] = True
         if query.min_rating is not None:
             body["minRating"] = query.min_rating
-        return await self._post(":searchText", body, limit)
+        return await self._post(":searchText", body)
 
     async def nearby_search(
         self, query: PlaceQuery, limit: int = 20
@@ -160,10 +160,10 @@ class GooglePlacesClient:
             body["openNow"] = True
         if query.min_rating is not None:
             body["minRating"] = query.min_rating
-        return await self._post(":searchNearby", body, limit)
+        return await self._post(":searchNearby", body)
 
     async def _post(
-        self, endpoint: str, body: dict[str, Any], limit: int
+        self, endpoint: str, body: dict[str, Any]
     ) -> list[PlaceObject]:
         try:
             response = await self._http.post(
@@ -186,6 +186,6 @@ class GooglePlacesClient:
         now = datetime.now(UTC)
         return [
             obj
-            for raw in (data.get("places") or [])[:limit]
+            for raw in (data.get("places") or [])
             if (obj := map_place(raw, now)) is not None
         ]
