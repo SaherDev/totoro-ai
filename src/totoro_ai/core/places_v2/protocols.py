@@ -54,6 +54,10 @@ class PlacesClientProtocol(Protocol):
         self, query: PlaceQuery, limit: int = 20
     ) -> list[PlaceObject]: ...
 
+    async def nearby_search(
+        self, query: PlaceQuery, limit: int = 20
+    ) -> list[PlaceObject]: ...
+
 
 class PlaceEventDispatcherProtocol(Protocol):
     async def emit_upserted(self, event: PlaceCoreUpsertedEvent) -> None: ...

@@ -31,6 +31,9 @@ HoursDict: TypeAlias = dict[str, list[str] | str]
 class LocationContext(BaseModel):
     """Location container used in PlaceQuery and optionally PlaceCore.attributes."""
 
+    lat: float | None = None
+    lng: float | None = None
+    address: str | None = None
     radius_m: int | None = None
     neighborhood: str | None = None
     city: str | None = None
