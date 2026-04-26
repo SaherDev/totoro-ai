@@ -85,7 +85,7 @@ class TestUserPlaceValidation:
             source=PlaceSource.manual,
             saved_at=datetime.now(UTC),
         )
-        assert up.needs_approval is False
+        assert up.approved is True
         assert up.visited is False
         assert up.liked is None
 

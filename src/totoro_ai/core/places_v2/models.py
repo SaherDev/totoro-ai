@@ -290,7 +290,7 @@ class UserPlace(BaseModel):
     user_id: str
     place_id: str  # FK to PlaceCore.id
 
-    needs_approval: bool = False
+    approved: bool = True
     visited: bool = False
     liked: bool | None = None
 

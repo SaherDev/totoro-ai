@@ -93,10 +93,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column(
-            "needs_approval",
+            "approved",
             sa.Boolean,
             nullable=False,
-            server_default=sa.text("false"),
+            server_default=sa.text("true"),
         ),
         sa.Column(
             "visited",

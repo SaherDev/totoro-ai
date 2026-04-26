@@ -93,6 +93,6 @@ class UserPlacesServiceProtocol(Protocol):
         *,
         visited: bool | None = None,
         liked: bool | None = None,
-        needs_approval: bool | None = None,
+        approved: bool | None = None,
         note: str | None = None,
     ) -> UserPlace: ...
