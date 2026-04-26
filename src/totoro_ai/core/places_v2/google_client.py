@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from .models import HoursDict, LocationContext, PlaceObject, PlaceQuery
+from .models import HoursDict, LocationContext, PlaceAttributes, PlaceObject, PlaceQuery
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,183 @@ _FIELD_MASK = (
     "places.websiteUri,"
     "places.types,"
     "places.userRatingCount,"
-    "places.timeZone"
+    "places.timeZone,"
+    "places.priceLevel"
 )
+
+# Google Places API v1 types → our canonical category list.
+# Order matters within each group: more specific types listed first so the
+# first match in _map_types() lands on the most precise category.
+_GOOGLE_TYPE_TO_CATEGORY: dict[str, str] = {
+    # restaurants
+    "burger_restaurant": "restaurant",
+    "pizza_restaurant": "restaurant",
+    "sushi_restaurant": "restaurant",
+    "ramen_restaurant": "restaurant",
+    "thai_restaurant": "restaurant",
+    "chinese_restaurant": "restaurant",
+    "japanese_restaurant": "restaurant",
+    "korean_restaurant": "restaurant",
+    "indian_restaurant": "restaurant",
+    "american_restaurant": "restaurant",
+    "italian_restaurant": "restaurant",
+    "mexican_restaurant": "restaurant",
+    "seafood_restaurant": "restaurant",
+    "steak_house": "restaurant",
+    "vegetarian_restaurant": "restaurant",
+    "vegan_restaurant": "restaurant",
+    "fast_food_restaurant": "restaurant",
+    "brunch_restaurant": "restaurant",
+    "meal_takeaway": "restaurant",
+    "meal_delivery": "restaurant",
+    "restaurant": "restaurant",
+    "food": "restaurant",
+    # cafe / study
+    "study_cafe": "study_cafe",
+    "coffee_shop": "cafe",
+    "cafe": "cafe",
+    # bar / pub / nightlife
+    "wine_bar": "bar",
+    "cocktail_bar": "bar",
+    "sports_bar": "bar",
+    "bar": "bar",
+    "pub": "pub",
+    "night_club": "nightclub",
+    "casino": "nightclub",
+    # bakery / desserts
+    "bakery": "bakery",
+    "ice_cream_shop": "ice_cream_shop",
+    "dessert_shop": "dessert_shop",
+    "candy_store": "dessert_shop",
+    "chocolate_shop": "dessert_shop",
+    # drinks
+    "juice_bar": "juice_bar",
+    "tea_house": "tea_house",
+    "brewery": "brewery",
+    "winery": "winery",
+    "distillery": "distillery",
+    # street / markets
+    "street_food": "street_food",
+    "food_court": "food_court",
+    "food_market": "food_market",
+    "night_market": "night_market",
+    "farmers_market": "farmers_market",
+    "flea_market": "flea_market",
+    # retail
+    "book_store": "bookstore",
+    "electronics_store": "electronics_store",
+    "clothing_store": "boutique",
+    "shoe_store": "boutique",
+    "boutique": "boutique",
+    "grocery_store": "grocery_store",
+    "supermarket": "supermarket",
+    "convenience_store": "convenience_store",
+    "department_store": "shopping_mall",
+    "shopping_mall": "shopping_mall",
+    "jewelry_store": "specialty_shop",
+    "home_goods_store": "specialty_shop",
+    "furniture_store": "specialty_shop",
+    "store": "specialty_shop",
+    "pharmacy": "pharmacy",
+    "drugstore": "pharmacy",
+    # culture / sightseeing
+    "art_gallery": "art_gallery",
+    "museum": "museum",
+    "historical_landmark": "historical_site",
+    "monument": "monument",
+    "shrine": "shrine",
+    "hindu_temple": "temple",
+    "place_of_worship": "temple",
+    "mosque": "mosque",
+    "cathedral": "church",
+    "church": "church",
+    "observation_deck": "viewpoint",
+    "viewpoint": "viewpoint",
+    "scenic_point": "scenic_lookout",
+    "tourist_attraction": "landmark",
+    # nature / outdoors
+    "botanical_garden": "botanical_garden",
+    "national_park": "park",
+    "park": "park",
+    "garden": "garden",
+    "beach": "beach",
+    "lake": "lake",
+    "river": "river",
+    "hiking_area": "hiking_trail",
+    "campground": "campground",
+    # entertainment
+    "theme_park": "theme_park",
+    "amusement_park": "amusement_park",
+    "zoo": "zoo",
+    "aquarium": "aquarium",
+    "performing_arts_theater": "theater",
+    "movie_theater": "cinema",
+    "concert_hall": "concert_hall",
+    "live_music_venue": "live_music_venue",
+    "comedy_club": "comedy_club",
+    "karaoke": "karaoke",
+    "arcade": "arcade",
+    "bowling_alley": "bowling_alley",
+    "billiards": "billiards_hall",
+    "stadium": "stadium",
+    "arena": "arena",
+    # fitness / wellness
+    "yoga_studio": "yoga_studio",
+    "pilates_studio": "pilates_studio",
+    "climbing_gym": "climbing_gym",
+    "skate_park": "skate_park",
+    "golf_course": "golf_course",
+    "swimming_pool": "swimming_pool",
+    "sports_club": "sports_club",
+    "fitness_center": "gym",
+    "gym": "gym",
+    "massage": "massage",
+    "hot_spring": "hot_spring",
+    "bathhouse": "bathhouse",
+    "nail_salon": "salon",
+    "hair_salon": "salon",
+    "beauty_salon": "salon",
+    "barber_shop": "barber",
+    "hair_care": "barber",
+    "spa": "spa",
+    # services / utilities
+    "atm": "atm",
+    "bank": "bank",
+    "post_office": "post_office",
+    "gas_station": "gas_station",
+    "parking": "parking",
+    "laundromat": "laundry",
+    "laundry": "laundry",
+    # accommodation
+    "guest_house": "guesthouse",
+    "bed_and_breakfast": "bed_and_breakfast",
+    "hostel": "hostel",
+    "resort_hotel": "resort",
+    "vacation_rental": "vacation_rental",
+    "extended_stay_hotel": "hotel",
+    "motel": "hotel",
+    "lodging": "hotel",
+    "hotel": "hotel",
+    # transit
+    "ferry_terminal": "ferry_terminal",
+    "bus_station": "bus_terminal",
+    "light_rail_station": "metro_station",
+    "subway_station": "metro_station",
+    "transit_station": "metro_station",
+    "train_station": "train_station",
+    "airport": "airport",
+    # work / study
+    "coworking_space": "coworking_space",
+    "library": "library",
+}
+
+_PRICE_LEVEL_MAP: dict[str, str] = {
+    "PRICE_LEVEL_FREE": "free",
+    "PRICE_LEVEL_INEXPENSIVE": "$",
+    "PRICE_LEVEL_MODERATE": "$$",
+    "PRICE_LEVEL_EXPENSIVE": "$$$",
+    "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$",
+}
 
 _DAY_INT_TO_NAME: dict[int, str] = {
     0: "sunday",
@@ -134,9 +309,15 @@ def _map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     if not place_name:
         return None
 
+    category, tags = _map_types(raw.get("types") or [])
+    price_hint = _PRICE_LEVEL_MAP.get(raw.get("priceLevel") or "")
+
     return PlaceObject(
         provider_id=f"google:{raw_id}",
         place_name=place_name,
+        category=category,
+        tags=tags,
+        attributes=PlaceAttributes(price_hint=price_hint),
         location=LocationContext(
             lat=location.get("latitude"),
             lng=location.get("longitude"),
@@ -149,6 +330,18 @@ def _map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
         popularity=raw.get("userRatingCount"),
         cached_at=now,
     )
+
+
+def _map_types(types: list[str]) -> tuple[str | None, list[str]]:
+    """Map Google types[] to (primary_category, all_matched_categories)."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for t in types:
+        cat = _GOOGLE_TYPE_TO_CATEGORY.get(t)
+        if cat and cat not in seen:
+            seen.add(cat)
+            ordered.append(cat)
+    return (ordered[0] if ordered else None), ordered
 
 
 def _map_hours(raw: dict[str, Any]) -> HoursDict | None:
