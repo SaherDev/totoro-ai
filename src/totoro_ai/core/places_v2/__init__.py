@@ -30,11 +30,28 @@ from .protocols import (
     UserPlacesServiceProtocol,
 )
 from .search_service import PlacesSearchService
+from .tags import (
+    AtmosphereTag,
+    CuisineTag,
+    DietaryTag,
+    FeatureTag,
+    PriceTag,
+    ServiceTag,
+    TagType,
+)
 from .upsert_service import PlaceUpsertService
 from .user_places_repo import UserPlacesRepo
 from .user_places_service import UserPlacesService
 
 __all__ = [
+    # tag vocabulary
+    "TagType",
+    "CuisineTag",
+    "DietaryTag",
+    "FeatureTag",
+    "AtmosphereTag",
+    "ServiceTag",
+    "PriceTag",
     # models
     "HoursDict",
     "LocationContext",

@@ -12,6 +12,7 @@ from .models import (
     PlaceObject,
     PlaceTag,
 )
+from .tags import TagType
 
 # ---------------------------------------------------------------------------
 # Lookup tables
@@ -225,28 +226,27 @@ _GOOGLE_TYPE_TO_DIETARY: dict[str, list[str]] = {
     "halal_restaurant": ["halal"],
 }
 
-# Google boolean Place fields → feature/service tag values
-_GOOGLE_BOOL_TO_TAG: dict[str, tuple[str, str]] = {
-    # (tag_type, tag_value)
-    "dineIn": ("service", "dine_in"),
-    "takeout": ("service", "takeout"),
-    "delivery": ("service", "delivery"),
-    "reservable": ("service", "reservable"),
-    "servesBreakfast": ("service", "serves_breakfast"),
-    "servesBrunch": ("service", "serves_brunch"),
-    "servesLunch": ("service", "serves_lunch"),
-    "servesDinner": ("service", "serves_dinner"),
-    "servesBeer": ("service", "serves_beer"),
-    "servesWine": ("service", "serves_wine"),
-    "servesCocktails": ("service", "serves_cocktails"),
-    "servesVegetarianFood": ("dietary", "vegetarian_options"),
-    "outdoorSeating": ("feature", "outdoor_seating"),
-    "liveMusic": ("feature", "live_music"),
-    "menuForChildren": ("feature", "kids_menu"),
-    "allowsDogs": ("feature", "dog_friendly"),
-    "goodForChildren": ("feature", "family_friendly"),
-    "goodForGroups": ("feature", "group_friendly"),
-    "goodForWatchingSports": ("feature", "sports_viewing"),
+# Google boolean Place fields → (TagType, tag value)
+_GOOGLE_BOOL_TO_TAG: dict[str, tuple[TagType, str]] = {
+    "dineIn": (TagType.service, "dine_in"),
+    "takeout": (TagType.service, "takeout"),
+    "delivery": (TagType.service, "delivery"),
+    "reservable": (TagType.service, "reservable"),
+    "servesBreakfast": (TagType.service, "serves_breakfast"),
+    "servesBrunch": (TagType.service, "serves_brunch"),
+    "servesLunch": (TagType.service, "serves_lunch"),
+    "servesDinner": (TagType.service, "serves_dinner"),
+    "servesBeer": (TagType.service, "serves_beer"),
+    "servesWine": (TagType.service, "serves_wine"),
+    "servesCocktails": (TagType.service, "serves_cocktails"),
+    "servesVegetarianFood": (TagType.dietary, "vegetarian_options"),
+    "outdoorSeating": (TagType.feature, "outdoor_seating"),
+    "liveMusic": (TagType.feature, "live_music"),
+    "menuForChildren": (TagType.feature, "kids_menu"),
+    "allowsDogs": (TagType.feature, "dog_friendly"),
+    "goodForChildren": (TagType.feature, "family_friendly"),
+    "goodForGroups": (TagType.feature, "group_friendly"),
+    "goodForWatchingSports": (TagType.feature, "sports_viewing"),
 }
 
 # addressComponents type → LocationContext field name
@@ -298,12 +298,12 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     # cuisine tags from place types
     for t in types:
         if t in _GOOGLE_TYPE_TO_CUISINE:
-            _add_tag("cuisine", _GOOGLE_TYPE_TO_CUISINE[t])
+            _add_tag(TagType.cuisine, _GOOGLE_TYPE_TO_CUISINE[t])
 
     # dietary tags from place types
     for t in types:
         for item in _GOOGLE_TYPE_TO_DIETARY.get(t, []):
-            _add_tag("dietary", item)
+            _add_tag(TagType.dietary, item)
 
     # feature/service tags from boolean fields
     for field, (tag_type, tag_value) in _GOOGLE_BOOL_TO_TAG.items():
@@ -313,7 +313,7 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
     # price tag
     price_str = _PRICE_LEVEL_MAP.get(raw.get("priceLevel") or "")
     if price_str:
-        _add_tag("price", price_str)
+        _add_tag(TagType.price, price_str)
 
     raw_loc = raw.get("location") or {}
     addr = _map_address_components(raw.get("addressComponents") or [])

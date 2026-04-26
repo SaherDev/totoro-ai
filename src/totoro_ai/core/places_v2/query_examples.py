@@ -23,23 +23,31 @@ from totoro_ai.core.places_v2.models import (
     PlaceCategory,
     PlaceQuery,
 )
+from totoro_ai.core.places_v2.tags import (
+    AtmosphereTag,
+    CuisineTag,
+    DietaryTag,
+    FeatureTag,
+    PriceTag,
+    ServiceTag,
+)
 
 # ---------------------------------------------------------------------------
 # 1. Cuisine
 # ---------------------------------------------------------------------------
 
 find_thai = PlaceQuery(
-    tags=["Thai"],
+    tags=[CuisineTag.thai],
 )
 
 find_japanese = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Japanese"],
+    tags=[CuisineTag.japanese],
 )
 
 find_ramen = PlaceQuery(
     # "ramen" is a cuisine tag produced by _GOOGLE_TYPE_TO_CUISINE
-    tags=["Japanese"],
+    tags=[CuisineTag.japanese],
     # narrow further with a text search in the caller if needed
 )
 
@@ -48,24 +56,24 @@ find_ramen = PlaceQuery(
 # ---------------------------------------------------------------------------
 
 find_vegan = PlaceQuery(
-    tags=["vegan"],
+    tags=[DietaryTag.vegan],
 )
 
 find_vegetarian = PlaceQuery(
-    tags=["vegetarian"],
+    tags=[DietaryTag.vegetarian],
 )
 
 find_halal = PlaceQuery(
-    tags=["halal"],
+    tags=[DietaryTag.halal],
 )
 
 # Strict vegan Thai — both tags must be present (AND)
 find_vegan_thai = PlaceQuery(
-    tags=["vegan", "Thai"],
+    tags=[DietaryTag.vegan, CuisineTag.thai],
 )
 
 find_halal_korean = PlaceQuery(
-    tags=["halal", "Korean"],
+    tags=[DietaryTag.halal, CuisineTag.korean],
 )
 
 # ---------------------------------------------------------------------------
@@ -74,20 +82,20 @@ find_halal_korean = PlaceQuery(
 
 find_cheap_eats = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["$"],
+    tags=[PriceTag.budget],
 )
 
 find_mid_range = PlaceQuery(
-    tags=["$$"],
+    tags=[PriceTag.moderate],
 )
 
 find_splurge = PlaceQuery(
-    tags=["$$$"],
+    tags=[PriceTag.expensive],
 )
 
 # Budget sushi
 find_cheap_japanese = PlaceQuery(
-    tags=["Japanese", "$"],
+    tags=[CuisineTag.japanese, PriceTag.budget],
 )
 
 # ---------------------------------------------------------------------------
@@ -95,37 +103,37 @@ find_cheap_japanese = PlaceQuery(
 # ---------------------------------------------------------------------------
 
 find_outdoor_seating = PlaceQuery(
-    tags=["outdoor_seating"],
+    tags=[FeatureTag.outdoor_seating],
 )
 
 find_dog_friendly = PlaceQuery(
-    tags=["dog_friendly"],
+    tags=[FeatureTag.dog_friendly],
 )
 
 find_live_music = PlaceQuery(
-    tags=["live_music"],
+    tags=[FeatureTag.live_music],
 )
 
 find_sports_bar = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["sports_viewing"],
+    tags=[FeatureTag.sports_viewing],
 )
 
 find_family_friendly = PlaceQuery(
-    tags=["family_friendly", "kids_menu"],
+    tags=[FeatureTag.family_friendly, FeatureTag.kids_menu],
 )
 
 # Cozy atmosphere (LLM-tagged places; only present once LLM enrichment runs)
 find_cozy = PlaceQuery(
-    tags=["cozy"],
+    tags=[AtmosphereTag.cozy],
 )
 
 find_romantic = PlaceQuery(
-    tags=["romantic"],
+    tags=[AtmosphereTag.romantic],
 )
 
 find_trendy = PlaceQuery(
-    tags=["trendy"],
+    tags=[AtmosphereTag.trendy],
 )
 
 # ---------------------------------------------------------------------------
@@ -133,24 +141,24 @@ find_trendy = PlaceQuery(
 # ---------------------------------------------------------------------------
 
 find_delivery = PlaceQuery(
-    tags=["delivery"],
+    tags=[ServiceTag.delivery],
 )
 
 find_takeout = PlaceQuery(
-    tags=["takeout"],
+    tags=[ServiceTag.takeout],
 )
 
 find_reservable = PlaceQuery(
-    tags=["reservable"],
+    tags=[ServiceTag.reservable],
 )
 
 find_breakfast_spots = PlaceQuery(
-    tags=["serves_breakfast"],
+    tags=[ServiceTag.serves_breakfast],
 )
 
 find_cocktail_bars = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["serves_cocktails"],
+    tags=[ServiceTag.serves_cocktails],
 )
 
 # ---------------------------------------------------------------------------
@@ -160,59 +168,59 @@ find_cocktail_bars = PlaceQuery(
 # "I want cheap outdoor Thai food"
 cheap_outdoor_thai = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Thai", "outdoor_seating", "$"],
+    tags=[CuisineTag.thai, FeatureTag.outdoor_seating, PriceTag.budget],
 )
 
 # "Find me a romantic dinner spot, not too expensive"
 romantic_dinner = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["romantic", "$$"],
+    tags=[AtmosphereTag.romantic, PriceTag.moderate],
 )
 
 # "Somewhere I can take my dog for brunch"
 dog_brunch = PlaceQuery(
-    tags=["dog_friendly", "serves_brunch"],
+    tags=[FeatureTag.dog_friendly, ServiceTag.serves_brunch],
 )
 
 # "Vegan-friendly group dinner"
 vegan_group = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["vegan", "group_friendly"],
+    tags=[DietaryTag.vegan, FeatureTag.group_friendly],
 )
 
 # "Cozy café for solo work, not a chain"
 solo_work_cafe = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["cozy"],
+    tags=[AtmosphereTag.cozy],
 )
 
 # "Pre-game drinks with outdoor seating"
 outdoor_drinks = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["outdoor_seating", "serves_beer"],
+    tags=[FeatureTag.outdoor_seating, ServiceTag.serves_beer],
 )
 
 # "Halal Korean BBQ"
 halal_korean_bbq = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Korean", "halal"],
+    tags=[CuisineTag.korean, DietaryTag.halal],
 )
 
 # "Trendy rooftop cocktail bar"
 trendy_cocktails = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["trendy", "serves_cocktails", "outdoor_seating"],
+    tags=[AtmosphereTag.trendy, ServiceTag.serves_cocktails, FeatureTag.outdoor_seating],  # noqa: E501
 )
 
 # "Family lunch on a budget"
 family_budget_lunch = PlaceQuery(
-    tags=["family_friendly", "serves_lunch", "$"],
+    tags=[FeatureTag.family_friendly, ServiceTag.serves_lunch, PriceTag.budget],
 )
 
 # "Late-night delivery, something spicy"
 # Note: "spicy" is an atmosphere/feature tag added by LLM enrichment
 late_night_delivery = PlaceQuery(
-    tags=["delivery"],
+    tags=[ServiceTag.delivery],
     # add tags=["spicy"] once LLM enrichment is wired
 )
 
@@ -222,7 +230,7 @@ late_night_delivery = PlaceQuery(
 
 # Same patterns above, but scoped to a geo radius
 nearby_vegan = PlaceQuery(
-    tags=["vegan"],
+    tags=[DietaryTag.vegan],
     location=LocationContext(
         lat=13.7563,
         lng=100.5018,
@@ -232,7 +240,7 @@ nearby_vegan = PlaceQuery(
 
 nearby_cheap_thai = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Thai", "$"],
+    tags=[CuisineTag.thai, PriceTag.budget],
     location=LocationContext(
         lat=13.7563,
         lng=100.5018,
@@ -243,13 +251,13 @@ nearby_cheap_thai = PlaceQuery(
 # Neighbourhood scoping (no radius, string match on location.neighborhood)
 sukhumvit_japanese = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Japanese"],
+    tags=[CuisineTag.japanese],
     location=LocationContext(neighborhood="Sukhumvit"),
 )
 
 bangkok_outdoor_cafes = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["outdoor_seating"],
+    tags=[FeatureTag.outdoor_seating],
     location=LocationContext(city="Bangkok"),
 )
 
@@ -271,50 +279,50 @@ nearby_parks = PlaceQuery(
 # Morning (6am–11am) — breakfast, coffee, early work
 morning_coffee = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["serves_breakfast"],
+    tags=[ServiceTag.serves_breakfast],
 )
 
 morning_breakfast = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["serves_breakfast"],
+    tags=[ServiceTag.serves_breakfast],
 )
 
 early_work_session = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["serves_breakfast", "cozy"],
+    tags=[ServiceTag.serves_breakfast, AtmosphereTag.cozy],
 )
 
 # Late morning (10am–1pm) — brunch
 brunch_outdoor = PlaceQuery(
-    tags=["serves_brunch", "outdoor_seating"],
+    tags=[ServiceTag.serves_brunch, FeatureTag.outdoor_seating],
 )
 
 brunch_with_drinks = PlaceQuery(
-    tags=["serves_brunch", "serves_cocktails"],
+    tags=[ServiceTag.serves_brunch, ServiceTag.serves_cocktails],
 )
 
 dog_friendly_brunch = PlaceQuery(
-    tags=["serves_brunch", "dog_friendly"],
+    tags=[ServiceTag.serves_brunch, FeatureTag.dog_friendly],
 )
 
 # Midday (12pm–3pm) — lunch, quick eats
 lunch_quick = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["serves_lunch", "takeout"],
+    tags=[ServiceTag.serves_lunch, ServiceTag.takeout],
 )
 
 lunch_outdoor = PlaceQuery(
-    tags=["serves_lunch", "outdoor_seating"],
+    tags=[ServiceTag.serves_lunch, FeatureTag.outdoor_seating],
 )
 
 lunch_budget = PlaceQuery(
-    tags=["serves_lunch", "$"],
+    tags=[ServiceTag.serves_lunch, PriceTag.budget],
 )
 
 # Afternoon (2pm–6pm) — coffee, study, snacks
 afternoon_study = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["cozy"],
+    tags=[AtmosphereTag.cozy],
 )
 
 afternoon_dessert = PlaceQuery(
@@ -327,34 +335,34 @@ afternoon_tea = PlaceQuery(
 
 study_cafe_afternoon = PlaceQuery(
     category=PlaceCategory.study_cafe,
-    tags=["quiet"],  # LLM-tagged
+    tags=[AtmosphereTag.quiet],  # LLM-tagged
 )
 
 # Evening (6pm–10pm) — dinner, pre-drinks
 dinner_date = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["serves_dinner", "romantic", "$$"],
+    tags=[ServiceTag.serves_dinner, AtmosphereTag.romantic, PriceTag.moderate],
 )
 
 dinner_group = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["serves_dinner", "group_friendly"],
+    tags=[ServiceTag.serves_dinner, FeatureTag.group_friendly],
 )
 
 pre_dinner_cocktails = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["serves_cocktails", "reservable"],
+    tags=[ServiceTag.serves_cocktails, ServiceTag.reservable],
 )
 
 family_dinner = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["serves_dinner", "family_friendly"],
+    tags=[ServiceTag.serves_dinner, FeatureTag.family_friendly],
 )
 
 # Night (9pm–late) — bars, clubs, night food
 night_cocktail_bar = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["serves_cocktails", "trendy"],
+    tags=[ServiceTag.serves_cocktails, AtmosphereTag.trendy],
 )
 
 night_market_food = PlaceQuery(
@@ -363,7 +371,7 @@ night_market_food = PlaceQuery(
 
 night_live_music = PlaceQuery(
     category=PlaceCategory.live_music_venue,
-    tags=["live_music"],
+    tags=[FeatureTag.live_music],
 )
 
 night_karaoke = PlaceQuery(
@@ -371,7 +379,7 @@ night_karaoke = PlaceQuery(
 )
 
 late_night_delivery = PlaceQuery(
-    tags=["delivery"],
+    tags=[ServiceTag.delivery],
 )
 
 after_midnight_eats = PlaceQuery(
@@ -385,18 +393,18 @@ after_midnight_eats = PlaceQuery(
 # Hot / summer — outdoor, cold drinks, water, shade
 summer_outdoor_dining = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["outdoor_seating", "$$"],
+    tags=[FeatureTag.outdoor_seating, PriceTag.moderate],
 )
 
 summer_beach_eats = PlaceQuery(
     category=PlaceCategory.restaurant,
     location=LocationContext(city="Phuket"),
-    tags=["outdoor_seating"],
+    tags=[FeatureTag.outdoor_seating],
 )
 
 summer_rooftop_drinks = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["outdoor_seating", "serves_cocktails"],
+    tags=[FeatureTag.outdoor_seating, ServiceTag.serves_cocktails],
 )
 
 hot_day_dessert = PlaceQuery(
@@ -410,12 +418,12 @@ summer_juice_bar = PlaceQuery(
 # Rainy / indoor — cozy, delivery, covered spots
 rainy_day_cafe = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["cozy"],
+    tags=[AtmosphereTag.cozy],
 )
 
 rainy_day_delivery = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["delivery"],
+    tags=[ServiceTag.delivery],
 )
 
 rainy_indoor_activity = PlaceQuery(
@@ -433,18 +441,18 @@ rainy_bowling = PlaceQuery(
 # Cool / winter — warmth, hot drinks, hot food
 cool_weather_hotpot = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["$$"],
+    tags=[PriceTag.moderate],
     # "hotpot" would come from LLM cuisine tagging
 )
 
 cool_weather_ramen = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Japanese"],
+    tags=[CuisineTag.japanese],
 )
 
 warm_coffee_cozy = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["cozy"],
+    tags=[AtmosphereTag.cozy],
 )
 
 hot_spring_visit = PlaceQuery(
@@ -462,12 +470,12 @@ cool_spa_day = PlaceQuery(
 # Solo
 solo_work_anywhere = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["quiet", "cozy"],
+    tags=[AtmosphereTag.quiet, AtmosphereTag.cozy],
 )
 
 solo_ramen_quick = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Japanese", "takeout"],
+    tags=[CuisineTag.japanese, ServiceTag.takeout],
 )
 
 solo_museum_afternoon = PlaceQuery(
@@ -477,23 +485,23 @@ solo_museum_afternoon = PlaceQuery(
 # Date night
 date_night_italian = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Italian", "romantic", "$$$"],
+    tags=[CuisineTag.italian, AtmosphereTag.romantic, PriceTag.expensive],
 )
 
 date_night_cocktails = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["romantic", "serves_cocktails"],
+    tags=[AtmosphereTag.romantic, ServiceTag.serves_cocktails],
 )
 
 date_night_experience = PlaceQuery(
     category=PlaceCategory.live_music_venue,
-    tags=["live_music", "romantic"],
+    tags=[FeatureTag.live_music, AtmosphereTag.romantic],
 )
 
 # Group / friends
 group_korean_bbq = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Korean", "group_friendly"],
+    tags=[CuisineTag.korean, FeatureTag.group_friendly],
 )
 
 group_karaoke_drinks = PlaceQuery(
@@ -502,17 +510,17 @@ group_karaoke_drinks = PlaceQuery(
 
 group_sports_bar = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["sports_viewing", "serves_beer"],
+    tags=[FeatureTag.sports_viewing, ServiceTag.serves_beer],
 )
 
 friends_brunch = PlaceQuery(
-    tags=["serves_brunch", "group_friendly", "$$"],
+    tags=[ServiceTag.serves_brunch, FeatureTag.group_friendly, PriceTag.moderate],
 )
 
 # Family
 family_lunch_kids = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["family_friendly", "kids_menu", "serves_lunch"],
+    tags=[FeatureTag.family_friendly, FeatureTag.kids_menu, ServiceTag.serves_lunch],
 )
 
 family_park_picnic = PlaceQuery(
@@ -526,17 +534,17 @@ family_aquarium = PlaceQuery(
 # Work meeting / client
 client_lunch = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["serves_lunch", "reservable", "$$"],
+    tags=[ServiceTag.serves_lunch, ServiceTag.reservable, PriceTag.moderate],
 )
 
 casual_work_coffee = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["quiet"],
+    tags=[AtmosphereTag.quiet],
 )
 
 team_dinner = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["group_friendly", "serves_dinner", "$$$"],
+    tags=[FeatureTag.group_friendly, ServiceTag.serves_dinner, PriceTag.expensive],
 )
 
 # ---------------------------------------------------------------------------
@@ -545,22 +553,22 @@ team_dinner = PlaceQuery(
 
 anniversary_dinner = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["romantic", "$$$", "reservable"],
+    tags=[AtmosphereTag.romantic, PriceTag.expensive, ServiceTag.reservable],
 )
 
 birthday_group = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["group_friendly", "serves_cocktails", "$$$"],
+    tags=[FeatureTag.group_friendly, ServiceTag.serves_cocktails, PriceTag.expensive],
 )
 
 celebration_rooftop = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["outdoor_seating", "serves_cocktails", "trendy"],
+    tags=[FeatureTag.outdoor_seating, ServiceTag.serves_cocktails, AtmosphereTag.trendy],  # noqa: E501
 )
 
 farewell_drinks = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["group_friendly", "serves_beer"],
+    tags=[FeatureTag.group_friendly, ServiceTag.serves_beer],
 )
 
 # ---------------------------------------------------------------------------
@@ -569,7 +577,7 @@ farewell_drinks = PlaceQuery(
 
 pre_workout_coffee = PlaceQuery(
     category=PlaceCategory.cafe,
-    tags=["serves_breakfast"],
+    tags=[ServiceTag.serves_breakfast],
 )
 
 post_workout_smoothie = PlaceQuery(
@@ -578,13 +586,13 @@ post_workout_smoothie = PlaceQuery(
 
 post_workout_protein = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["serves_lunch"],
+    tags=[ServiceTag.serves_lunch],
     # "high-protein" would be an LLM atmosphere tag
 )
 
 healthy_vegan_lunch = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["vegan", "serves_lunch"],
+    tags=[DietaryTag.vegan, ServiceTag.serves_lunch],
 )
 
 spa_recovery = PlaceQuery(
@@ -602,7 +610,7 @@ yoga_studio_nearby = PlaceQuery(
 
 cheapest_meal = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["$"],
+    tags=[PriceTag.budget],
 )
 
 street_food_crawl = PlaceQuery(
@@ -610,11 +618,11 @@ street_food_crawl = PlaceQuery(
 )
 
 budget_vegan = PlaceQuery(
-    tags=["vegan", "$"],
+    tags=[DietaryTag.vegan, PriceTag.budget],
 )
 
 cheap_delivery_tonight = PlaceQuery(
-    tags=["delivery", "$"],
+    tags=[ServiceTag.delivery, PriceTag.budget],
 )
 
 free_afternoon = PlaceQuery(
@@ -629,20 +637,20 @@ free_afternoon = PlaceQuery(
 
 splurge_omakase = PlaceQuery(
     category=PlaceCategory.restaurant,
-    tags=["Japanese", "$$$$", "reservable"],
+    tags=[CuisineTag.japanese, PriceTag.very_expensive, ServiceTag.reservable],
 )
 
 splurge_cocktail_bar = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["$$$$", "serves_cocktails", "trendy"],
+    tags=[PriceTag.very_expensive, ServiceTag.serves_cocktails, AtmosphereTag.trendy],
 )
 
 splurge_spa = PlaceQuery(
     category=PlaceCategory.spa,
-    tags=["$$$"],
+    tags=[PriceTag.expensive],
 )
 
 luxury_hotel_bar = PlaceQuery(
     category=PlaceCategory.bar,
-    tags=["romantic", "$$$"],
+    tags=[AtmosphereTag.romantic, PriceTag.expensive],
 )
