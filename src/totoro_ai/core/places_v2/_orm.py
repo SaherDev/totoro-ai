@@ -34,7 +34,7 @@ class PlaceV2(Base):
 
     place_name: Mapped[str] = mapped_column(String, nullable=False)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
-    attributes: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    tags: Mapped[list[object] | None] = mapped_column(JSONB, nullable=True)
     location: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

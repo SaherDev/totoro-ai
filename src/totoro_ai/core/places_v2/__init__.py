@@ -8,7 +8,6 @@ from .google_client import GooglePlacesClient
 from .models import (
     HoursDict,
     LocationContext,
-    PlaceAttributes,
     PlaceCategory,
     PlaceCore,
     PlaceCoreUpsertedEvent,
@@ -39,7 +38,6 @@ __all__ = [
     # models
     "HoursDict",
     "LocationContext",
-    "PlaceAttributes",
     "PlaceCategory",
     "PlaceCore",
     "PlaceCoreUpsertedEvent",

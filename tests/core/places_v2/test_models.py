@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from totoro_ai.core.places_v2.models import (
     LocationContext,
-    PlaceAttributes,
     PlaceCategory,
     PlaceCore,
     PlaceCoreUpsertedEvent,
@@ -99,34 +98,22 @@ class TestPlaceTag:
         assert tag.value == "Thai"
         assert tag.source == "google"
 
-    def test_place_attributes_tags(self) -> None:
-        attrs = PlaceAttributes(
-            price_hint="$$",
-            tags=[
-                PlaceTag(type="cuisine", value="Thai", source="google"),
-                PlaceTag(type="feature", value="outdoor_seating", source="google"),
-                PlaceTag(type="dietary", value="vegan", source="llm"),
-            ],
-        )
-        assert attrs.price_hint == "$$"
-        assert len(attrs.tags) == 3
-        assert attrs.tags[0].value == "Thai"
-        assert attrs.tags[2].source == "llm"
+    def test_price_tag(self) -> None:
+        tag = PlaceTag(type="price", value="$$", source="google")
+        assert tag.type == "price"
+        assert tag.value == "$$"
 
-    def test_attributes_defaults(self) -> None:
-        attrs = PlaceAttributes()
-        assert attrs.price_hint is None
-        assert attrs.tags == []
+    def test_manual_tag(self) -> None:
+        tag = PlaceTag(type="atmosphere", value="cozy", source="manual")
+        assert tag.source == "manual"
 
 
 class TestPlaceCore:
     def test_defaults(self) -> None:
         core = PlaceCore(place_name="Sukhumvit Joe's")
-        assert core.attributes == PlaceAttributes()
-        assert core.attributes.tags == []
+        assert core.tags == []
         assert core.id is None
         assert core.provider_id is None
-        assert isinstance(core.attributes, PlaceAttributes)
 
     def test_full_construction(self) -> None:
         core = PlaceCore(
@@ -134,12 +121,19 @@ class TestPlaceCore:
             provider_id="google:ChIJ123",
             place_name="Sukhumvit Joe's",
             category="restaurant",
+            tags=[
+                PlaceTag(type="cuisine", value="Thai", source="google"),
+                PlaceTag(type="price", value="$$", source="google"),
+            ],
             location=LocationContext(
                 lat=13.756, lng=100.502, address="1 Sukhumvit, Bangkok"
             ),
         )
         assert core.provider_id == "google:ChIJ123"
         assert core.category == PlaceCategory.restaurant
+        assert len(core.tags) == 2
+        assert core.tags[0].value == "Thai"
+        assert core.tags[1].type == "price"
 
 
 class TestPlaceObject:
@@ -152,7 +146,7 @@ class TestPlaceObject:
         )
         assert obj.rating == 4.5
         assert obj.place_name == "Test"
-        # Live fields default to None
+        assert obj.tags == []
         assert obj.hours is None
         assert obj.phone is None
 
@@ -162,7 +156,6 @@ class TestPlaceQuery:
         q = PlaceQuery()
         assert q.category is None
         assert q.tags is None
-        assert q.price_hint is None
         assert q.location is None
 
     def test_location_context_extra_forbidden(self) -> None:

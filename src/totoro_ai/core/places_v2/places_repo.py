@@ -27,10 +27,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     LocationContext,
-    PlaceAttributes,
     PlaceCategory,
     PlaceCore,
     PlaceQuery,
+    PlaceTag,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ _PlacesV2Table = Table(
     Column("provider_id", String),
     Column("place_name", String),
     Column("category", String),
-    Column("attributes", JSONB),
+    Column("tags", JSONB),
     Column("location", JSONB),
     Column("created_at", DateTime(timezone=True)),
     Column("refreshed_at", DateTime(timezone=True)),
@@ -89,15 +89,11 @@ class PlacesRepo:
         if query.category:
             conditions.append(_t.category == query.category.value)
 
-        if query.price_hint:
-            conditions.append(
-                _t.attributes["price_hint"].astext == query.price_hint
-            )
         if query.tags:
             # AND semantics: every requested tag value must be present
             for tag_val in query.tags:
                 conditions.append(
-                    _t.attributes["tags"].op("@>")(
+                    _t.tags.op("@>")(
                         cast(json.dumps([{"value": tag_val}]), JSONB)
                     )
                 )
@@ -183,7 +179,7 @@ class PlacesRepo:
     async def upsert_place(self, core: PlaceCore) -> PlaceCore:
         """Single-row UPSERT with additive merge for curated fields.
 
-        category/attributes merge additively; location takes newest non-NULL.
+        category coalesces (keep existing); tags and location take newest non-NULL.
         """
         now = datetime.now(UTC)
         row = _core_to_dict(core, now)
@@ -196,7 +192,7 @@ class PlacesRepo:
             index_where=_t.provider_id.isnot(None),
             set_={
                 "category": func.coalesce(_t.category, excl.category),
-                "attributes": _t.attributes.op("||")(excl.attributes),
+                "tags": func.coalesce(excl.tags, _t.tags),
                 "location": func.coalesce(excl.location, _t.location),
                 "refreshed_at": case(
                     (excl.location.isnot(None), excl.refreshed_at),
@@ -223,7 +219,7 @@ def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
         "provider_id": core.provider_id,
         "place_name": core.place_name,
         "category": core.category.value if core.category else None,
-        "attributes": core.attributes.model_dump(exclude_none=True),
+        "tags": [t.model_dump() for t in core.tags] or None,
         "location": loc.model_dump(exclude_none=True) if loc else None,
         "created_at": core.created_at or now,
         "refreshed_at": core.refreshed_at
@@ -235,10 +231,7 @@ def _row_to_core(row: object) -> PlaceCore:
     from collections.abc import Mapping
 
     m = dict(row) if isinstance(row, Mapping) else vars(row)
-    attrs_raw = m.get("attributes") or {}
-    attributes = (
-        PlaceAttributes.model_validate(attrs_raw) if attrs_raw else PlaceAttributes()
-    )
+    tags = [PlaceTag.model_validate(t) for t in (m.get("tags") or [])]
     loc_raw = m.get("location")
     location = LocationContext.model_validate(loc_raw) if loc_raw else None
     return PlaceCore(
@@ -246,7 +239,7 @@ def _row_to_core(row: object) -> PlaceCore:
         provider_id=m.get("provider_id"),
         place_name=m["place_name"],
         category=PlaceCategory(m["category"]) if m.get("category") else None,
-        attributes=attributes,
+        tags=tags,
         location=location,
         created_at=m.get("created_at"),
         refreshed_at=m.get("refreshed_at"),

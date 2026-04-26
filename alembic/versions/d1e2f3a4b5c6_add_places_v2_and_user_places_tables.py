@@ -45,7 +45,7 @@ def upgrade() -> None:
         sa.Column("provider_id", sa.String, nullable=True),
         sa.Column("place_name", sa.String, nullable=False),
         sa.Column("category", sa.String, nullable=True),
-        sa.Column("attributes", sa.dialects.postgresql.JSONB, nullable=True),
+        sa.Column("tags", sa.dialects.postgresql.JSONB, nullable=True),
         sa.Column("location", sa.dialects.postgresql.JSONB, nullable=True),
         sa.Column(
             "created_at",

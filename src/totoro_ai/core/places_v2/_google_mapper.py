@@ -8,7 +8,6 @@ from typing import Any
 from .models import (
     HoursDict,
     LocationContext,
-    PlaceAttributes,
     PlaceCategory,
     PlaceObject,
     PlaceTag,
@@ -311,7 +310,10 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
         if raw.get(field) is True:
             _add_tag(tag_type, tag_value)
 
-    price_hint = _PRICE_LEVEL_MAP.get(raw.get("priceLevel") or "")
+    # price tag
+    price_str = _PRICE_LEVEL_MAP.get(raw.get("priceLevel") or "")
+    if price_str:
+        _add_tag("price", price_str)
 
     raw_loc = raw.get("location") or {}
     addr = _map_address_components(raw.get("addressComponents") or [])
@@ -320,10 +322,7 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
         provider_id=f"google:{raw_id}",
         place_name=place_name,
         category=category,
-        attributes=PlaceAttributes(
-            price_hint=price_hint,
-            tags=tags,
-        ),
+        tags=tags,
         location=LocationContext(
             lat=raw_loc.get("latitude"),
             lng=raw_loc.get("longitude"),
