@@ -6,14 +6,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from totoro_ai.core.places_v2.models import PlaceCore, PlaceCoreUpsertedEvent
+from totoro_ai.core.places_v2.models import (
+    PlaceCore,
+    PlaceCoreUpsertedEvent,
+    PlaceNameAlias,
+    PlaceTag,
+)
 from totoro_ai.core.places_v2.upsert_service import PlaceUpsertService
 
 
 @pytest.fixture
 def mock_repo() -> MagicMock:
     repo = MagicMock()
-    repo.upsert_place = AsyncMock()
+    repo.get_by_provider_ids = AsyncMock(return_value={})
+    repo.upsert_places = AsyncMock(return_value=[])
     return repo
 
 
@@ -29,8 +35,20 @@ def service(mock_repo: MagicMock, mock_dispatcher: MagicMock) -> PlaceUpsertServ
     return PlaceUpsertService(repo=mock_repo, event_dispatcher=mock_dispatcher)
 
 
-class TestPlaceUpsertService:
-    async def test_upsert_calls_repo_and_emits(
+class TestUpsertMany:
+    async def test_empty_input_short_circuits(
+        self,
+        service: PlaceUpsertService,
+        mock_repo: MagicMock,
+        mock_dispatcher: MagicMock,
+    ) -> None:
+        result = await service.upsert_many([])
+        assert result == []
+        mock_repo.get_by_provider_ids.assert_not_called()
+        mock_repo.upsert_places.assert_not_called()
+        mock_dispatcher.emit_upserted.assert_not_called()
+
+    async def test_first_write_passes_candidate_through(
         self,
         service: PlaceUpsertService,
         mock_repo: MagicMock,
@@ -38,29 +56,83 @@ class TestPlaceUpsertService:
     ) -> None:
         candidate = PlaceCore(place_name="Ramen Spot", provider_id="google:abc")
         persisted = PlaceCore(
-            id="stored-id",
-            place_name="Ramen Spot",
-            provider_id="google:abc",
+            id="stored-id", place_name="Ramen Spot", provider_id="google:abc"
         )
-        mock_repo.upsert_place.return_value = persisted
+        mock_repo.get_by_provider_ids.return_value = {}
+        mock_repo.upsert_places.return_value = [persisted]
 
-        result = await service.upsert(candidate)
+        result = await service.upsert_many([candidate])
 
-        mock_repo.upsert_place.assert_awaited_once_with(candidate)
-        mock_dispatcher.emit_upserted.assert_awaited_once()
-        event: PlaceCoreUpsertedEvent = mock_dispatcher.emit_upserted.call_args.args[0]
-        assert event.place_cores[0].id == "stored-id"
-        assert result.id == "stored-id"
+        mock_repo.get_by_provider_ids.assert_awaited_once_with(["google:abc"])
+        mock_repo.upsert_places.assert_awaited_once()
+        # When existing is empty, merge passes the candidate through unchanged.
+        passed = mock_repo.upsert_places.call_args.args[0]
+        assert passed[0].place_name == "Ramen Spot"
+        assert result == [persisted]
 
-    async def test_returns_persisted_core(
+    async def test_emits_event_with_persisted_cores(
         self,
         service: PlaceUpsertService,
         mock_repo: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        persisted = PlaceCore(id="x", place_name="Test Place")
-        mock_repo.upsert_place.return_value = persisted
+        persisted = PlaceCore(
+            id="x", place_name="Cafe", provider_id="google:c"
+        )
+        mock_repo.upsert_places.return_value = [persisted]
 
-        result = await service.upsert(PlaceCore(place_name="Test Place"))
+        await service.upsert_many(
+            [PlaceCore(place_name="Cafe", provider_id="google:c")]
+        )
 
-        assert result is persisted
+        mock_dispatcher.emit_upserted.assert_awaited_once()
+        event: PlaceCoreUpsertedEvent = (
+            mock_dispatcher.emit_upserted.call_args.args[0]
+        )
+        assert event.place_cores == [persisted]
+
+    async def test_no_event_when_repo_returns_empty(
+        self,
+        service: PlaceUpsertService,
+        mock_repo: MagicMock,
+        mock_dispatcher: MagicMock,
+    ) -> None:
+        mock_repo.upsert_places.return_value = []
+
+        await service.upsert_many(
+            [PlaceCore(place_name="Cafe", provider_id="google:c")]
+        )
+
+        mock_dispatcher.emit_upserted.assert_not_called()
+
+    async def test_merges_existing_against_candidate(
+        self,
+        service: PlaceUpsertService,
+        mock_repo: MagicMock,
+    ) -> None:
+        existing = PlaceCore(
+            id="uuid-A",
+            provider_id="google:abc",
+            place_name="Cafe Centro",
+            tags=[PlaceTag(type="vibe", value="chill", source="google")],
+        )
+        candidate = PlaceCore(
+            provider_id="google:abc",
+            place_name="Café Centro",  # would be ignored — sticky
+            place_name_aliases=[
+                PlaceNameAlias(value="Cafe Centro Mission", source="tiktok")
+            ],
+            tags=[PlaceTag(type="cuisine", value="italian", source="user")],
+        )
+        mock_repo.get_by_provider_ids.return_value = {"google:abc": existing}
+        mock_repo.upsert_places.side_effect = lambda cores: cores
+
+        result = await service.upsert_many([candidate])
+
+        merged = result[0]
+        assert merged.id == "uuid-A"
+        assert merged.place_name == "Cafe Centro"
+        assert {t.value for t in merged.tags} == {"chill", "italian"}
+        assert {a.value for a in merged.place_name_aliases} == {
+            "Cafe Centro Mission"
+        }

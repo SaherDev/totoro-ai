@@ -537,23 +537,6 @@ def get_place_event_dispatcher_v2() -> PlaceEventDispatcherProtocol:
     return _LogPlaceEventDispatcher()  # type: ignore[return-value]
 
 
-def get_places_search_service(
-    repo: PlacesRepo = Depends(get_places_v2_repo),  # noqa: B008
-    cache: RedisPlacesCache = Depends(get_places_v2_cache),  # noqa: B008
-    client: GooglePlacesClientV2 = Depends(get_google_places_client_v2),  # noqa: B008
-    event_dispatcher: PlaceEventDispatcherProtocol = Depends(  # noqa: B008
-        get_place_event_dispatcher_v2
-    ),
-) -> PlacesSearchService:
-    """FastAPI dependency providing PlacesSearchService (places_v2)."""
-    return PlacesSearchService(
-        repo=repo,
-        cache=cache,
-        client=client,
-        event_dispatcher=event_dispatcher,
-    )
-
-
 def get_place_upsert_service(
     repo: PlacesRepo = Depends(get_places_v2_repo),  # noqa: B008
     event_dispatcher: PlaceEventDispatcherProtocol = Depends(  # noqa: B008
@@ -562,6 +545,23 @@ def get_place_upsert_service(
 ) -> PlaceUpsertService:
     """FastAPI dependency providing PlaceUpsertService (places_v2)."""
     return PlaceUpsertService(repo=repo, event_dispatcher=event_dispatcher)
+
+
+def get_places_search_service(
+    repo: PlacesRepo = Depends(get_places_v2_repo),  # noqa: B008
+    cache: RedisPlacesCache = Depends(get_places_v2_cache),  # noqa: B008
+    client: GooglePlacesClientV2 = Depends(get_google_places_client_v2),  # noqa: B008
+    upsert_service: PlaceUpsertService = Depends(  # noqa: B008
+        get_place_upsert_service
+    ),
+) -> PlacesSearchService:
+    """FastAPI dependency providing PlacesSearchService (places_v2)."""
+    return PlacesSearchService(
+        repo=repo,
+        cache=cache,
+        client=client,
+        upsert_service=upsert_service,
+    )
 
 
 def get_user_places_service(

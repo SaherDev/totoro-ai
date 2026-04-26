@@ -18,13 +18,10 @@ def _make_service(
     repo: MagicMock | None = None,
     cache: MagicMock | None = None,
     client: MagicMock | None = None,
-    dispatcher: MagicMock | None = None,
+    upsert_service: MagicMock | None = None,
 ) -> PlacesSearchService:
     repo = repo or MagicMock(
         find=AsyncMock(return_value=[]),
-        save_places=AsyncMock(return_value=[]),
-        upsert_place=AsyncMock(),
-        upsert_places=AsyncMock(return_value=[]),
         get_by_provider_ids=AsyncMock(return_value={}),
     )
     cache = cache or MagicMock(
@@ -36,12 +33,14 @@ def _make_service(
         text_search=AsyncMock(return_value=[]),
         nearby_search=AsyncMock(return_value=[]),
     )
-    dispatcher = dispatcher or MagicMock(emit_upserted=AsyncMock())
+    upsert_service = upsert_service or MagicMock(
+        upsert_many=AsyncMock(return_value=[]),
+    )
     return PlacesSearchService(
         repo=repo,
         cache=cache,
         client=client,
-        event_dispatcher=dispatcher,
+        upsert_service=upsert_service,
     )
 
 
@@ -76,7 +75,6 @@ class TestWarmPath:
         cached_obj = _object("b")
         repo = MagicMock(
             find=AsyncMock(return_value=cores),
-            upsert_places=AsyncMock(return_value=[]),
             get_by_provider_ids=AsyncMock(return_value={}),
         )
         cache = MagicMock(mget=AsyncMock(return_value={"google:b": cached_obj}))
@@ -104,8 +102,6 @@ class TestColdPath:
         google_result = _object("g1")
         repo = MagicMock(
             find=AsyncMock(return_value=[]),
-            save_places=AsyncMock(return_value=[_core("g1")]),
-            upsert_places=AsyncMock(return_value=[]),
             get_by_provider_ids=AsyncMock(return_value={}),
         )
         cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
@@ -113,19 +109,18 @@ class TestColdPath:
             search=AsyncMock(return_value=[google_result]),
             text_search=AsyncMock(return_value=[]),
         )
-        dispatcher = MagicMock(emit_upserted=AsyncMock())
+        upsert = MagicMock(upsert_many=AsyncMock(return_value=[_core("g1")]))
 
         svc = _make_service(
-            repo=repo, cache=cache, client=client, dispatcher=dispatcher
+            repo=repo, cache=cache, client=client, upsert_service=upsert
         )
         results = await svc.find(
             PlaceQuery(place_name="Thai restaurants Bangkok"), limit=5
         )
 
         client.search.assert_awaited_once()
-        repo.save_places.assert_awaited_once()
+        upsert.upsert_many.assert_awaited_once()
         cache.mset.assert_awaited_once()
-        dispatcher.emit_upserted.assert_awaited_once()
         assert results == [google_result]
 
     async def test_passes_full_query_to_client_search(self) -> None:
@@ -173,9 +168,6 @@ class TestStaleRefresh:
         )
         repo = MagicMock(
             find=AsyncMock(return_value=[stale_core, _core("c")]),
-            save_places=AsyncMock(return_value=[]),
-            upsert_place=AsyncMock(return_value=refreshed),
-            upsert_places=AsyncMock(return_value=[refreshed]),
             get_by_provider_ids=AsyncMock(return_value={}),
         )
         cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
@@ -184,15 +176,14 @@ class TestStaleRefresh:
             text_search=AsyncMock(return_value=[_object("stale")]),
             nearby_search=AsyncMock(return_value=[]),
         )
-        dispatcher = MagicMock(emit_upserted=AsyncMock())
+        upsert = MagicMock(upsert_many=AsyncMock(return_value=[refreshed]))
 
         svc = _make_service(
-            repo=repo, cache=cache, client=client, dispatcher=dispatcher
+            repo=repo, cache=cache, client=client, upsert_service=upsert
         )
         await svc.find(PlaceQuery(), limit=20)
 
-        repo.upsert_places.assert_awaited_once()
-        dispatcher.emit_upserted.assert_awaited_once()
+        upsert.upsert_many.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

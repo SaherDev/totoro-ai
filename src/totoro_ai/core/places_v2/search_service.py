@@ -1,4 +1,10 @@
-"""PlacesSearchService — DB → stale refresh → cache overlay → Google fallback."""
+"""PlacesSearchService — DB → stale refresh → cache overlay → Google fallback.
+
+Reads only. All writes are delegated to PlaceUpsertService, which owns the
+merge policy and event emission. This service touches the cache directly
+because cache stores the live half (PlaceObject) which is shaped differently
+from the persisted PlaceCore.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +12,12 @@ import asyncio
 import logging
 
 from ._place_utils import overlay_with_cache
-from .models import PlaceCore, PlaceCoreUpsertedEvent, PlaceObject, PlaceQuery
+from .models import PlaceCore, PlaceObject, PlaceQuery
 from .protocols import (
-    PlaceEventDispatcherProtocol,
     PlacesCacheProtocol,
     PlacesClientProtocol,
     PlacesRepoProtocol,
+    PlaceUpsertServiceProtocol,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,12 +29,12 @@ class PlacesSearchService:
         repo: PlacesRepoProtocol,
         cache: PlacesCacheProtocol,
         client: PlacesClientProtocol,
-        event_dispatcher: PlaceEventDispatcherProtocol,
+        upsert_service: PlaceUpsertServiceProtocol,
     ) -> None:
         self._repo = repo
         self._cache = cache
         self._client = client
-        self._dispatcher = event_dispatcher
+        self._upsert = upsert_service
 
     async def find(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
         """DB → stale refresh → cache overlay → Google fallback if empty."""
@@ -61,19 +67,14 @@ class PlacesSearchService:
     async def _google_fallback(
         self, query: PlaceQuery, limit: int
     ) -> list[PlaceObject]:
-        """Cold path: delegate to client.search, save, cache, return."""
+        """Cold path: client.search → upsert (via service) → cache → return."""
         results = await self._client.search(query, limit)
 
         if not results:
             return results
 
-        saved = await self._repo.save_places([_to_core(o) for o in results])
+        await self._upsert.upsert_many([_to_core(o) for o in results])
         await self._cache.mset(results)
-        if saved:
-            await self._dispatcher.emit_upserted(
-                PlaceCoreUpsertedEvent(place_cores=saved)
-            )
-
         return results
 
     async def _refresh_stale(self, cores: list[PlaceCore]) -> list[PlaceCore]:
@@ -98,21 +99,7 @@ class PlacesSearchService:
         if not found:
             return cores
 
-        pids = [o.provider_id for o in found if o.provider_id]
-        existing = await self._repo.get_by_provider_ids(pids)
-
-        to_upsert = [
-            (existing.get(o.provider_id or "") or _to_core(o)).model_copy(
-                update={"location": o.location}
-            )
-            for o in found
-        ]
-
-        refreshed = await self._repo.upsert_places(to_upsert)
-        if refreshed:
-            await self._dispatcher.emit_upserted(
-                PlaceCoreUpsertedEvent(place_cores=refreshed)
-            )
+        refreshed = await self._upsert.upsert_many([_to_core(o) for o in found])
 
         fresh_map = {c.id: c for c in refreshed if c.id}
         return [fresh_map.get(c.id or "", c) for c in cores]

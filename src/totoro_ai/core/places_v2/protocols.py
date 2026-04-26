@@ -26,10 +26,6 @@ class PlacesRepoProtocol(Protocol):
         self, query: PlaceQuery, limit: int = 20
     ) -> list[PlaceCore]: ...
 
-    async def save_places(self, places: list[PlaceCore]) -> list[PlaceCore]: ...
-
-    async def upsert_place(self, core: PlaceCore) -> PlaceCore: ...
-
     async def upsert_places(self, cores: list[PlaceCore]) -> list[PlaceCore]: ...
 
 
@@ -84,7 +80,9 @@ class PlacesSearchServiceProtocol(Protocol):
 
 
 class PlaceUpsertServiceProtocol(Protocol):
-    async def upsert(self, candidate: PlaceCore) -> PlaceCore: ...
+    async def upsert_many(
+        self, candidates: list[PlaceCore]
+    ) -> list[PlaceCore]: ...
 
 
 class UserPlacesServiceProtocol(Protocol):

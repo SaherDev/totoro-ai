@@ -235,21 +235,52 @@ class TestFind:
 
 
 # ---------------------------------------------------------------------------
-# upsert_place — warns when provider_id is None
+# upsert_places — provider_id enforcement + write semantics
 # ---------------------------------------------------------------------------
 
-class TestUpsertPlace:
-    async def test_warns_when_no_provider_id(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        row = _minimal_row("x", "google:x")
+class TestUpsertPlaces:
+    async def test_empty_input_returns_empty(self) -> None:
         repo, session = _make_repo()
-        mock_result = MagicMock()
-        mock_result.__iter__ = lambda self: iter([MagicMock(_mapping=row)])
-        session.execute = AsyncMock(return_value=mock_result)
+        result = await repo.upsert_places([])
+        assert result == []
+        session.execute.assert_not_called()
 
-        core = PlaceCore(place_name="Orphan Place")
-        with caplog.at_level("WARNING"):
-            await repo.upsert_place(core)
+    async def test_raises_when_any_candidate_missing_provider_id(self) -> None:
+        repo, session = _make_repo()
+        cores = [
+            PlaceCore(place_name="OK", provider_id="google:a"),
+            PlaceCore(place_name="Orphan"),  # no provider_id
+        ]
+        with pytest.raises(ValueError, match="provider_id"):
+            await repo.upsert_places(cores)
+        session.execute.assert_not_called()
+        session.commit.assert_not_called()
 
-        assert "upsert_places_no_provider_id" in caplog.text
+    async def test_set_clause_overwrites_mutable_columns(self) -> None:
+        row = _minimal_row("x", "google:x")
+        repo, session = _make_repo([row])
+
+        await repo.upsert_places(
+            [PlaceCore(place_name="Test", provider_id="google:x")]
+        )
+
+        stmt = session.execute.call_args.args[0]
+        compiled = str(
+            stmt.compile(
+                dialect=pg_dialect.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        # Each mutable column appears in the DO UPDATE SET clause referencing
+        # `excluded.<col>` (the candidate value), not the existing column.
+        for col in (
+            "place_name",
+            "place_name_aliases",
+            "category",
+            "tags",
+            "location",
+            "refreshed_at",
+        ):
+            assert f"{col} = excluded.{col}" in compiled, (
+                f"expected {col} = excluded.{col} in: {compiled}"
+            )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -15,7 +14,6 @@ from sqlalchemy import (
     String,
     Table,
     and_,
-    case,
     cast,
     func,
     select,
@@ -32,8 +30,6 @@ from .models import (
     PlaceQuery,
     PlaceTag,
 )
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Table reference — typed columns for native query building
@@ -148,45 +144,24 @@ class PlacesRepo:
     # Writes
     # ------------------------------------------------------------------
 
-    async def save_places(self, places: list[PlaceCore]) -> list[PlaceCore]:
-        """Bulk INSERT, idempotent on provider_id (no-op on conflict).
-
-        Returns all rows — both newly inserted and those that already existed.
-        """
-        if not places:
-            return []
-        now = datetime.now(UTC)
-        rows = [_core_to_dict(p, now) for p in places]
-        stmt = (
-            pg_insert(_PlacesV2Table)
-            .values(rows)
-            .on_conflict_do_update(
-                index_elements=["provider_id"],
-                index_where=_t.provider_id.isnot(None),
-                set_={"refreshed_at": _t.refreshed_at},
-            )
-            .returning(*_PlacesV2Table.c)
-        )
-        result = await self._session.execute(stmt)
-        await self._session.commit()
-        return [_row_to_core(row._mapping) for row in result]
-
     async def upsert_places(self, cores: list[PlaceCore]) -> list[PlaceCore]:
-        """Bulk UPSERT with additive merge — one INSERT, one commit.
+        """Bulk write with no merge policy — overwrites mutable columns from input.
 
-        category coalesces (keep existing); tags and location take newest non-NULL.
-        Requires provider_id per row — without it the conflict target won't fire
-        and concurrent calls can create duplicate rows. RETURNING order is not
-        guaranteed; callers re-key by id/provider_id if order matters.
+        The caller (PlaceUpsertService) is responsible for computing the final
+        merged state via merge_place before calling this. The repo only persists.
+
+        Requires provider_id on every row — the conflict target is the partial
+        unique index on provider_id, and a NULL provider_id would silently
+        create duplicate rows. RETURNING order is not guaranteed.
         """
         if not cores:
             return []
 
-        no_provider_id = [c.place_name for c in cores if c.provider_id is None]
-        if no_provider_id:
-            logger.warning(
-                "upsert_places_no_provider_id",
-                extra={"count": len(no_provider_id), "names": no_provider_id},
+        missing = [c.place_name for c in cores if c.provider_id is None]
+        if missing:
+            raise ValueError(
+                f"upsert_places requires provider_id on every row; "
+                f"missing on {len(missing)} candidate(s): {missing}"
             )
 
         now = datetime.now(UTC)
@@ -195,28 +170,24 @@ class PlacesRepo:
         insert_stmt = pg_insert(_PlacesV2Table).values(rows)
         excl = insert_stmt.excluded
 
+        # On conflict, overwrite every mutable column from the candidate.
+        # id, provider_id, created_at are immutable post-insert.
         stmt = insert_stmt.on_conflict_do_update(
             index_elements=["provider_id"],
             index_where=_t.provider_id.isnot(None),
             set_={
-                "category": func.coalesce(_t.category, excl.category),
-                "tags": func.coalesce(excl.tags, _t.tags),
-                "location": func.coalesce(excl.location, _t.location),
-                "refreshed_at": case(
-                    (excl.location.isnot(None), excl.refreshed_at),
-                    else_=_t.refreshed_at,
-                ),
+                "place_name": excl.place_name,
+                "place_name_aliases": excl.place_name_aliases,
+                "category": excl.category,
+                "tags": excl.tags,
+                "location": excl.location,
+                "refreshed_at": excl.refreshed_at,
             },
         ).returning(*_PlacesV2Table.c)
 
         result = await self._session.execute(stmt)
         await self._session.commit()
         return [_row_to_core(row._mapping) for row in result]
-
-    async def upsert_place(self, core: PlaceCore) -> PlaceCore:
-        """Single-row UPSERT — thin wrapper around upsert_places."""
-        [persisted] = await self.upsert_places([core])
-        return persisted
 
 
 # ---------------------------------------------------------------------------
