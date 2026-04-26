@@ -24,12 +24,15 @@ from totoro_ai.core.places_v2.models import (
     PlaceQuery,
 )
 from totoro_ai.core.places_v2.tags import (
+    AccessibilityTag,
     AtmosphereTag,
     CuisineTag,
     DietaryTag,
     FeatureTag,
     PriceTag,
+    SeasonTag,
     ServiceTag,
+    TimeTag,
 )
 
 # ---------------------------------------------------------------------------
@@ -653,4 +656,139 @@ splurge_spa = PlaceQuery(
 luxury_hotel_bar = PlaceQuery(
     category=PlaceCategory.bar,
     tags=[AtmosphereTag.romantic, PriceTag.expensive],
+)
+
+# ---------------------------------------------------------------------------
+# 16. Accessibility
+# ---------------------------------------------------------------------------
+
+wheelchair_friendly = PlaceQuery(
+    tags=[AccessibilityTag.wheelchair_entrance],
+)
+
+fully_accessible = PlaceQuery(
+    tags=[
+        AccessibilityTag.wheelchair_entrance,
+        AccessibilityTag.wheelchair_restroom,
+        AccessibilityTag.wheelchair_seating,
+    ],
+)
+
+accessible_parking_restaurant = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=[AccessibilityTag.wheelchair_parking, AccessibilityTag.wheelchair_entrance],
+)
+
+# ---------------------------------------------------------------------------
+# 17. Time of day — typed
+# ---------------------------------------------------------------------------
+
+morning_spots = PlaceQuery(tags=[TimeTag.morning])
+brunch_spots = PlaceQuery(tags=[TimeTag.brunch])
+lunch_spots = PlaceQuery(tags=[TimeTag.lunch])
+afternoon_spots = PlaceQuery(tags=[TimeTag.afternoon])
+evening_spots = PlaceQuery(tags=[TimeTag.evening])
+night_spots = PlaceQuery(tags=[TimeTag.night])
+late_night_spots = PlaceQuery(tags=[TimeTag.late_night])
+
+# Combining time + vibe
+romantic_evening = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=[TimeTag.evening, AtmosphereTag.romantic],
+)
+
+late_night_street_food = PlaceQuery(
+    category=PlaceCategory.street_food,
+    tags=[TimeTag.late_night],
+)
+
+morning_outdoor_coffee = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=[TimeTag.morning, FeatureTag.outdoor_seating],
+)
+
+# ---------------------------------------------------------------------------
+# 18. Season / weather — typed
+# ---------------------------------------------------------------------------
+
+summer_spots = PlaceQuery(tags=[SeasonTag.summer])
+rainy_day_spots = PlaceQuery(tags=[SeasonTag.rainy])
+winter_spots = PlaceQuery(tags=[SeasonTag.winter])
+all_season_spots = PlaceQuery(tags=[SeasonTag.all_season])
+
+# Summer outdoor dining
+summer_outdoor_brunch = PlaceQuery(
+    tags=[SeasonTag.summer, FeatureTag.outdoor_seating, ServiceTag.serves_brunch],
+)
+
+# Rainy day cozy café
+rainy_cozy_cafe = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=[SeasonTag.rainy, AtmosphereTag.cozy],
+)
+
+# Rainy indoor activity
+rainy_indoor_museum = PlaceQuery(
+    category=PlaceCategory.museum,
+    tags=[SeasonTag.rainy, SeasonTag.all_season],
+)
+
+# Hot day — ice cream or juice, outdoor shade optional
+summer_cool_treat = PlaceQuery(
+    category=PlaceCategory.ice_cream_shop,
+    tags=[SeasonTag.summer],
+)
+
+# Winter warmth — hot food, cozy
+winter_ramen = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=[CuisineTag.japanese, SeasonTag.winter, AtmosphereTag.cozy],
+)
+
+# ---------------------------------------------------------------------------
+# 19. Combined time + season + vibe (full intent)
+# ---------------------------------------------------------------------------
+
+# "A cozy rainy afternoon café to work from"
+rainy_afternoon_work = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=[SeasonTag.rainy, TimeTag.afternoon, AtmosphereTag.cozy, AtmosphereTag.quiet],
+)
+
+# "Summer evening rooftop drinks with a view"
+summer_rooftop_evening = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=[SeasonTag.summer, TimeTag.evening, FeatureTag.rooftop, FeatureTag.scenic_view],  # noqa: E501
+)
+
+# "Accessible brunch spot on a budget"
+accessible_budget_brunch = PlaceQuery(
+    tags=[
+        TimeTag.brunch,
+        PriceTag.budget,
+        AccessibilityTag.wheelchair_entrance,
+    ],
+)
+
+# "Late-night vegan delivery when it's raining"
+rainy_late_vegan_delivery = PlaceQuery(
+    tags=[SeasonTag.rainy, TimeTag.late_night, DietaryTag.vegan, ServiceTag.delivery],
+)
+
+# "Romantic winter dinner, splurge"
+winter_romantic_splurge = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=[
+        SeasonTag.winter,
+        TimeTag.evening,
+        AtmosphereTag.romantic,
+        PriceTag.very_expensive,
+        ServiceTag.reservable,
+    ],
+)
+
+# "Summer morning dog walk + coffee"
+summer_morning_dog_cafe = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=[SeasonTag.summer, TimeTag.morning, FeatureTag.dog_friendly, FeatureTag.outdoor_seating],  # noqa: E501
 )

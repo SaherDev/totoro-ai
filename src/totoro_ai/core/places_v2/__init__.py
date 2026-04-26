@@ -31,13 +31,16 @@ from .protocols import (
 )
 from .search_service import PlacesSearchService
 from .tags import (
+    AccessibilityTag,
     AtmosphereTag,
     CuisineTag,
     DietaryTag,
     FeatureTag,
     PriceTag,
+    SeasonTag,
     ServiceTag,
     TagType,
+    TimeTag,
 )
 from .upsert_service import PlaceUpsertService
 from .user_places_repo import UserPlacesRepo
@@ -52,6 +55,9 @@ __all__ = [
     "AtmosphereTag",
     "ServiceTag",
     "PriceTag",
+    "AccessibilityTag",
+    "TimeTag",
+    "SeasonTag",
     # models
     "HoursDict",
     "LocationContext",

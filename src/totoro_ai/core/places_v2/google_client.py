@@ -46,7 +46,8 @@ _FIELD_MASK = (
     "places.allowsDogs,"
     "places.goodForChildren,"
     "places.goodForGroups,"
-    "places.goodForWatchingSports"
+    "places.goodForWatchingSports,"
+    "places.accessibilityOptions"
 )
 
 

@@ -14,6 +14,8 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .tags import TagType
+
 
 class PlaceSource(str, Enum):
     tiktok = "tiktok"
@@ -154,9 +156,9 @@ class LocationContext(BaseModel):
 
 
 class PlaceTag(BaseModel):
-    type: str   # "cuisine" | "dietary" | "feature" | "service" | "price" | "atmosphere"
-    value: str  # e.g. "Thai", "vegan", "outdoor_seating", "$$", "cozy"
-    source: str  # "google" | "llm" | "manual" | "tiktok" | ...
+    type: TagType | str  # TagType for known types; plain str for LLM custom types
+    value: str           # use tag enum values (CuisineTag, FeatureTag, …) or free text
+    source: str          # "google" | "llm" | "manual" | "tiktok" | ...
 
 
 SortField = Literal["created_at", "refreshed_at", "place_name", "category"]

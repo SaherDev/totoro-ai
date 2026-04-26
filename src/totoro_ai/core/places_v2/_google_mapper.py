@@ -12,7 +12,7 @@ from .models import (
     PlaceObject,
     PlaceTag,
 )
-from .tags import TagType
+from .tags import AccessibilityTag, TagType
 
 # ---------------------------------------------------------------------------
 # Lookup tables
@@ -186,10 +186,10 @@ _GOOGLE_TYPE_TO_CATEGORY: dict[str, str] = {
 
 _PRICE_LEVEL_MAP: dict[str, str] = {
     "PRICE_LEVEL_FREE": "free",
-    "PRICE_LEVEL_INEXPENSIVE": "$",
-    "PRICE_LEVEL_MODERATE": "$$",
-    "PRICE_LEVEL_EXPENSIVE": "$$$",
-    "PRICE_LEVEL_VERY_EXPENSIVE": "$$$$",
+    "PRICE_LEVEL_INEXPENSIVE": "budget",
+    "PRICE_LEVEL_MODERATE": "moderate",
+    "PRICE_LEVEL_EXPENSIVE": "expensive",
+    "PRICE_LEVEL_VERY_EXPENSIVE": "very_expensive",
 }
 
 # Restaurant-specific Google types → cuisine label
@@ -249,6 +249,15 @@ _GOOGLE_BOOL_TO_TAG: dict[str, tuple[TagType, str]] = {
     "goodForWatchingSports": (TagType.feature, "sports_viewing"),
 }
 
+# accessibilityOptions sub-object fields → accessibility tags
+_acc = TagType.accessibility
+_GOOGLE_ACCESSIBILITY_TO_TAG: dict[str, tuple[TagType, str]] = {
+    "wheelchairAccessibleParking": (_acc, AccessibilityTag.wheelchair_parking),
+    "wheelchairAccessibleEntrance": (_acc, AccessibilityTag.wheelchair_entrance),
+    "wheelchairAccessibleRestroom": (_acc, AccessibilityTag.wheelchair_restroom),
+    "wheelchairAccessibleSeating": (_acc, AccessibilityTag.wheelchair_seating),
+}
+
 # addressComponents type → LocationContext field name
 _ADDR_COMPONENT_TO_FIELD: dict[str, str] = {
     "locality": "city",
@@ -305,9 +314,15 @@ def map_place(raw: dict[str, Any], now: datetime) -> PlaceObject | None:
         for item in _GOOGLE_TYPE_TO_DIETARY.get(t, []):
             _add_tag(TagType.dietary, item)
 
-    # feature/service tags from boolean fields
+    # feature/service tags from top-level boolean fields
     for field, (tag_type, tag_value) in _GOOGLE_BOOL_TO_TAG.items():
         if raw.get(field) is True:
+            _add_tag(tag_type, tag_value)
+
+    # accessibility tags from nested accessibilityOptions object
+    accessibility = raw.get("accessibilityOptions") or {}
+    for field, (tag_type, tag_value) in _GOOGLE_ACCESSIBILITY_TO_TAG.items():
+        if accessibility.get(field) is True:
             _add_tag(tag_type, tag_value)
 
     # price tag
