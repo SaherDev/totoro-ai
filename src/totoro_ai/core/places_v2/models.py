@@ -165,21 +165,30 @@ SortField = Literal["created_at", "refreshed_at", "place_name", "category"]
 
 
 class PlaceQuery(BaseModel):
-    """Structured search query. All fields optional, combined with AND."""
+    """Structured search query. All fields optional, combined with AND.
 
-    place_name: str | None = None
+    DB filters:  place_name, category, tags, location, created_after/before, sort_*
+    Google-only: text (maps to textQuery), open_now, min_rating
+    """
+
+    # DB filters
+    place_name: str | None = None    # ILIKE on place_name column
     category: PlaceCategory | None = None
-    # filter by tag value (all must be present; source/type ignored)
-    tags: list[str] | None = None
+    tags: list[str] | None = None   # tag values; all must be present (AND)
     location: LocationContext | None = None
 
-    # date range
+    # date range (DB)
     created_after: datetime | None = None
     created_before: datetime | None = None
 
-    # ordering
+    # ordering (DB)
     sort_by: SortField | None = None
     sort_desc: bool = True
+
+    # Google pass-through (ignored for DB queries)
+    text: str | None = None          # free-text textQuery for Google
+    open_now: bool | None = None     # only return currently open places
+    min_rating: float | None = None  # e.g. 4.0 — filters Google results
 
 
 class PlaceCore(BaseModel):

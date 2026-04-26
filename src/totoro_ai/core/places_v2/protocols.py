@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from .models import (
+    LocationContext,
     PlaceCore,
     PlaceCoreUpsertedEvent,
     PlaceObject,
@@ -54,7 +55,12 @@ class PlacesCacheProtocol(Protocol):
 
 class PlacesClientProtocol(Protocol):
     async def text_search(
-        self, text: str, limit: int = 20
+        self,
+        text: str,
+        limit: int = 20,
+        location: LocationContext | None = None,
+        open_now: bool | None = None,
+        min_rating: float | None = None,
     ) -> list[PlaceObject]: ...
 
     async def nearby_search(

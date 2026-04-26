@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from ._google_mapper import map_place
-from .models import PlaceObject, PlaceQuery
+from .models import LocationContext, PlaceObject, PlaceQuery
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +56,37 @@ class GooglePlacesClient:
         self._api_key = api_key
         self._http = http
 
-    async def text_search(self, text: str, limit: int = 20) -> list[PlaceObject]:
+    async def text_search(
+        self,
+        text: str,
+        limit: int = 20,
+        location: LocationContext | None = None,
+        open_now: bool | None = None,
+        min_rating: float | None = None,
+    ) -> list[PlaceObject]:
         if not text:
             return []
-        return await self._post(
-            ":searchText", {"textQuery": text, "maxResultCount": min(limit, 20)}, limit
-        )
+        body: dict[str, Any] = {
+            "textQuery": text,
+            "maxResultCount": min(limit, 20),
+        }
+        if (
+            location
+            and location.lat is not None
+            and location.lng is not None
+            and location.radius_m is not None
+        ):
+            body["locationRestriction"] = {
+                "circle": {
+                    "center": {"latitude": location.lat, "longitude": location.lng},
+                    "radius": float(location.radius_m),
+                }
+            }
+        if open_now is True:
+            body["openNow"] = True
+        if min_rating is not None:
+            body["minRating"] = min_rating
+        return await self._post(":searchText", body, limit)
 
     async def nearby_search(
         self, query: PlaceQuery, limit: int = 20
