@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import (
     Column,
+    ColumnElement,
     DateTime,
     Float,
     MetaData,
@@ -29,6 +31,7 @@ from .models import (
     PlaceNameAlias,
     PlaceQuery,
     PlaceTag,
+    SortField,
 )
 
 # ---------------------------------------------------------------------------
@@ -49,6 +52,16 @@ _PlacesV2Table = Table(
     Column("refreshed_at", DateTime(timezone=True)),
 )
 _t = _PlacesV2Table.c
+
+# Allowlist of legal sort keys. Decouples the public sort literal from the
+# underlying column/expression — values can become computed expressions
+# (e.g. func.coalesce(...)) without breaking the API contract.
+_SORT_COLUMNS: dict[SortField, ColumnElement[Any]] = {
+    "created_at": _t.created_at,
+    "refreshed_at": _t.refreshed_at,
+    "place_name": _t.place_name,
+    "category": _t.category,
+}
 
 
 class PlacesRepo:
@@ -134,7 +147,7 @@ class PlacesRepo:
         if conditions:
             stmt = stmt.where(and_(*conditions))
 
-        sort_col = getattr(_t, query.sort_by) if query.sort_by else _t.created_at
+        sort_col = _SORT_COLUMNS[query.sort_by] if query.sort_by else _t.created_at
         stmt = stmt.order_by(sort_col.desc() if query.sort_desc else sort_col.asc())
 
         result = await self._session.execute(stmt.limit(limit))
