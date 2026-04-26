@@ -257,10 +257,392 @@ bangkok_outdoor_cafes = PlaceQuery(
 # 8. Category-only (no tags needed)
 # ---------------------------------------------------------------------------
 
-# Sometimes category alone is the right filter
 all_museums = PlaceQuery(category=PlaceCategory.museum)
 all_night_markets = PlaceQuery(category=PlaceCategory.night_market)
 nearby_parks = PlaceQuery(
     category=PlaceCategory.park,
     location=LocationContext(lat=13.7563, lng=100.5018, radius_m=2000),
+)
+
+# ---------------------------------------------------------------------------
+# 9. Time of day
+# ---------------------------------------------------------------------------
+
+# Morning (6am–11am) — breakfast, coffee, early work
+morning_coffee = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["serves_breakfast"],
+)
+
+morning_breakfast = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["serves_breakfast"],
+)
+
+early_work_session = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["serves_breakfast", "cozy"],
+)
+
+# Late morning (10am–1pm) — brunch
+brunch_outdoor = PlaceQuery(
+    tags=["serves_brunch", "outdoor_seating"],
+)
+
+brunch_with_drinks = PlaceQuery(
+    tags=["serves_brunch", "serves_cocktails"],
+)
+
+dog_friendly_brunch = PlaceQuery(
+    tags=["serves_brunch", "dog_friendly"],
+)
+
+# Midday (12pm–3pm) — lunch, quick eats
+lunch_quick = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["serves_lunch", "takeout"],
+)
+
+lunch_outdoor = PlaceQuery(
+    tags=["serves_lunch", "outdoor_seating"],
+)
+
+lunch_budget = PlaceQuery(
+    tags=["serves_lunch", "$"],
+)
+
+# Afternoon (2pm–6pm) — coffee, study, snacks
+afternoon_study = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["cozy"],
+)
+
+afternoon_dessert = PlaceQuery(
+    category=PlaceCategory.dessert_shop,
+)
+
+afternoon_tea = PlaceQuery(
+    category=PlaceCategory.tea_house,
+)
+
+study_cafe_afternoon = PlaceQuery(
+    category=PlaceCategory.study_cafe,
+    tags=["quiet"],  # LLM-tagged
+)
+
+# Evening (6pm–10pm) — dinner, pre-drinks
+dinner_date = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["serves_dinner", "romantic", "$$"],
+)
+
+dinner_group = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["serves_dinner", "group_friendly"],
+)
+
+pre_dinner_cocktails = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["serves_cocktails", "reservable"],
+)
+
+family_dinner = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["serves_dinner", "family_friendly"],
+)
+
+# Night (9pm–late) — bars, clubs, night food
+night_cocktail_bar = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["serves_cocktails", "trendy"],
+)
+
+night_market_food = PlaceQuery(
+    category=PlaceCategory.night_market,
+)
+
+night_live_music = PlaceQuery(
+    category=PlaceCategory.live_music_venue,
+    tags=["live_music"],
+)
+
+night_karaoke = PlaceQuery(
+    category=PlaceCategory.karaoke,
+)
+
+late_night_delivery = PlaceQuery(
+    tags=["delivery"],
+)
+
+after_midnight_eats = PlaceQuery(
+    category=PlaceCategory.street_food,
+)
+
+# ---------------------------------------------------------------------------
+# 10. Season / weather
+# ---------------------------------------------------------------------------
+
+# Hot / summer — outdoor, cold drinks, water, shade
+summer_outdoor_dining = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["outdoor_seating", "$$"],
+)
+
+summer_beach_eats = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    location=LocationContext(city="Phuket"),
+    tags=["outdoor_seating"],
+)
+
+summer_rooftop_drinks = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["outdoor_seating", "serves_cocktails"],
+)
+
+hot_day_dessert = PlaceQuery(
+    category=PlaceCategory.ice_cream_shop,
+)
+
+summer_juice_bar = PlaceQuery(
+    category=PlaceCategory.juice_bar,
+)
+
+# Rainy / indoor — cozy, delivery, covered spots
+rainy_day_cafe = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["cozy"],
+)
+
+rainy_day_delivery = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["delivery"],
+)
+
+rainy_indoor_activity = PlaceQuery(
+    category=PlaceCategory.museum,
+)
+
+rainy_shopping = PlaceQuery(
+    category=PlaceCategory.shopping_mall,
+)
+
+rainy_bowling = PlaceQuery(
+    category=PlaceCategory.bowling_alley,
+)
+
+# Cool / winter — warmth, hot drinks, hot food
+cool_weather_hotpot = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["$$"],
+    # "hotpot" would come from LLM cuisine tagging
+)
+
+cool_weather_ramen = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["Japanese"],
+)
+
+warm_coffee_cozy = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["cozy"],
+)
+
+hot_spring_visit = PlaceQuery(
+    category=PlaceCategory.hot_spring,
+)
+
+cool_spa_day = PlaceQuery(
+    category=PlaceCategory.spa,
+)
+
+# ---------------------------------------------------------------------------
+# 11. Social occasion
+# ---------------------------------------------------------------------------
+
+# Solo
+solo_work_anywhere = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["quiet", "cozy"],
+)
+
+solo_ramen_quick = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["Japanese", "takeout"],
+)
+
+solo_museum_afternoon = PlaceQuery(
+    category=PlaceCategory.museum,
+)
+
+# Date night
+date_night_italian = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["Italian", "romantic", "$$$"],
+)
+
+date_night_cocktails = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["romantic", "serves_cocktails"],
+)
+
+date_night_experience = PlaceQuery(
+    category=PlaceCategory.live_music_venue,
+    tags=["live_music", "romantic"],
+)
+
+# Group / friends
+group_korean_bbq = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["Korean", "group_friendly"],
+)
+
+group_karaoke_drinks = PlaceQuery(
+    category=PlaceCategory.karaoke,
+)
+
+group_sports_bar = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["sports_viewing", "serves_beer"],
+)
+
+friends_brunch = PlaceQuery(
+    tags=["serves_brunch", "group_friendly", "$$"],
+)
+
+# Family
+family_lunch_kids = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["family_friendly", "kids_menu", "serves_lunch"],
+)
+
+family_park_picnic = PlaceQuery(
+    category=PlaceCategory.park,
+)
+
+family_aquarium = PlaceQuery(
+    category=PlaceCategory.aquarium,
+)
+
+# Work meeting / client
+client_lunch = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["serves_lunch", "reservable", "$$"],
+)
+
+casual_work_coffee = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["quiet"],
+)
+
+team_dinner = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["group_friendly", "serves_dinner", "$$$"],
+)
+
+# ---------------------------------------------------------------------------
+# 12. Special occasion
+# ---------------------------------------------------------------------------
+
+anniversary_dinner = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["romantic", "$$$", "reservable"],
+)
+
+birthday_group = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["group_friendly", "serves_cocktails", "$$$"],
+)
+
+celebration_rooftop = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["outdoor_seating", "serves_cocktails", "trendy"],
+)
+
+farewell_drinks = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["group_friendly", "serves_beer"],
+)
+
+# ---------------------------------------------------------------------------
+# 13. Health / fitness context
+# ---------------------------------------------------------------------------
+
+pre_workout_coffee = PlaceQuery(
+    category=PlaceCategory.cafe,
+    tags=["serves_breakfast"],
+)
+
+post_workout_smoothie = PlaceQuery(
+    category=PlaceCategory.juice_bar,
+)
+
+post_workout_protein = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["serves_lunch"],
+    # "high-protein" would be an LLM atmosphere tag
+)
+
+healthy_vegan_lunch = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["vegan", "serves_lunch"],
+)
+
+spa_recovery = PlaceQuery(
+    category=PlaceCategory.spa,
+)
+
+yoga_studio_nearby = PlaceQuery(
+    category=PlaceCategory.yoga_studio,
+    location=LocationContext(lat=13.7563, lng=100.5018, radius_m=1000),
+)
+
+# ---------------------------------------------------------------------------
+# 14. Budget-conscious
+# ---------------------------------------------------------------------------
+
+cheapest_meal = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["$"],
+)
+
+street_food_crawl = PlaceQuery(
+    category=PlaceCategory.street_food,
+)
+
+budget_vegan = PlaceQuery(
+    tags=["vegan", "$"],
+)
+
+cheap_delivery_tonight = PlaceQuery(
+    tags=["delivery", "$"],
+)
+
+free_afternoon = PlaceQuery(
+    category=PlaceCategory.park,
+    # parks are free; combine with neighbourhood for nearby options
+    location=LocationContext(lat=13.7563, lng=100.5018, radius_m=2000),
+)
+
+# ---------------------------------------------------------------------------
+# 15. Treat yourself / splurge
+# ---------------------------------------------------------------------------
+
+splurge_omakase = PlaceQuery(
+    category=PlaceCategory.restaurant,
+    tags=["Japanese", "$$$$", "reservable"],
+)
+
+splurge_cocktail_bar = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["$$$$", "serves_cocktails", "trendy"],
+)
+
+splurge_spa = PlaceQuery(
+    category=PlaceCategory.spa,
+    tags=["$$$"],
+)
+
+luxury_hotel_bar = PlaceQuery(
+    category=PlaceCategory.bar,
+    tags=["romantic", "$$$"],
 )
