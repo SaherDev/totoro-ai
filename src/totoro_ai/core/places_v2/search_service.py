@@ -22,6 +22,13 @@ from .protocols import (
 
 logger = logging.getLogger(__name__)
 
+# Cap on parallel Google text_search calls during stale refresh.
+# Stale rows are rare in steady state (post-30-day-TTL wipe is the main
+# source), but a wipe can leave many rows stale at once. Without a cap, a
+# single search could fan out into N paid Google calls and trigger 429s.
+# Hardcoded for now; lift to config when other places knobs land.
+_REFRESH_STALE_CONCURRENCY = 5
+
 
 class PlacesSearchService:
     def __init__(
@@ -78,7 +85,12 @@ class PlacesSearchService:
         return results
 
     async def _refresh_stale(self, cores: list[PlaceCore]) -> list[PlaceCore]:
-        """Refresh stale cores (missing location) from Google in parallel."""
+        """Refresh stale cores (missing location) from Google.
+
+        Concurrency is capped at _REFRESH_STALE_CONCURRENCY to bound Google
+        QPS and cost; calls beyond the cap queue rather than firing in
+        parallel.
+        """
         stale = [c for c in cores if c.location is None or c.location.lat is None]
         if not stale:
             return cores
@@ -90,10 +102,17 @@ class PlacesSearchService:
                 extra={"count": len(no_id), "names": [c.place_name for c in no_id]},
             )
 
-        all_results = await asyncio.gather(*[
-            self._client.text_search(PlaceQuery(place_name=c.place_name), limit=1)
-            for c in stale
-        ])
+        sem = asyncio.Semaphore(_REFRESH_STALE_CONCURRENCY)
+
+        async def _bounded_text_search(core: PlaceCore) -> list[PlaceObject]:
+            async with sem:
+                return await self._client.text_search(
+                    PlaceQuery(place_name=core.place_name), limit=1
+                )
+
+        all_results = await asyncio.gather(
+            *[_bounded_text_search(c) for c in stale]
+        )
 
         found: list[PlaceObject] = [r[0] for r in all_results if r]
         if not found:

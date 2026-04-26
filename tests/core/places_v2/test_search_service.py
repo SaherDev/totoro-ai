@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from totoro_ai.core.places_v2.models import (
@@ -10,7 +11,10 @@ from totoro_ai.core.places_v2.models import (
     PlaceObject,
     PlaceQuery,
 )
-from totoro_ai.core.places_v2.search_service import PlacesSearchService
+from totoro_ai.core.places_v2.search_service import (
+    _REFRESH_STALE_CONCURRENCY,
+    PlacesSearchService,
+)
 from totoro_ai.core.places_v2.tags import CuisineTag
 
 
@@ -184,6 +188,49 @@ class TestStaleRefresh:
         await svc.find(PlaceQuery(), limit=20)
 
         upsert.upsert_many.assert_awaited_once()
+
+    async def test_refresh_concurrency_capped(self) -> None:
+        """Verify the semaphore bounds parallel Google calls."""
+        stale_count = _REFRESH_STALE_CONCURRENCY * 3  # plenty of work to queue
+        stale_cores = [_core(f"s{i}", lat=None) for i in range(stale_count)]
+
+        in_flight = 0
+        max_in_flight = 0
+
+        async def slow_text_search(
+            query: PlaceQuery, limit: int = 1
+        ) -> list[PlaceObject]:
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            try:
+                # Yield control so concurrent callers can pile up to the cap
+                # before any single call resolves.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+                return [_object(query.place_name or "x")]
+            finally:
+                in_flight -= 1
+
+        repo = MagicMock(
+            find=AsyncMock(return_value=stale_cores),
+            get_by_provider_ids=AsyncMock(return_value={}),
+        )
+        cache = MagicMock(mget=AsyncMock(return_value={}), mset=AsyncMock())
+        client = MagicMock(
+            search=AsyncMock(return_value=[]),
+            text_search=AsyncMock(side_effect=slow_text_search),
+            nearby_search=AsyncMock(return_value=[]),
+        )
+        upsert = MagicMock(upsert_many=AsyncMock(return_value=[]))
+
+        svc = _make_service(
+            repo=repo, cache=cache, client=client, upsert_service=upsert
+        )
+        await svc.find(PlaceQuery(), limit=stale_count)
+
+        assert client.text_search.await_count == stale_count
+        assert max_in_flight <= _REFRESH_STALE_CONCURRENCY
 
 
 # ---------------------------------------------------------------------------
