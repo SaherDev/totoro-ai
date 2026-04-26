@@ -18,7 +18,6 @@ def _make_service(
     cache: MagicMock | None = None,
     client: MagicMock | None = None,
     dispatcher: MagicMock | None = None,
-    db_min_hits: int = 3,
 ) -> PlacesSearchService:
     repo = repo or MagicMock(
         search=AsyncMock(return_value=[]),
@@ -40,7 +39,6 @@ def _make_service(
         cache=cache,
         client=client,
         event_dispatcher=dispatcher,
-        db_min_hits=db_min_hits,
     )
 
 
@@ -65,58 +63,25 @@ def _object(pid: str) -> PlaceObject:
     )
 
 
-class TestWarmPath:
+class TestSearch:
     async def test_returns_db_hits_with_cache_overlay(self) -> None:
         cores = [_core("a"), _core("b"), _core("c")]
         cached_obj = _object("b")
         repo = MagicMock(
             search=AsyncMock(return_value=cores),
-            save_places=AsyncMock(return_value=[]),
-            upsert_place=AsyncMock(),
+            upsert_places=AsyncMock(return_value=[]),
+            get_by_provider_ids=AsyncMock(return_value={}),
         )
-        cache = MagicMock(
-            mget=AsyncMock(return_value={"google:b": cached_obj}),
-            mset=AsyncMock(),
-        )
+        cache = MagicMock(mget=AsyncMock(return_value={"google:b": cached_obj}))
         client = MagicMock(text_search=AsyncMock(return_value=[]))
 
-        svc = _make_service(repo=repo, cache=cache, client=client, db_min_hits=3)
+        svc = _make_service(repo=repo, cache=cache, client=client)
         results = await svc.search(PlaceQuery(), limit=20)
 
         assert len(results) == 3
-        # b should have live fields overlaid
         b_result = next(r for r in results if r.provider_id == "google:b")
         assert b_result.rating == 4.5
-        # Google client not called (warm path)
         client.text_search.assert_not_awaited()
-
-    async def test_below_min_hits_triggers_cold_path(self) -> None:
-        cores = [_core("a")]  # 1 < db_min_hits=3
-        new_objects = [_object("x"), _object("y")]
-        persisted = [PlaceCore(id="x", provider_id="google:x", place_name="Place x")]
-        repo = MagicMock(
-            search=AsyncMock(return_value=cores),
-            save_places=AsyncMock(return_value=persisted),
-            upsert_place=AsyncMock(),
-        )
-        cache = MagicMock(
-            mget=AsyncMock(return_value={}),
-            mset=AsyncMock(),
-        )
-        client = MagicMock(text_search=AsyncMock(return_value=new_objects))
-        dispatcher = MagicMock(emit_upserted=AsyncMock())
-
-        svc = _make_service(
-            repo=repo, cache=cache, client=client, dispatcher=dispatcher, db_min_hits=3
-        )
-        results = await svc.search(PlaceQuery(), text="ramen", limit=20)
-
-        client.text_search.assert_awaited_once()
-        cache.mset.assert_awaited_once_with(new_objects)
-        repo.save_places.assert_awaited_once()
-        # Single batch event emitted
-        dispatcher.emit_upserted.assert_awaited_once()
-        assert len(results) >= 1
 
 
 class TestStaleRefresh:
@@ -146,7 +111,7 @@ class TestStaleRefresh:
         dispatcher = MagicMock(emit_upserted=AsyncMock())
 
         svc = _make_service(
-            repo=repo, cache=cache, client=client, dispatcher=dispatcher, db_min_hits=3
+            repo=repo, cache=cache, client=client, dispatcher=dispatcher
         )
         await svc.search(PlaceQuery(), limit=20)
 

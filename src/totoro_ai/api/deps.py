@@ -544,7 +544,6 @@ def get_places_search_service(
     event_dispatcher: PlaceEventDispatcherProtocol = Depends(  # noqa: B008
         get_place_event_dispatcher_v2
     ),
-    config: AppConfig = Depends(get_config),  # noqa: B008
 ) -> PlacesSearchService:
     """FastAPI dependency providing PlacesSearchService (places_v2)."""
     return PlacesSearchService(
@@ -552,7 +551,6 @@ def get_places_search_service(
         cache=cache,
         client=client,
         event_dispatcher=event_dispatcher,
-        db_min_hits=config.places.db_min_hits,
     )
 
 

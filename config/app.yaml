@@ -296,7 +296,3 @@ places:
   # tier call, cached for `cache_ttl_days`, so the amortized cost is
   # dominated by the first consult for each place_id.
   max_enrichment_batch: 20
-  # places_v2: minimum DB hits before skipping the Google cold path.
-  # Below this count, PlacesSearchService.search calls Google and
-  # warms both cache and DB for the next caller.
-  db_min_hits: 3

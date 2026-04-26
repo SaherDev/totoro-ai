@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from .models import PlaceObject, SavedPlaceView, UserPlace
-from .protocols import PlacesRepoProtocol, UserPlacesRepoProtocol
-from .search_service import PlacesSearchService
+from .protocols import (
+    PlacesRepoProtocol,
+    PlacesSearchServiceProtocol,
+    UserPlacesRepoProtocol,
+)
 
 
 class UserPlacesService:
@@ -12,7 +15,7 @@ class UserPlacesService:
         self,
         places_repo: PlacesRepoProtocol,
         user_places_repo: UserPlacesRepoProtocol,
-        search: PlacesSearchService,
+        search: PlacesSearchServiceProtocol,
     ) -> None:
         self._places_repo = places_repo
         self._user_places_repo = user_places_repo

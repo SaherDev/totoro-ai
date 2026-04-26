@@ -9,6 +9,7 @@ from .models import (
     PlaceCoreUpsertedEvent,
     PlaceObject,
     PlaceQuery,
+    SavedPlaceView,
     UserPlace,
 )
 
@@ -63,3 +64,31 @@ class PlacesClientProtocol(Protocol):
 
 class PlaceEventDispatcherProtocol(Protocol):
     async def emit_upserted(self, event: PlaceCoreUpsertedEvent) -> None: ...
+
+
+class PlacesSearchServiceProtocol(Protocol):
+    async def search(
+        self, query: PlaceQuery, limit: int = 20
+    ) -> list[PlaceObject]: ...
+
+    async def get_by_ids(
+        self, provider_ids: list[str]
+    ) -> dict[str, PlaceObject]: ...
+
+
+class PlaceUpsertServiceProtocol(Protocol):
+    async def upsert(self, candidate: PlaceCore) -> PlaceCore: ...
+
+
+class UserPlacesServiceProtocol(Protocol):
+    async def get_user_places(self, user_id: str) -> list[SavedPlaceView]: ...
+
+    async def update_status(
+        self,
+        user_place_id: str,
+        *,
+        visited: bool | None = None,
+        liked: bool | None = None,
+        needs_approval: bool | None = None,
+        note: str | None = None,
+    ) -> UserPlace: ...

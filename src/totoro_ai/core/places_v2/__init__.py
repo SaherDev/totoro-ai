@@ -23,7 +23,10 @@ from .protocols import (
     PlacesCacheProtocol,
     PlacesClientProtocol,
     PlacesRepoProtocol,
+    PlacesSearchServiceProtocol,
+    PlaceUpsertServiceProtocol,
     UserPlacesRepoProtocol,
+    UserPlacesServiceProtocol,
 )
 from .search_service import PlacesSearchService
 from .upsert_service import PlaceUpsertService
@@ -47,7 +50,10 @@ __all__ = [
     "PlacesCacheProtocol",
     "PlacesClientProtocol",
     "PlacesRepoProtocol",
+    "PlacesSearchServiceProtocol",
+    "PlaceUpsertServiceProtocol",
     "UserPlacesRepoProtocol",
+    "UserPlacesServiceProtocol",
     # implementations
     "PlacesRepo",
     "UserPlacesRepo",

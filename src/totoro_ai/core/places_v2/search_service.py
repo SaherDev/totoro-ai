@@ -1,4 +1,4 @@
-"""PlacesSearchService — orchestrates DB → cache → Google discovery flow."""
+"""PlacesSearchService — DB → stale refresh → cache overlay."""
 
 from __future__ import annotations
 
@@ -23,47 +23,17 @@ class PlacesSearchService:
         cache: PlacesCacheProtocol,
         client: PlacesClientProtocol,
         event_dispatcher: PlaceEventDispatcherProtocol,
-        db_min_hits: int = 3,
     ) -> None:
         self._repo = repo
         self._cache = cache
         self._client = client
         self._dispatcher = event_dispatcher
-        self._db_min_hits = db_min_hits
 
-    async def search(
-        self, query: PlaceQuery, limit: int = 20, text: str | None = None
-    ) -> list[PlaceObject]:
-        """Warm path: DB → cache overlay → return if ≥ db_min_hits.
-        Cold path (requires text): Google → dual-write cache + DB → emit events.
-        """
+    async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
+        """DB → stale refresh → cache overlay → return."""
         db_hits = await self._repo.search(query, limit)
-
-        # Inline stale refresh for rows with missing location data
         db_hits = await self._refresh_stale(db_hits)
-
-        if len(db_hits) >= self._db_min_hits or not text:
-            return self._overlay(db_hits, await self._mget_by_cores(db_hits))
-
-        # Cold path
-        new_objects = await self._client.text_search(text, limit)
-        if not new_objects:
-            # Return what we have even below threshold
-            return self._overlay(db_hits, await self._mget_by_cores(db_hits))
-
-        await self._cache.mset(new_objects)
-
-        new_cores_input = [_to_core(obj) for obj in new_objects]
-        persisted = await self._repo.save_places(new_cores_input)
-
-        if persisted:
-            await self._dispatcher.emit_upserted(
-                PlaceCoreUpsertedEvent(place_cores=persisted)
-            )
-
-        # Merge DB hits + new results, dedup by provider_id, cap at limit
-        merged = _merge(db_hits, new_objects, persisted, limit)
-        return merged
+        return self._overlay(db_hits, await self._mget_by_cores(db_hits))
 
     async def get_by_ids(self, provider_ids: list[str]) -> dict[str, PlaceObject]:
         """Cache mget only — used to enrich a known set of places with live fields."""
@@ -153,34 +123,3 @@ def _to_core(obj: PlaceObject) -> PlaceCore:
     return PlaceCore(**{k: v for k, v in obj.model_dump().items() if k in core_fields})
 
 
-def _merge(
-    db_hits: list[PlaceCore],
-    new_objects: list[PlaceObject],
-    persisted: list[PlaceCore],
-    limit: int,
-) -> list[PlaceObject]:
-    """Merge DB overlay results with newly fetched objects, dedup by provider_id."""
-    seen: set[str] = set()
-    result: list[PlaceObject] = []
-
-    # Build a map of persisted cores by provider_id for ID enrichment
-    persisted_by_pid = {c.provider_id: c for c in persisted if c.provider_id}
-
-    for core in db_hits:
-        pid = core.provider_id or ""
-        if pid and pid in seen:
-            continue
-        seen.add(pid)
-        result.append(PlaceObject(**core.model_dump()))
-
-    for obj in new_objects:
-        pid = obj.provider_id or ""
-        if pid and pid in seen:
-            continue
-        seen.add(pid)
-        # Enrich with DB-assigned id if available
-        if pid and pid in persisted_by_pid:
-            obj = PlaceObject(**{**obj.model_dump(), "id": persisted_by_pid[pid].id})
-        result.append(obj)
-
-    return result[:limit]
