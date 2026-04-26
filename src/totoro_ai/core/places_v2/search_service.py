@@ -29,9 +29,9 @@ class PlacesSearchService:
         self._client = client
         self._dispatcher = event_dispatcher
 
-    async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
+    async def find(self, query: PlaceQuery, limit: int = 20) -> list[PlaceObject]:
         """DB → stale refresh → cache overlay → return."""
-        db_hits = await self._repo.search(query, limit)
+        db_hits = await self._repo.find(query, limit)
         db_hits = await self._refresh_stale(db_hits)
         return self._overlay(db_hits, await self._mget_by_cores(db_hits))
 

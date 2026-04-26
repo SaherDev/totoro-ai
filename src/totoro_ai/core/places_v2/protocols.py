@@ -21,7 +21,7 @@ class PlacesRepoProtocol(Protocol):
         self, provider_ids: list[str]
     ) -> dict[str, PlaceCore]: ...
 
-    async def search(
+    async def find(
         self, query: PlaceQuery, limit: int = 20
     ) -> list[PlaceCore]: ...
 
@@ -67,7 +67,7 @@ class PlaceEventDispatcherProtocol(Protocol):
 
 
 class PlacesSearchServiceProtocol(Protocol):
-    async def search(
+    async def find(
         self, query: PlaceQuery, limit: int = 20
     ) -> list[PlaceObject]: ...
 

@@ -68,7 +68,7 @@ class TestSearch:
         cores = [_core("a"), _core("b"), _core("c")]
         cached_obj = _object("b")
         repo = MagicMock(
-            search=AsyncMock(return_value=cores),
+            find=AsyncMock(return_value=cores),
             upsert_places=AsyncMock(return_value=[]),
             get_by_provider_ids=AsyncMock(return_value={}),
         )
@@ -76,7 +76,7 @@ class TestSearch:
         client = MagicMock(text_search=AsyncMock(return_value=[]))
 
         svc = _make_service(repo=repo, cache=cache, client=client)
-        results = await svc.search(PlaceQuery(), limit=20)
+        results = await svc.find(PlaceQuery(), limit=20)
 
         assert len(results) == 3
         b_result = next(r for r in results if r.provider_id == "google:b")
@@ -95,7 +95,7 @@ class TestStaleRefresh:
             location=LocationContext(lat=13.7, address="Refreshed St"),
         )
         repo = MagicMock(
-            search=AsyncMock(return_value=[stale_core, fresh_core, _core("c")]),
+            find=AsyncMock(return_value=[stale_core, fresh_core, _core("c")]),
             save_places=AsyncMock(return_value=[]),
             upsert_place=AsyncMock(return_value=refreshed),
             upsert_places=AsyncMock(return_value=[refreshed]),
@@ -113,7 +113,7 @@ class TestStaleRefresh:
         svc = _make_service(
             repo=repo, cache=cache, client=client, dispatcher=dispatcher
         )
-        await svc.search(PlaceQuery(), limit=20)
+        await svc.find(PlaceQuery(), limit=20)
 
         repo.upsert_places.assert_awaited_once()
         dispatcher.emit_upserted.assert_awaited_once()

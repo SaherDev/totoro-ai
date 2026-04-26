@@ -76,7 +76,7 @@ class PlacesRepo:
             row._mapping["provider_id"]: _row_to_core(row._mapping) for row in result
         }
 
-    async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceCore]:
+    async def find(self, query: PlaceQuery, limit: int = 20) -> list[PlaceCore]:
         conditions = []
 
         if query.place_name:
