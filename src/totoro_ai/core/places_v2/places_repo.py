@@ -79,19 +79,23 @@ class PlacesRepo:
     async def search(self, query: PlaceQuery, limit: int = 20) -> list[PlaceCore]:
         conditions = []
 
+        if query.place_name:
+            conditions.append(_t.place_name.ilike(f"%{query.place_name}%"))
+
         if query.category:
             conditions.append(_t.category.ilike(f"%{query.category}%"))
 
         if query.tags:
             conditions.append(_t.tags.contains(query.tags))
 
-        if query.cuisine:
+        attrs = query.attributes
+        if attrs and attrs.cuisine:
             conditions.append(
-                _t.attributes["cuisine"].astext.ilike(f"%{query.cuisine}%")
+                _t.attributes["cuisine"].astext.ilike(f"%{attrs.cuisine}%")
             )
 
-        if query.price_hint:
-            conditions.append(_t.attributes["price_hint"].astext == query.price_hint)
+        if attrs and attrs.price_hint:
+            conditions.append(_t.attributes["price_hint"].astext == attrs.price_hint)
 
         loc = query.location
         if (

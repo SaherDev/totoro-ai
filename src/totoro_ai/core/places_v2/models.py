@@ -52,13 +52,13 @@ class PlaceAttributes(BaseModel):
 
 
 class PlaceQuery(BaseModel):
-    """Structured search query. All fields optional; combine as needed."""
+    """Structured search query. Mirrors PlaceCore fields — all optional."""
 
-    location: LocationContext | None = None
+    place_name: str | None = None
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
-    cuisine: str | None = None
-    price_hint: str | None = None
+    attributes: PlaceAttributes | None = None
+    location: LocationContext | None = None
 
 
 class PlaceCore(BaseModel):
