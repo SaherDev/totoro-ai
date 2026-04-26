@@ -63,6 +63,13 @@ _SORT_COLUMNS: dict[SortField, ColumnElement[Any]] = {
     "category": _t.category,
 }
 
+# JSONB tag containment in find() encodes the PlaceTag.value field name as
+# a literal SQL string. If the Pydantic field is renamed, the query would
+# silently match zero rows. Fail loudly at import instead.
+assert "value" in PlaceTag.model_fields, (
+    "PlaceTag.value field renamed — update tag JSONB containment in find()"
+)
+
 
 class PlacesRepo:
     def __init__(self, session: AsyncSession) -> None:
