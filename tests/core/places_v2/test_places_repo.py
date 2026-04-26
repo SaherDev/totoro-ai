@@ -12,6 +12,7 @@ from totoro_ai.core.places_v2.models import (
     LocationContext,
     PlaceCategory,
     PlaceCore,
+    PlaceNameAlias,
     PlaceQuery,
 )
 from totoro_ai.core.places_v2.places_repo import PlacesRepo, _core_to_dict, _row_to_core
@@ -82,6 +83,24 @@ class TestRowToCore:
         core = _row_to_core(row)
         assert core.category == PlaceCategory.restaurant
 
+    def test_with_aliases(self) -> None:
+        row = _minimal_row()
+        row["place_name_aliases"] = [
+            {"value": "Cafe Centro Mission", "source": "tiktok"},
+            {"value": "el centro", "source": "user"},
+        ]
+        core = _row_to_core(row)
+        assert len(core.place_name_aliases) == 2
+        assert core.place_name_aliases[0].value == "Cafe Centro Mission"
+        assert core.place_name_aliases[1].source == "user"
+
+    def test_missing_aliases_key_yields_empty_list(self) -> None:
+        # Old rows pre-column will be missing the key entirely.
+        row = _minimal_row()
+        row.pop("place_name_aliases", None)
+        core = _row_to_core(row)
+        assert core.place_name_aliases == []
+
 
 # ---------------------------------------------------------------------------
 # _core_to_dict
@@ -104,6 +123,26 @@ class TestCoreToDict:
         core = PlaceCore(place_name="Test", provider_id="google:x")
         d = _core_to_dict(core, datetime.now(UTC))
         assert d["tags"] is None
+
+    def test_empty_aliases_stored_as_none(self) -> None:
+        core = PlaceCore(place_name="Test", provider_id="google:x")
+        d = _core_to_dict(core, datetime.now(UTC))
+        assert d["place_name_aliases"] is None
+
+    def test_aliases_serialised(self) -> None:
+        core = PlaceCore(
+            place_name="Cafe Centro",
+            provider_id="google:x",
+            place_name_aliases=[
+                PlaceNameAlias(value="el centro", source="user"),
+                PlaceNameAlias(value="Cafe Centro Mission", source="tiktok"),
+            ],
+        )
+        d = _core_to_dict(core, datetime.now(UTC))
+        assert d["place_name_aliases"] == [
+            {"value": "el centro", "source": "user"},
+            {"value": "Cafe Centro Mission", "source": "tiktok"},
+        ]
 
     def test_location_serialised(self) -> None:
         core = PlaceCore(

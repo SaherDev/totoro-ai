@@ -163,6 +163,19 @@ class PlaceTag(BaseModel):
     source: str          # "google" | "llm" | "manual" | "tiktok" | ...
 
 
+class PlaceNameAlias(BaseModel):
+    """Alternative name for a place contributed by a non-canonical source.
+
+    The canonical place_name comes from the provider (e.g. Google). Aliases
+    track names from other writers (TikTok captions, user notes, LLM extracts)
+    for richer search and provenance. Deduped by `value` at merge time;
+    first writer of a given alias value wins.
+    """
+
+    value: str
+    source: str          # "tiktok" | "instagram" | "user" | "llm" | ...
+
+
 SortField = Literal["created_at", "refreshed_at", "place_name", "category"]
 
 
@@ -225,6 +238,7 @@ class PlaceCore(BaseModel):
 
     # core (mergeable)
     place_name: str
+    place_name_aliases: list[PlaceNameAlias] = Field(default_factory=list)
     category: PlaceCategory | None = None
     tags: list[PlaceTag] = Field(default_factory=list)
 

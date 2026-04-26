@@ -28,6 +28,7 @@ from .models import (
     LocationContext,
     PlaceCategory,
     PlaceCore,
+    PlaceNameAlias,
     PlaceQuery,
     PlaceTag,
 )
@@ -44,6 +45,7 @@ _PlacesV2Table = Table(
     Column("id", String),
     Column("provider_id", String),
     Column("place_name", String),
+    Column("place_name_aliases", JSONB),
     Column("category", String),
     Column("tags", JSONB),
     Column("location", JSONB),
@@ -228,6 +230,8 @@ def _core_to_dict(core: PlaceCore, now: datetime) -> dict[str, object]:
         "id": core.id or str(uuid4()),
         "provider_id": core.provider_id,
         "place_name": core.place_name,
+        "place_name_aliases": [a.model_dump() for a in core.place_name_aliases]
+        or None,
         "category": core.category.value if core.category else None,
         "tags": [t.model_dump() for t in core.tags] or None,
         "location": loc.model_dump(exclude_none=True) if loc else None,
@@ -242,12 +246,17 @@ def _row_to_core(row: object) -> PlaceCore:
 
     m = dict(row) if isinstance(row, Mapping) else vars(row)
     tags = [PlaceTag.model_validate(t) for t in (m.get("tags") or [])]
+    aliases = [
+        PlaceNameAlias.model_validate(a)
+        for a in (m.get("place_name_aliases") or [])
+    ]
     loc_raw = m.get("location")
     location = LocationContext.model_validate(loc_raw) if loc_raw else None
     return PlaceCore(
         id=m.get("id"),
         provider_id=m.get("provider_id"),
         place_name=m["place_name"],
+        place_name_aliases=aliases,
         category=PlaceCategory(m["category"]) if m.get("category") else None,
         tags=tags,
         location=location,
