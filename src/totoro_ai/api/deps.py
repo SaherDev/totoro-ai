@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging as _logging
 from typing import Any
 
 from fastapi import BackgroundTasks, Depends, Request
@@ -26,6 +27,19 @@ from totoro_ai.core.memory.service import UserMemoryService
 from totoro_ai.core.places import GooglePlacesClient, PlacesService
 from totoro_ai.core.places.cache import PlacesCache
 from totoro_ai.core.places.repository import PlacesRepository
+from totoro_ai.core.places_v2 import (
+    GooglePlacesClient as GooglePlacesClientV2,
+)
+from totoro_ai.core.places_v2 import (
+    PlaceCoreUpsertedEvent,
+    PlaceEventDispatcherProtocol,
+    PlacesRepo,
+    PlacesSearchService,
+    PlaceUpsertService,
+    RedisPlacesCache,
+    UserPlacesRepo,
+    UserPlacesService,
+)
 from totoro_ai.core.recall.service import RecallService
 from totoro_ai.core.signal.service import SignalService
 from totoro_ai.core.taste.debounce import regen_debouncer
@@ -455,4 +469,109 @@ async def get_chat_service(
         places_service=places_service,
         config=config,
         agent_graph=agent_graph,
+    )
+
+
+# ---------------------------------------------------------------------------
+# places_v2 dependencies
+# ---------------------------------------------------------------------------
+
+_places_v2_logger = _logging.getLogger(__name__)
+
+
+class _LogPlaceEventDispatcher:
+    """Stub event dispatcher that logs upserted events.
+
+    Real embedding subscriber is wired here once the embeddings module
+    exposes a PlaceCoreUpsertedEvent handler.
+    """
+
+    async def emit_upserted(self, event: PlaceCoreUpsertedEvent) -> None:
+        for core in event.place_cores:
+            _places_v2_logger.info(
+                "place_core_upserted",
+                extra={"place_id": core.id, "provider_id": core.provider_id},
+            )
+
+
+def _build_places_v2_cache() -> RedisPlacesCache:
+    """Construct a RedisPlacesCache from the Redis URL in secrets."""
+    from redis.asyncio import Redis
+
+    redis_client = Redis.from_url(get_env().REDIS_URL, decode_responses=True)
+    return RedisPlacesCache(redis_client)
+
+
+def get_places_v2_repo(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> PlacesRepo:
+    """FastAPI dependency providing PlacesRepo (places_v2 table)."""
+    return PlacesRepo(db_session)
+
+
+def get_user_places_repo(
+    db_session: AsyncSession = Depends(get_session),  # noqa: B008
+) -> UserPlacesRepo:
+    """FastAPI dependency providing UserPlacesRepo (user_places table)."""
+    return UserPlacesRepo(db_session)
+
+
+def get_places_v2_cache() -> RedisPlacesCache:
+    """FastAPI dependency providing RedisPlacesCache (place_v2: key prefix)."""
+    return _build_places_v2_cache()
+
+
+def get_google_places_client_v2() -> GooglePlacesClientV2:
+    """FastAPI dependency providing GooglePlacesClient (places_v2)."""
+    import httpx
+
+    api_key = get_env().GOOGLE_API_KEY or ""
+    return GooglePlacesClientV2(api_key=api_key, http=httpx.AsyncClient())
+
+
+def get_place_event_dispatcher_v2() -> PlaceEventDispatcherProtocol:
+    """FastAPI dependency providing PlaceEventDispatcherProtocol (places_v2).
+
+    Returns the stub log-only dispatcher. Wire real embedding subscriber here.
+    """
+    return _LogPlaceEventDispatcher()  # type: ignore[return-value]
+
+
+def get_places_search_service(
+    repo: PlacesRepo = Depends(get_places_v2_repo),  # noqa: B008
+    cache: RedisPlacesCache = Depends(get_places_v2_cache),  # noqa: B008
+    client: GooglePlacesClientV2 = Depends(get_google_places_client_v2),  # noqa: B008
+    event_dispatcher: PlaceEventDispatcherProtocol = Depends(  # noqa: B008
+        get_place_event_dispatcher_v2
+    ),
+) -> PlacesSearchService:
+    """FastAPI dependency providing PlacesSearchService (places_v2)."""
+    return PlacesSearchService(
+        repo=repo,
+        cache=cache,
+        client=client,
+        event_dispatcher=event_dispatcher,
+    )
+
+
+def get_place_upsert_service(
+    repo: PlacesRepo = Depends(get_places_v2_repo),  # noqa: B008
+    event_dispatcher: PlaceEventDispatcherProtocol = Depends(  # noqa: B008
+        get_place_event_dispatcher_v2
+    ),
+) -> PlaceUpsertService:
+    """FastAPI dependency providing PlaceUpsertService (places_v2)."""
+    return PlaceUpsertService(repo=repo, event_dispatcher=event_dispatcher)
+
+
+def get_user_places_service(
+    places_repo: PlacesRepo = Depends(get_places_v2_repo),  # noqa: B008
+    user_places_repo: UserPlacesRepo = Depends(get_user_places_repo),  # noqa: B008
+    search: PlacesSearchService = Depends(get_places_search_service),  # noqa: B008
+) -> UserPlacesService:
+    """FastAPI dependency providing UserPlacesService (places_v2)."""
+    return UserPlacesService(
+        places_repo=places_repo,
+        user_places_repo=user_places_repo,
+        search=search,
     )
