@@ -7,6 +7,18 @@ indexes needed for hybrid search:
   * HNSW index on `place_embeddings_v2.vector` (cosine ops) — kNN side
   * GIN index on `places_v2.search_vector` — full-text side
 
+The full-text side uses a dedicated `simple_unaccent` text-search
+config (simple tokenization + unaccent dictionary) so accented and
+unaccented forms collide ("Café" matches "cafe"). Field weights:
+
+  * A — place_name, place_name_aliases (a name match always wins)
+  * B — category, tags                  (semantic content)
+  * C — location.neighborhood/city/country  (context, not the target)
+
+The query side MUST use the same `simple_unaccent` config when
+building the tsquery, otherwise indexed lexemes won't line up with
+search terms.
+
 The generated tsvector pulls scalar fields directly and JSONB array
 values via `jsonb_path_query_array($[*].value)`. Listing those JSONB
 columns explicitly here keeps the generated expression IMMUTABLE
@@ -73,32 +85,59 @@ def upgrade() -> None:
 
     # ------------------------------------------------------------------
     # places_v2.search_vector — generated tsvector over the lexical
-    # fields the recall path actually queries. 'simple' config (no
-    # stemming) keeps non-English place names intact.
+    # fields the recall path actually queries. 'simple' tokenization
+    # (no stemming) keeps non-English place names intact; the unaccent
+    # dictionary on top folds "Café" → "cafe" so accented forms match.
+    #
+    # Field weights via setweight():
+    #   A — place_name, place_name_aliases  (direct name match wins)
+    #   B — category, tags                   (semantic content)
+    #   C — location.{neighborhood,city,country}  (context)
     #
     # JSONB arrays are flattened with jsonb_path_query_array($[*].value)
     # so only the value strings land in the tsvector — JSON keys like
     # "type" / "source" / "value" stay out of the index.
     # ------------------------------------------------------------------
+    op.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
+
+    # Custom config = simple + unaccent. Naming it explicitly means
+    # to_tsvector('simple_unaccent', ...) is IMMUTABLE for the column's
+    # purposes (the regconfig OID is bound at parse time).
+    op.execute(
+        "CREATE TEXT SEARCH CONFIGURATION simple_unaccent (COPY = simple)"
+    )
+    op.execute(
+        """
+        ALTER TEXT SEARCH CONFIGURATION simple_unaccent
+            ALTER MAPPING FOR hword, hword_part, word
+            WITH unaccent, simple
+        """
+    )
+
     op.execute(
         """
         ALTER TABLE places_v2 ADD COLUMN search_vector tsvector
         GENERATED ALWAYS AS (
-            to_tsvector('simple',
-                coalesce(place_name, '') || ' ' ||
-                coalesce(category, '') || ' ' ||
+            setweight(to_tsvector('simple_unaccent',
+                coalesce(place_name, '')), 'A') ||
+            setweight(to_tsvector('simple_unaccent',
                 coalesce(
                     jsonb_path_query_array(place_name_aliases, '$[*].value')::text,
                     ''
-                ) || ' ' ||
+                )), 'A') ||
+            setweight(to_tsvector('simple_unaccent',
+                coalesce(category, '')), 'B') ||
+            setweight(to_tsvector('simple_unaccent',
                 coalesce(
                     jsonb_path_query_array(tags, '$[*].value')::text,
                     ''
-                ) || ' ' ||
-                coalesce(location->>'neighborhood', '') || ' ' ||
-                coalesce(location->>'city', '') || ' ' ||
-                coalesce(location->>'country', '')
-            )
+                )), 'B') ||
+            setweight(to_tsvector('simple_unaccent',
+                coalesce(location->>'neighborhood', '')), 'C') ||
+            setweight(to_tsvector('simple_unaccent',
+                coalesce(location->>'city', '')), 'C') ||
+            setweight(to_tsvector('simple_unaccent',
+                coalesce(location->>'country', '')), 'C')
         ) STORED
         """
     )
@@ -112,6 +151,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS places_v2_fts_idx")
     op.execute("ALTER TABLE places_v2 DROP COLUMN IF EXISTS search_vector")
+    op.execute("DROP TEXT SEARCH CONFIGURATION IF EXISTS simple_unaccent")
+    # Leave the unaccent extension in place — it's harmless and other
+    # consumers may rely on it.
 
     op.execute("DROP INDEX IF EXISTS place_embeddings_v2_vector_hnsw_idx")
     op.drop_table("place_embeddings_v2")
