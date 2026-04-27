@@ -1,10 +1,11 @@
 """EmbeddingService — turn PlaceCore rows into vectors and persist them.
 
-Black-box contract: the service serializes the whole `PlaceCore` (via
-`model_dump_json`) and hands the string to an external embedder. No
-field-by-field hand picking — when `PlaceCore` grows new fields, the
-embedded text grows with it for free, and retrieval evals can tune the
-embedder/model without touching this code.
+Text builder: renders `PlaceCore` as labeled, embedder-friendly prose
+(name, aliases, category, tags grouped by type, location). Underscored
+enum values are flattened ("outdoor_seating" → "outdoor seating") so the
+embedder sees natural phrases. Tag and alias collections are deduped and
+sorted so the same logical place always hashes to the same digest —
+required for the diff-then-embed path to skip unchanged rows reliably.
 
 Diff-then-embed: every row's source text is hashed (SHA-256). Before
 hitting the embedder we read the stored `(text_hash, model_name)` for
@@ -19,6 +20,7 @@ the consumer can detect model drift.
 from __future__ import annotations
 
 import hashlib
+from enum import Enum
 
 from .models import PlaceCore
 from .protocols import EmbedderProtocol, EmbeddingsRepoProtocol
@@ -79,16 +81,59 @@ class EmbeddingService:
 
     @staticmethod
     def _build_text(core: PlaceCore) -> str:
-        """Serialize the core as JSON for embedding.
+        """Render PlaceCore as deterministic, embedder-friendly prose.
 
-        Identity and timestamp fields carry no semantic signal for retrieval
-        and are dropped to keep the embedded text stable across re-saves.
+        Includes the fields that actually carry semantic signal for recall
+        (name, aliases, category, tags grouped by type, neighborhood/city/
+        country). Drops identifiers, timestamps, lat/lng/radius (numeric —
+        the recall path applies geo filtering separately), full street
+        addresses (too specific for semantic match), and tag/alias
+        provenance (`source` field is metadata, not content).
+
+        Tag and alias collections are deduped and sorted so re-saving the
+        same logical place produces a byte-identical string — that's what
+        lets the diff-then-embed path skip unchanged rows.
         """
-        return core.model_dump_json(
-            exclude={"id", "provider_id", "created_at", "refreshed_at"}
-        )
+        parts: list[str] = [f"Name: {core.place_name}"]
+
+        if core.place_name_aliases:
+            aliases = sorted({a.value for a in core.place_name_aliases})
+            parts.append(f"Also known as: {', '.join(aliases)}")
+
+        if core.category:
+            parts.append(f"Category: {_humanize(core.category.value)}")
+
+        if core.tags:
+            by_type: dict[str, set[str]] = {}
+            for tag in core.tags:
+                t = _humanize(_enum_or_str(tag.type))
+                v = _humanize(_enum_or_str(tag.value))
+                by_type.setdefault(t, set()).add(v)
+            for type_name in sorted(by_type):
+                values = sorted(by_type[type_name])
+                parts.append(f"{type_name.capitalize()}: {', '.join(values)}")
+
+        loc = core.location
+        if loc:
+            place_bits = [
+                b for b in (loc.neighborhood, loc.city, loc.country) if b
+            ]
+            if place_bits:
+                parts.append(f"Location: {', '.join(place_bits)}")
+
+        return "\n".join(parts)
 
     @staticmethod
     def _hash(text: str) -> str:
         """SHA-256 hex of the source text — the diff key for re-embed checks."""
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _enum_or_str(v: object) -> str:
+    """Return the .value of a str-based Enum, or str(v) otherwise."""
+    return v.value if isinstance(v, Enum) else str(v)
+
+
+def _humanize(s: str) -> str:
+    """Flatten enum-style snake_case into spaced phrases for embedders."""
+    return s.replace("_", " ")
