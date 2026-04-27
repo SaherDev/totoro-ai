@@ -93,6 +93,10 @@ class EmbeddingService:
         Tag and alias collections are deduped and sorted so re-saving the
         same logical place produces a byte-identical string — that's what
         lets the diff-then-embed path skip unchanged rows.
+
+        Field list is paired with `places_v2.search_vector` in alembic
+        migration e9f0a1b2c3d4. Add a field here → add it there too, or
+        FTS and vector recall start surfacing different places.
         """
         parts: list[str] = [f"Name: {core.place_name}"]
 

@@ -97,6 +97,10 @@ def upgrade() -> None:
     # JSONB arrays are flattened with jsonb_path_query_array($[*].value)
     # so only the value strings land in the tsvector — JSON keys like
     # "type" / "source" / "value" stay out of the index.
+    #
+    # Field list is paired with EmbeddingService._build_text in
+    # core/places_v2/embedding_service.py. Add a field there → add it
+    # here too, or FTS and vector recall surface different places.
     # ------------------------------------------------------------------
     op.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
 
