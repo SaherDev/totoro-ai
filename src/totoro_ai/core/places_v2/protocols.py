@@ -136,7 +136,7 @@ class EmbeddingServiceProtocol(Protocol):
 class HybridSearchRepoProtocol(Protocol):
     async def search(
         self,
-        user_id: str,
+        user_id: str | None,
         query: str,
         query_vector: list[float],
         filters: HybridSearchFilters | None = None,

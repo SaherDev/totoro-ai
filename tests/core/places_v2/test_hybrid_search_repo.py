@@ -598,6 +598,121 @@ class TestUserScoping:
 
 
 # ---------------------------------------------------------------------------
+# Unscoped mode — user_id=None, global place catalog search
+# ---------------------------------------------------------------------------
+
+
+def _unscoped_row(**overrides: Any) -> dict[str, Any]:
+    """Row produced by the unscoped CTE — user_places columns are NULL."""
+    row = _hit_row(**overrides)
+    for key in (
+        "user_place_id", "user_id", "approved", "visited", "liked",
+        "note", "source", "source_url", "saved_at", "visited_at",
+    ):
+        row[key] = None
+    return row
+
+
+class TestUnscopedMode:
+    async def test_user_id_none_skips_user_places_join(self) -> None:
+        repo, session = _make_repo([])
+        await repo.search(None, "italian", _query_vector())
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt)).lower()
+        # filtered CTE in unscoped mode does NOT touch user_places.
+        # The bound user_id literal also doesn't appear.
+        assert "user_places" not in sql
+
+    async def test_unscoped_filtered_cte_pads_user_columns_with_null(self) -> None:
+        repo, session = _make_repo([])
+        await repo.search(None, "italian", _query_vector())
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt)).lower()
+        # NULL placeholders for the user_places columns keep the
+        # downstream final SELECT shape identical to the scoped path.
+        assert "null" in sql
+
+    async def test_unscoped_hit_has_user_data_none(self) -> None:
+        repo, _ = _make_repo([_unscoped_row(pid="p1", rrf=0.05)])
+        results = await repo.search(None, "italian", _query_vector())
+        assert len(results) == 1
+        assert results[0].place.id == "p1"
+        assert results[0].user_data is None
+        assert results[0].rrf_score == pytest.approx(0.05)
+
+    async def test_unscoped_rejects_visited_filter(self) -> None:
+        repo, _ = _make_repo([])
+        with pytest.raises(ValueError, match="user-side filters"):
+            await repo.search(
+                None,
+                "italian",
+                _query_vector(),
+                filters=HybridSearchFilters(visited=True),
+            )
+
+    async def test_unscoped_rejects_liked_filter(self) -> None:
+        repo, _ = _make_repo([])
+        with pytest.raises(ValueError, match="user-side filters"):
+            await repo.search(
+                None,
+                "italian",
+                _query_vector(),
+                filters=HybridSearchFilters(liked=True),
+            )
+
+    async def test_unscoped_rejects_approved_filter(self) -> None:
+        repo, _ = _make_repo([])
+        with pytest.raises(ValueError, match="user-side filters"):
+            await repo.search(
+                None,
+                "italian",
+                _query_vector(),
+                filters=HybridSearchFilters(approved=False),
+            )
+
+    async def test_unscoped_rejects_saved_after_filter(self) -> None:
+        repo, _ = _make_repo([])
+        with pytest.raises(ValueError, match="user-side filters"):
+            await repo.search(
+                None,
+                "italian",
+                _query_vector(),
+                filters=HybridSearchFilters(
+                    saved_after=datetime(2026, 1, 1, tzinfo=UTC)
+                ),
+            )
+
+    async def test_unscoped_accepts_place_side_filters(self) -> None:
+        repo, session = _make_repo([])
+        await repo.search(
+            None,
+            "italian",
+            _query_vector(),
+            filters=HybridSearchFilters(
+                category=PlaceCategory.restaurant,
+                city="Tokyo",
+            ),
+        )
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt)).lower()
+        assert "restaurant" in sql
+        assert "tokyo" in sql
+
+
+# ---------------------------------------------------------------------------
+# _row_to_hit — None user_data when user_place_id is missing
+# ---------------------------------------------------------------------------
+
+
+class TestRowToHitUnscoped:
+    def test_none_user_place_id_yields_none_user_data(self) -> None:
+        row = _unscoped_row()
+        hit = _row_to_hit(row)
+        assert hit.user_data is None
+        assert hit.place.id == row["id"]
+
+
+# ---------------------------------------------------------------------------
 # search() — exception handling
 # ---------------------------------------------------------------------------
 

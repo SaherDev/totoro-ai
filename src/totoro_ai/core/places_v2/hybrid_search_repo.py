@@ -1,9 +1,16 @@
-"""HybridSearchRepo — vector + FTS RRF retrieval over a user's saved places.
+"""HybridSearchRepo — vector + FTS RRF retrieval, two modes.
 
-Scope is "places this user saved" — the `filtered` CTE joins
-`user_places` with `places_v2`, applies `user_id` + filters, and uses
-`DISTINCT ON (place_id)` (keeping the most recent saved_at) so a place
-saved twice by the same user collapses to one hit.
+  * **Scoped** (`user_id` given) — the agent's recall path. The
+    `filtered` CTE joins `user_places` with `places_v2`, applies
+    `user_id` + filters, and uses `DISTINCT ON (place_id) ORDER BY
+    place_id, saved_at DESC` so a place saved twice by the same user
+    collapses to one hit. Emits hits with `user_data` populated.
+  * **Unscoped** (`user_id is None`) — global catalog search across
+    every place anyone has saved. The `filtered` CTE selects
+    `places_v2` directly with no `user_places` JOIN; user-side
+    filters (visited/liked/approved/saved_*) are rejected at the
+    door because they don't make sense without a user. Emits hits
+    with `user_data=None`.
 
 One SQL round-trip composed via the SQLAlchemy expression API:
 
@@ -47,6 +54,7 @@ from sqlalchemy import (
     and_,
     cast,
     func,
+    null,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
@@ -132,7 +140,7 @@ class HybridSearchRepo:
 
     async def search(
         self,
-        user_id: str,
+        user_id: str | None,
         query: str,
         query_vector: list[float],
         filters: HybridSearchFilters | None = None,
@@ -143,35 +151,11 @@ class HybridSearchRepo:
         filters = filters or HybridSearchFilters()
         candidate_limit = limit * candidate_multiplier
 
-        # ---- filtered CTE — user-scoped, deduped on place_id ------------
-        filtered_conditions: list[ColumnElement[bool]] = [
-            _up.user_id == user_id,
-            *_filter_conditions(filters),
-        ]
-        filtered = (
-            select(
-                _p.id.label("place_id"),
-                _up.user_place_id,
-                _up.user_id,
-                _up.approved,
-                _up.visited,
-                _up.liked,
-                _up.note,
-                _up.source,
-                _up.source_url,
-                _up.saved_at,
-                _up.visited_at,
-            )
-            .distinct(_p.id)  # DISTINCT ON (place_id) — collapse duplicates
-            .select_from(
-                _PlacesV2Table.join(
-                    _UserPlacesTable, _up.place_id == _p.id
-                )
-            )
-            .where(and_(*filtered_conditions))
-            .order_by(_p.id, _up.saved_at.desc())  # keep most recent save
-            .cte("filtered")
-        )
+        if user_id is None:
+            _reject_user_side_filters(filters)
+            filtered = self._build_unscoped_filtered_cte(filters)
+        else:
+            filtered = self._build_scoped_filtered_cte(user_id, filters)
 
         # ---- vec CTE -----------------------------------------------------
         cosine_dist = _e.vector.cosine_distance(query_vector)
@@ -277,10 +261,101 @@ class HybridSearchRepo:
 
         return [_row_to_hit(row._mapping) for row in result]
 
+    # ------------------------------------------------------------------
+    # CTE builders — one per mode
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_scoped_filtered_cte(
+        user_id: str, filters: HybridSearchFilters
+    ) -> Any:
+        """places_v2 ⋈ user_places, scoped + deduped on place_id."""
+        conditions: list[ColumnElement[bool]] = [
+            _up.user_id == user_id,
+            *_filter_conditions(filters),
+        ]
+        return (
+            select(
+                _p.id.label("place_id"),
+                _up.user_place_id,
+                _up.user_id,
+                _up.approved,
+                _up.visited,
+                _up.liked,
+                _up.note,
+                _up.source,
+                _up.source_url,
+                _up.saved_at,
+                _up.visited_at,
+            )
+            .distinct(_p.id)  # DISTINCT ON (place_id) — collapse duplicates
+            .select_from(
+                _PlacesV2Table.join(
+                    _UserPlacesTable, _up.place_id == _p.id
+                )
+            )
+            .where(and_(*conditions))
+            .order_by(_p.id, _up.saved_at.desc())  # keep most recent save
+            .cte("filtered")
+        )
+
+    @staticmethod
+    def _build_unscoped_filtered_cte(filters: HybridSearchFilters) -> Any:
+        """places_v2 only — no user scoping, user_places columns NULL.
+
+        Padding the user_places columns with typed NULLs keeps the
+        downstream final SELECT and row mapper identical to the scoped
+        path; `_row_to_hit` checks `user_place_id is None` to decide
+        whether to emit a UserPlace.
+        """
+        return (
+            select(
+                _p.id.label("place_id"),
+                null().label("user_place_id"),
+                null().label("user_id"),
+                null().label("approved"),
+                null().label("visited"),
+                null().label("liked"),
+                null().label("note"),
+                null().label("source"),
+                null().label("source_url"),
+                null().label("saved_at"),
+                null().label("visited_at"),
+            )
+            .where(and_(*_filter_conditions(filters)))
+            .cte("filtered")
+        )
+
 
 # ---------------------------------------------------------------------------
 # Filter conditions — typed columns from both tables
 # ---------------------------------------------------------------------------
+
+
+_USER_SIDE_FILTER_FIELDS = (
+    "visited",
+    "liked",
+    "approved",
+    "saved_after",
+    "saved_before",
+)
+
+
+def _reject_user_side_filters(filters: HybridSearchFilters) -> None:
+    """User-side filters require user_id — fail loudly when unscoped.
+
+    Quietly ignoring them would surface as confusing empty results
+    ("why didn't visited=True filter anything?"). Raise at the door.
+    """
+    set_fields = [
+        f for f in _USER_SIDE_FILTER_FIELDS
+        if getattr(filters, f) is not None
+    ]
+    if set_fields:
+        raise ValueError(
+            f"user-side filters {set_fields} require a user_id "
+            f"(unscoped search has no user_places rows to filter)"
+        )
 
 
 def _filter_conditions(
@@ -384,19 +459,26 @@ def _row_to_hit(row: Mapping[str, Any]) -> HybridSearchHit:
         refreshed_at=_to_datetime(row.get("refreshed_at")),
     )
 
-    user_data = UserPlace(
-        user_place_id=row["user_place_id"],
-        user_id=row["user_id"],
-        place_id=row["id"],
-        approved=bool(row.get("approved", True)),
-        visited=bool(row.get("visited", False)),
-        liked=row.get("liked"),
-        note=row.get("note"),
-        source=PlaceSource(row["source"]),
-        source_url=row.get("source_url"),
-        saved_at=row["saved_at"],
-        visited_at=_to_datetime(row.get("visited_at")),
-    )
+    # user_data is None on rows produced by the unscoped CTE (it pads
+    # the user_places columns with NULL). user_place_id is the cheapest
+    # discriminator since it's NOT NULL when a real user_places row was
+    # joined in.
+    if row.get("user_place_id") is not None:
+        user_data: UserPlace | None = UserPlace(
+            user_place_id=row["user_place_id"],
+            user_id=row["user_id"],
+            place_id=row["id"],
+            approved=bool(row.get("approved", True)),
+            visited=bool(row.get("visited", False)),
+            liked=row.get("liked"),
+            note=row.get("note"),
+            source=PlaceSource(row["source"]),
+            source_url=row.get("source_url"),
+            saved_at=row["saved_at"],
+            visited_at=_to_datetime(row.get("visited_at")),
+        )
+    else:
+        user_data = None
 
     v_rank = row.get("vector_rank")
     t_rank = row.get("text_rank")

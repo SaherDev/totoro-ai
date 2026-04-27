@@ -373,15 +373,19 @@ class HybridSearchHit(BaseModel):
 
     Carries both the canonical place and the user's relationship to it
     so downstream consumers (LLM, API, evals) get everything in one
-    round trip — the repo already JOINs user_places to apply scoping
-    and filters, so emitting the user_data costs nothing extra.
+    round trip — the repo already JOINs user_places when scoped to a
+    user, so emitting the user_data costs nothing extra.
+
+    `user_data` is None when the search ran in unscoped mode (no
+    `user_id` passed) — i.e., a global place catalog search not tied
+    to any user's saves.
 
     `vector_rank` / `text_rank` are 1-indexed ranks within each leg's
     candidate pool, or None if this place didn't show up in that leg.
     """
 
     place: PlaceCore
-    user_data: UserPlace
+    user_data: UserPlace | None = None
     rrf_score: float
     vector_rank: int | None
     text_rank: int | None
