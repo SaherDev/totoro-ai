@@ -144,3 +144,15 @@ class HybridSearchRepoProtocol(Protocol):
         rrf_k: int = 60,
         candidate_multiplier: int = 4,
     ) -> list[HybridSearchHit]: ...
+
+
+class HybridSearchServiceProtocol(Protocol):
+    async def search(
+        self,
+        user_id: str | None,
+        query: str,
+        filters: HybridSearchFilters | None = None,
+        limit: int = 20,
+        rrf_k: int = 60,
+        candidate_multiplier: int = 4,
+    ) -> list[HybridSearchHit]: ...

@@ -8,6 +8,7 @@ from .embedding_service import EmbeddingService
 from .embeddings_repo import EMBEDDING_DIMENSIONS, EmbeddingsRepo
 from .google_client import GooglePlacesClient
 from .hybrid_search_repo import HybridSearchRepo
+from .hybrid_search_service import HybridSearchService
 from .models import (
     HoursDict,
     HybridSearchFilters,
@@ -30,6 +31,7 @@ from .protocols import (
     EmbeddingServiceProtocol,
     EmbeddingsRepoProtocol,
     HybridSearchRepoProtocol,
+    HybridSearchServiceProtocol,
     PlacesCacheProtocol,
     PlacesClientProtocol,
     PlacesRepoProtocol,
@@ -89,6 +91,7 @@ __all__ = [
     "EmbeddingsRepoProtocol",
     "EmbeddingServiceProtocol",
     "HybridSearchRepoProtocol",
+    "HybridSearchServiceProtocol",
     "PlacesCacheProtocol",
     "PlacesClientProtocol",
     "PlacesRepoProtocol",
@@ -106,6 +109,7 @@ __all__ = [
     "GooglePlacesClient",
     # services
     "EmbeddingService",
+    "HybridSearchService",
     "PlacesSearchService",
     "PlaceUpsertService",
     "PlaceWipeService",
