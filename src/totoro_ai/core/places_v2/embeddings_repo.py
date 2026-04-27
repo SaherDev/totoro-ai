@@ -3,6 +3,10 @@
 One vector per place_id (UNIQUE FK → places_v2.id, ON DELETE CASCADE). The
 repo is purely persistence: no embedding model awareness, no text building.
 The caller (EmbeddingService) owns those concerns.
+
+Each row carries a `text_hash` of the source string the vector was built
+from. The service uses it to short-circuit re-embedding when neither the
+input text nor the model has changed.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ _PlaceEmbeddingsTable = Table(
     Column("place_id", String),
     Column("vector", Vector(EMBEDDING_DIMENSIONS)),
     Column("model_name", String),
+    Column("text_hash", String),
     Column("created_at", DateTime(timezone=True)),
 )
 _t = _PlaceEmbeddingsTable.c
@@ -61,17 +66,33 @@ class EmbeddingsRepo:
         result = await self._session.execute(stmt)
         return {row.place_id: list(row.vector) for row in result}
 
+    async def get_signatures_by_place_ids(
+        self, place_ids: list[str]
+    ) -> dict[str, tuple[str, str]]:
+        """Return {place_id: (text_hash, model_name)} for diff checks.
+
+        Used by the service to skip re-embedding rows whose source text and
+        model both already match what's in the DB.
+        """
+        if not place_ids:
+            return {}
+        stmt = select(_t.place_id, _t.text_hash, _t.model_name).where(
+            _t.place_id.in_(place_ids)
+        )
+        result = await self._session.execute(stmt)
+        return {row.place_id: (row.text_hash, row.model_name) for row in result}
+
     # ------------------------------------------------------------------
     # Writes
     # ------------------------------------------------------------------
 
     async def upsert_embeddings(
-        self, records: list[tuple[str, list[float], str]]
+        self, records: list[tuple[str, list[float], str, str]]
     ) -> None:
         """Bulk INSERT ... ON CONFLICT (place_id) DO UPDATE.
 
-        ``records`` is a list of ``(place_id, vector, model_name)`` tuples.
-        One round-trip regardless of size. Empty list is a no-op.
+        ``records`` is a list of ``(place_id, vector, model_name, text_hash)``
+        tuples. One round-trip regardless of size. Empty list is a no-op.
         """
         if not records:
             return
@@ -82,9 +103,10 @@ class EmbeddingsRepo:
                 "place_id": pid,
                 "vector": vec,
                 "model_name": model,
+                "text_hash": text_hash,
                 "created_at": func.now(),
             }
-            for pid, vec, model in records
+            for pid, vec, model, text_hash in records
         ]
 
         insert_stmt = pg_insert(_PlaceEmbeddingsTable).values(rows)
@@ -94,6 +116,7 @@ class EmbeddingsRepo:
             set_={
                 "vector": excl.vector,
                 "model_name": excl.model_name,
+                "text_hash": excl.text_hash,
                 "created_at": func.now(),
             },
         )

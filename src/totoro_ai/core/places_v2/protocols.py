@@ -106,8 +106,12 @@ class EmbeddingsRepoProtocol(Protocol):
         self, place_ids: list[str]
     ) -> dict[str, list[float]]: ...
 
+    async def get_signatures_by_place_ids(
+        self, place_ids: list[str]
+    ) -> dict[str, tuple[str, str]]: ...
+
     async def upsert_embeddings(
-        self, records: list[tuple[str, list[float], str]]
+        self, records: list[tuple[str, list[float], str, str]]
     ) -> None: ...
 
     async def delete_by_place_ids(self, place_ids: list[str]) -> int: ...
