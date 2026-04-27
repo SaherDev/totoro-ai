@@ -22,6 +22,7 @@ owns the embedder.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from datetime import datetime
@@ -39,7 +40,6 @@ from sqlalchemy import (
     and_,
     cast,
     func,
-    literal,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
@@ -142,11 +142,9 @@ class HybridSearchRepo:
         )
 
         # ---- txt CTE -----------------------------------------------------
-        # The custom regconfig name has to land in SQL as an unquoted
-        # identifier (`'simple_unaccent'`), not a bound string param —
-        # PG resolves regconfig at parse time. literal() with the right
-        # type does that.
-        tsq = func.websearch_to_tsquery(literal(_TS_CONFIG), query)
+        # PG implicitly casts the first arg to regconfig at runtime, so
+        # passing the config name as a plain string param is fine.
+        tsq = func.websearch_to_tsquery(_TS_CONFIG, query)
         text_rank = func.ts_rank_cd(_p.search_vector, tsq)
         txt = (
             select(
@@ -228,10 +226,13 @@ def _filter_conditions(
 
     if filters.tags:
         # AND semantics: every requested tag value must be present.
-        # Mirrors places_repo.find().
+        # Mirrors places_repo.find() — pre-stringify the JSONB literal
+        # because cast() expects a primitive bind value.
         for tag_val in filters.tags:
             conditions.append(
-                _p.tags.op("@>")(cast([{"value": tag_val}], JSONB))
+                _p.tags.op("@>")(
+                    cast(json.dumps([{"value": tag_val}]), JSONB)
+                )
             )
 
     if filters.city:
@@ -298,11 +299,13 @@ def _row_to_hit(row: Mapping[str, Any]) -> HybridSearchHit:
         created_at=_to_datetime(row.get("created_at")),
         refreshed_at=_to_datetime(row.get("refreshed_at")),
     )
+    v_rank = row.get("vector_rank")
+    t_rank = row.get("text_rank")
     return HybridSearchHit(
         place=place,
         rrf_score=float(row["rrf_score"]),
-        vector_rank=int(row["vector_rank"]) if row.get("vector_rank") else None,
-        text_rank=int(row["text_rank"]) if row.get("text_rank") else None,
+        vector_rank=int(v_rank) if v_rank is not None else None,
+        text_rank=int(t_rank) if t_rank is not None else None,
     )
 
 
