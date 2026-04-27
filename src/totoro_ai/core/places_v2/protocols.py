@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Protocol
 
 from .models import (
+    HybridSearchFilters,
+    HybridSearchHit,
     PlaceCore,
     PlaceObject,
     PlaceQuery,
@@ -129,3 +131,15 @@ class EmbedderProtocol(Protocol):
 
 class EmbeddingServiceProtocol(Protocol):
     async def embed_and_store(self, cores: list[PlaceCore]) -> None: ...
+
+
+class HybridSearchRepoProtocol(Protocol):
+    async def search(
+        self,
+        query: str,
+        query_vector: list[float],
+        filters: HybridSearchFilters | None = None,
+        limit: int = 20,
+        rrf_k: int = 60,
+        candidate_multiplier: int = 4,
+    ) -> list[HybridSearchHit]: ...

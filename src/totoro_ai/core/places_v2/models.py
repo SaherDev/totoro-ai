@@ -321,3 +321,52 @@ class SavedPlaceView(BaseModel):
 
     place: PlaceObject
     user_data: UserPlace
+
+
+class HybridSearchFilters(BaseModel):
+    """Filters applied identically to both legs of hybrid search.
+
+    All fields optional, combined with AND. The same filter set is joined
+    into both the vector and FTS CTEs so RRF fuses ranks computed within
+    the same constrained candidate pool.
+    """
+
+    category: PlaceCategory | None = None
+    tags: list[str] | None = None         # JSONB @>, AND across values
+
+    city: str | None = None               # ILIKE
+    neighborhood: str | None = None       # ILIKE
+    country: str | None = None            # exact
+
+    lat: float | None = None
+    lng: float | None = None
+    radius_m: int | None = None           # required if lat/lng set
+
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate_geo(self) -> HybridSearchFilters:
+        has_lat = self.lat is not None
+        has_lng = self.lng is not None
+        if has_lat != has_lng:
+            raise ValueError("lat and lng must both be set or both be None")
+        if (has_lat or has_lng) and self.radius_m is None:
+            raise ValueError("radius_m is required when lat/lng is provided")
+        return self
+
+
+class HybridSearchHit(BaseModel):
+    """One result from hybrid search.
+
+    `vector_rank` / `text_rank` are 1-indexed ranks within each leg's
+    candidate pool, or None if this place didn't show up in that leg.
+    Useful for retrieval evals and debugging — keep them on the surface.
+    """
+
+    place: PlaceCore
+    rrf_score: float
+    vector_rank: int | None
+    text_rank: int | None

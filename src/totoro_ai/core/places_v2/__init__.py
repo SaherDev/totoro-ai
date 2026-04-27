@@ -7,8 +7,11 @@ from .cache import RedisPlacesCache
 from .embedding_service import EmbeddingService
 from .embeddings_repo import EMBEDDING_DIMENSIONS, EmbeddingsRepo
 from .google_client import GooglePlacesClient
+from .hybrid_search_repo import HybridSearchRepo
 from .models import (
     HoursDict,
+    HybridSearchFilters,
+    HybridSearchHit,
     LocationContext,
     PlaceCategory,
     PlaceCore,
@@ -26,6 +29,7 @@ from .protocols import (
     EmbedderProtocol,
     EmbeddingServiceProtocol,
     EmbeddingsRepoProtocol,
+    HybridSearchRepoProtocol,
     PlacesCacheProtocol,
     PlacesClientProtocol,
     PlacesRepoProtocol,
@@ -68,6 +72,8 @@ __all__ = [
     "TagValue",
     # models
     "HoursDict",
+    "HybridSearchFilters",
+    "HybridSearchHit",
     "LocationContext",
     "PlaceCategory",
     "PlaceCore",
@@ -82,6 +88,7 @@ __all__ = [
     "EmbedderProtocol",
     "EmbeddingsRepoProtocol",
     "EmbeddingServiceProtocol",
+    "HybridSearchRepoProtocol",
     "PlacesCacheProtocol",
     "PlacesClientProtocol",
     "PlacesRepoProtocol",
@@ -92,6 +99,7 @@ __all__ = [
     "UserPlacesServiceProtocol",
     # implementations
     "EmbeddingsRepo",
+    "HybridSearchRepo",
     "PlacesRepo",
     "UserPlacesRepo",
     "RedisPlacesCache",
