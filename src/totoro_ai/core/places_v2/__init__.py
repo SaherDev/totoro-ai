@@ -4,6 +4,7 @@ Public surface: models, protocols, concrete implementations, services.
 """
 
 from .cache import RedisPlacesCache
+from .cached_embedder import CachedEmbedder
 from .embedding_service import EmbeddingService
 from .embeddings_repo import EMBEDDING_DIMENSIONS, EmbeddingsRepo
 from .google_client import GooglePlacesClient
@@ -101,6 +102,7 @@ __all__ = [
     "UserPlacesRepoProtocol",
     "UserPlacesServiceProtocol",
     # implementations
+    "CachedEmbedder",
     "EmbeddingsRepo",
     "HybridSearchRepo",
     "PlacesRepo",
