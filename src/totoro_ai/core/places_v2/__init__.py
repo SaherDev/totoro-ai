@@ -4,6 +4,8 @@ Public surface: models, protocols, concrete implementations, services.
 """
 
 from .cache import RedisPlacesCache
+from .embedding_service import EmbeddingService
+from .embeddings_repo import EMBEDDING_DIMENSIONS, EmbeddingsRepo
 from .google_client import GooglePlacesClient
 from .models import (
     HoursDict,
@@ -21,6 +23,9 @@ from .models import (
 from .place_wipe_service import PlaceWipeService
 from .places_repo import PlacesRepo
 from .protocols import (
+    EmbedderProtocol,
+    EmbeddingServiceProtocol,
+    EmbeddingsRepoProtocol,
     PlacesCacheProtocol,
     PlacesClientProtocol,
     PlacesRepoProtocol,
@@ -74,6 +79,9 @@ __all__ = [
     "SavedPlaceView",
     "UserPlace",
     # protocols
+    "EmbedderProtocol",
+    "EmbeddingsRepoProtocol",
+    "EmbeddingServiceProtocol",
     "PlacesCacheProtocol",
     "PlacesClientProtocol",
     "PlacesRepoProtocol",
@@ -83,13 +91,17 @@ __all__ = [
     "UserPlacesRepoProtocol",
     "UserPlacesServiceProtocol",
     # implementations
+    "EmbeddingsRepo",
     "PlacesRepo",
     "UserPlacesRepo",
     "RedisPlacesCache",
     "GooglePlacesClient",
     # services
+    "EmbeddingService",
     "PlacesSearchService",
     "PlaceUpsertService",
     "PlaceWipeService",
     "UserPlacesService",
+    # constants
+    "EMBEDDING_DIMENSIONS",
 ]

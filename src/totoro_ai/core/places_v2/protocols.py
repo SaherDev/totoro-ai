@@ -99,3 +99,29 @@ class UserPlacesServiceProtocol(Protocol):
         approved: bool | None = None,
         note: str | None = None,
     ) -> UserPlace: ...
+
+
+class EmbeddingsRepoProtocol(Protocol):
+    async def get_by_place_ids(
+        self, place_ids: list[str]
+    ) -> dict[str, list[float]]: ...
+
+    async def upsert_embeddings(
+        self, records: list[tuple[str, list[float], str]]
+    ) -> None: ...
+
+    async def delete_by_place_ids(self, place_ids: list[str]) -> int: ...
+
+
+class EmbedderProtocol(Protocol):
+    """External embedder. Mirrors the project-wide embedder shape so any
+    `providers.embeddings` implementation drops in unchanged.
+    """
+
+    async def embed(
+        self, texts: list[str], input_type: str
+    ) -> list[list[float]]: ...
+
+
+class EmbeddingServiceProtocol(Protocol):
+    async def embed_and_store(self, cores: list[PlaceCore]) -> None: ...
