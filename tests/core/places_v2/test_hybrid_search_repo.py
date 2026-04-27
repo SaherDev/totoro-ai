@@ -55,6 +55,7 @@ def _make_repo(rows: list[dict] | None = None) -> tuple[HybridSearchRepo, MagicM
 def _hit_row(
     *,
     pid: str = "p1",
+    user_id: str = "u1",
     rrf: float = 0.025,
     v_rank: int | None = 1,
     t_rank: int | None = 2,
@@ -63,8 +64,16 @@ def _hit_row(
     tags: list[dict[str, Any]] | None = None,
     location: dict[str, Any] | None = None,
     aliases: list[dict[str, Any]] | None = None,
+    visited: bool = False,
+    liked: bool | None = None,
+    approved: bool = True,
+    note: str | None = None,
+    source: str = "manual",
+    source_url: str | None = None,
 ) -> dict[str, Any]:
+    saved_at = datetime.now(UTC)
     return {
+        # places_v2 columns
         "id": pid,
         "provider_id": f"google:{pid}",
         "place_name": place_name,
@@ -72,8 +81,20 @@ def _hit_row(
         "category": category,
         "tags": tags,
         "location": location,
-        "created_at": datetime.now(UTC),
+        "created_at": saved_at,
         "refreshed_at": None,
+        # user_places columns
+        "user_place_id": f"up_{pid}",
+        "user_id": user_id,
+        "approved": approved,
+        "visited": visited,
+        "liked": liked,
+        "note": note,
+        "source": source,
+        "source_url": source_url,
+        "saved_at": saved_at,
+        "visited_at": None,
+        # scores
         "rrf_score": rrf,
         "vector_rank": v_rank,
         "text_rank": t_rank,
@@ -202,17 +223,38 @@ class TestFilterConditions:
         assert "ll_to_earth" in joined
         assert "is not null" in joined.lower()
 
-    def test_created_after_emits_gte_comparison(self) -> None:
+    def test_saved_after_emits_gte_comparison(self) -> None:
         ts = datetime(2026, 1, 1, tzinfo=UTC)
-        cond = _filter_conditions(HybridSearchFilters(created_after=ts))
+        cond = _filter_conditions(HybridSearchFilters(saved_after=ts))
         sql = str(cond[0].compile(compile_kwargs={"literal_binds": True}))
         assert ">=" in sql
+        assert "saved_at" in sql.lower()
 
-    def test_created_before_emits_lte_comparison(self) -> None:
+    def test_saved_before_emits_lte_comparison(self) -> None:
         ts = datetime(2026, 12, 31, tzinfo=UTC)
-        cond = _filter_conditions(HybridSearchFilters(created_before=ts))
+        cond = _filter_conditions(HybridSearchFilters(saved_before=ts))
         sql = str(cond[0].compile(compile_kwargs={"literal_binds": True}))
         assert "<=" in sql
+        assert "saved_at" in sql.lower()
+
+    def test_visited_filter_targets_user_places(self) -> None:
+        cond = _filter_conditions(HybridSearchFilters(visited=True))
+        sql = str(cond[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "visited" in sql.lower()
+
+    def test_liked_true_filter(self) -> None:
+        cond = _filter_conditions(HybridSearchFilters(liked=True))
+        sql = str(cond[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "liked" in sql.lower()
+
+    def test_liked_false_filter(self) -> None:
+        # liked tri-state: explicit False is a real filter, not "any"
+        cond = _filter_conditions(HybridSearchFilters(liked=False))
+        assert len(cond) == 1
+
+    def test_approved_filter(self) -> None:
+        cond = _filter_conditions(HybridSearchFilters(approved=False))
+        assert len(cond) == 1
 
     def test_combined_filters_each_present(self) -> None:
         cond = _filter_conditions(
@@ -220,9 +262,12 @@ class TestFilterConditions:
                 category=PlaceCategory.restaurant,
                 tags=["italian"],
                 city="Tokyo",
+                visited=True,
+                liked=True,
             )
         )
-        assert len(cond) == 3
+        # category(1) + tags(1) + city(1) + visited(1) + liked(1) = 5
+        assert len(cond) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +356,30 @@ class TestRowToHit:
         assert hit.place.tags == []
         assert hit.place.place_name_aliases == []
 
+    def test_user_data_populated_from_row(self) -> None:
+        row = _hit_row(
+            user_id="u-42",
+            visited=True,
+            liked=True,
+            note="best for first dates",
+            source="tiktok",
+            source_url="https://tiktok.com/@x/video/1",
+        )
+        hit = _row_to_hit(row)
+        assert hit.user_data.user_id == "u-42"
+        assert hit.user_data.place_id == row["id"]
+        assert hit.user_data.user_place_id == row["user_place_id"]
+        assert hit.user_data.visited is True
+        assert hit.user_data.liked is True
+        assert hit.user_data.note == "best for first dates"
+        assert hit.user_data.source.value == "tiktok"
+        assert hit.user_data.source_url == "https://tiktok.com/@x/video/1"
+
+    def test_user_data_liked_none_preserved(self) -> None:
+        # Tri-state liked: NULL means "no opinion" and must not become False.
+        hit = _row_to_hit(_hit_row(liked=None))
+        assert hit.user_data.liked is None
+
 
 # ---------------------------------------------------------------------------
 # search() — SQL shape inspection
@@ -320,17 +389,17 @@ class TestRowToHit:
 class TestSearchSQLShape:
     async def test_executes_once(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         session.execute.assert_awaited_once()
 
     async def test_empty_results_yield_empty_list(self) -> None:
         repo, _ = _make_repo([])
-        result = await repo.search("italian", _query_vector())
+        result = await repo.search("u1", "italian", _query_vector())
         assert result == []
 
     async def test_compiled_sql_contains_three_named_ctes(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
         # CTE names: filtered, vec, txt, fused
@@ -341,7 +410,7 @@ class TestSearchSQLShape:
 
     async def test_vector_leg_uses_cosine_distance_operator(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt))
         # pgvector cosine distance is <=>
@@ -349,7 +418,7 @@ class TestSearchSQLShape:
 
     async def test_text_leg_uses_websearch_to_tsquery(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("cozy italian", _query_vector())
+        await repo.search("u1", "cozy italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
         assert "websearch_to_tsquery" in sql
@@ -357,7 +426,7 @@ class TestSearchSQLShape:
 
     async def test_text_leg_uses_ts_rank_cd_for_weighting(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
         # ts_rank_cd respects the per-field setweight() weights.
@@ -365,7 +434,7 @@ class TestSearchSQLShape:
 
     async def test_text_leg_uses_match_operator(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt))
         # @@ is the tsvector match operator
@@ -373,14 +442,14 @@ class TestSearchSQLShape:
 
     async def test_full_outer_join_present(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
         assert "full outer join" in sql
 
     async def test_rrf_formula_present(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector(), rrf_k=60)
+        await repo.search("u1", "italian", _query_vector(), rrf_k=60)
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
         # 1.0 / (60 + rank) — k baked in via literal_binds
@@ -389,14 +458,14 @@ class TestSearchSQLShape:
 
     async def test_row_number_window_used_for_ranks(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
         assert "row_number()" in sql
 
     async def test_outer_limit_respected(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector(), limit=7)
+        await repo.search("u1", "italian", _query_vector(), limit=7)
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt))
         # The outermost LIMIT is the smallest one — others are
@@ -406,7 +475,7 @@ class TestSearchSQLShape:
     async def test_candidate_limit_is_limit_times_multiplier(self) -> None:
         repo, session = _make_repo([])
         await repo.search(
-            "italian", _query_vector(), limit=5, candidate_multiplier=4
+            "u1", "italian", _query_vector(), limit=5, candidate_multiplier=4
         )
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
@@ -415,21 +484,21 @@ class TestSearchSQLShape:
 
     async def test_default_rrf_k_is_60(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt))
         assert "60" in sql
 
     async def test_custom_rrf_k_propagates(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector(), rrf_k=120)
+        await repo.search("u1", "italian", _query_vector(), rrf_k=120)
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt))
         assert "120" in sql
 
     async def test_empty_filters_means_no_where_constraints(self) -> None:
         repo, session = _make_repo([])
-        await repo.search("italian", _query_vector())
+        await repo.search("u1", "italian", _query_vector())
         stmt = session.execute.call_args.args[0]
         sql = str(_compiled(stmt)).lower()
         # When no filters supplied, the filtered CTE has no WHERE clause
@@ -440,6 +509,7 @@ class TestSearchSQLShape:
     async def test_filters_propagated_into_filtered_cte(self) -> None:
         repo, session = _make_repo([])
         await repo.search(
+            "u1",
             "italian",
             _query_vector(),
             filters=HybridSearchFilters(
@@ -459,13 +529,72 @@ class TestSearchSQLShape:
             _hit_row(pid="c", rrf=0.02, v_rank=None, t_rank=1),
         ]
         repo, _ = _make_repo(rows)
-        results = await repo.search("italian", _query_vector())
+        results = await repo.search("u1", "italian", _query_vector())
         assert len(results) == 3
         assert results[0].place.id == "a"
         assert results[1].vector_rank == 3
         assert results[1].text_rank is None
         assert results[2].vector_rank is None
         assert results[2].text_rank == 1
+
+
+# ---------------------------------------------------------------------------
+# User scoping — user_id propagation, JOIN, DISTINCT ON
+# ---------------------------------------------------------------------------
+
+
+class TestUserScoping:
+    async def test_user_places_joined_in_filtered_cte(self) -> None:
+        repo, session = _make_repo([])
+        await repo.search("u1", "italian", _query_vector())
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt)).lower()
+        # filtered CTE pulls from both tables
+        assert "user_places" in sql
+        assert "places_v2" in sql
+
+    async def test_user_id_appears_as_bound_value(self) -> None:
+        repo, session = _make_repo([])
+        await repo.search("user-xyz-123", "italian", _query_vector())
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt))
+        assert "user-xyz-123" in sql
+
+    async def test_distinct_on_place_id_present(self) -> None:
+        repo, session = _make_repo([])
+        await repo.search("u1", "italian", _query_vector())
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt)).lower()
+        # DISTINCT ON collapses two user_places rows for the same place
+        # down to the most recent one (by saved_at desc).
+        assert "distinct on" in sql
+
+    async def test_user_side_filter_propagates_into_sql(self) -> None:
+        repo, session = _make_repo([])
+        await repo.search(
+            "u1",
+            "italian",
+            _query_vector(),
+            filters=HybridSearchFilters(visited=True, liked=True),
+        )
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt)).lower()
+        # both filters should land in the WHERE clause
+        assert "visited" in sql
+        assert "liked" in sql
+
+    async def test_saved_after_filter_reaches_user_places_saved_at(self) -> None:
+        repo, session = _make_repo([])
+        ts = datetime(2026, 1, 1, tzinfo=UTC)
+        await repo.search(
+            "u1",
+            "italian",
+            _query_vector(),
+            filters=HybridSearchFilters(saved_after=ts),
+        )
+        stmt = session.execute.call_args.args[0]
+        sql = str(_compiled(stmt)).lower()
+        assert "saved_at" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +609,7 @@ class TestSearchErrorHandling:
         repo = HybridSearchRepo(session)
 
         with pytest.raises(RuntimeError, match="connection lost"):
-            await repo.search("italian", _query_vector())
+            await repo.search("u1", "italian", _query_vector())
 
 
 # ---------------------------------------------------------------------------
@@ -498,9 +627,25 @@ class TestHitPlaceShape:
             )
         ]
         repo, _ = _make_repo(rows)
-        results = await repo.search("italian", _query_vector())
+        results = await repo.search("u1", "italian", _query_vector())
         place = results[0].place
         assert isinstance(place, PlaceCore)
         assert place.tags[0].value == "Italian"
         assert place.location is not None and place.location.city == "Tokyo"
         assert place.place_name_aliases[0].value == "Alt Name"
+
+    async def test_hit_carries_user_data_alongside_place(self) -> None:
+        rows = [
+            _hit_row(
+                user_id="u1",
+                visited=True,
+                liked=True,
+                note="reservation only",
+            )
+        ]
+        repo, _ = _make_repo(rows)
+        results = await repo.search("u1", "italian", _query_vector())
+        hit = results[0]
+        assert hit.user_data.user_id == "u1"
+        assert hit.user_data.visited is True
+        assert hit.user_data.note == "reservation only"

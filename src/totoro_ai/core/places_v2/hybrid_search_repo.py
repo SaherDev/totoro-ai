@@ -1,23 +1,28 @@
-"""HybridSearchRepo — vector + FTS retrieval with RRF fusion.
+"""HybridSearchRepo — vector + FTS RRF retrieval over a user's saved places.
+
+Scope is "places this user saved" — the `filtered` CTE joins
+`user_places` with `places_v2`, applies `user_id` + filters, and uses
+`DISTINCT ON (place_id)` (keeping the most recent saved_at) so a place
+saved twice by the same user collapses to one hit.
 
 One SQL round-trip composed via the SQLAlchemy expression API:
 
-  1. `filtered` CTE applies HybridSearchFilters to places_v2 once
-     (category, tags, city/neighborhood/country, geo via earth_box,
-     created_at range).
-  2. `vec` CTE: kNN over place_embeddings_v2.vector (cosine, HNSW
-     index), restricted to filtered ids. Top candidate_limit by rank.
+  1. `filtered` CTE: places_v2 ⋈ user_places, scoped by user_id and
+     filtered (category, tags, geo, visited/liked/approved, saved_at
+     range). Carries user_places columns through so downstream stages
+     don't need to re-join.
+  2. `vec` CTE: kNN over place_embeddings_v2.vector (cosine, HNSW),
+     restricted to filtered place ids. Top candidate_limit by rank.
   3. `txt` CTE: full-text on places_v2.search_vector via
-     `websearch_to_tsquery('simple_unaccent', :q)` with ts_rank_cd
-     respecting the per-field weights (A/B/C). Top candidate_limit
-     by rank.
+     `websearch_to_tsquery('simple_unaccent', :q)` with `ts_rank_cd`
+     respecting per-field weights (A/B/C). Top candidate_limit.
   4. `fused`: FULL OUTER JOIN on place_id, RRF score
      `1/(k + v_rank) + 1/(k + t_rank)` (NULL ranks contribute 0).
-  5. Final SELECT joins back to places_v2 to materialize PlaceCore
-     and orders by rrf_score DESC limited to `limit`.
+  5. Final SELECT: re-joins `places_v2` for PlaceCore columns and
+     `filtered` for the user_places columns, ordered by rrf_score.
 
-Does not embed — the caller passes the query vector. Service layer
-owns the embedder.
+Repo does not embed — caller passes the query vector. Service owns the
+embedder.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
 from sqlalchemy import (
+    Boolean,
     Column,
     ColumnElement,
     DateTime,
@@ -37,6 +43,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     and_,
     cast,
     func,
@@ -53,7 +60,9 @@ from .models import (
     PlaceCategory,
     PlaceCore,
     PlaceNameAlias,
+    PlaceSource,
     PlaceTag,
+    UserPlace,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,9 +70,9 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Local Table references — typed columns for native query building.
-# Matches the per-repo pattern used by places_repo / user_places_repo /
-# embeddings_repo. The search_vector column is added here because this
-# repo is the one that queries it.
+# Each repo defines its own per the v2 pattern (places_repo,
+# user_places_repo, embeddings_repo). search_vector is only declared
+# here because this is the repo that consumes it.
 # ---------------------------------------------------------------------------
 
 _metadata = MetaData()
@@ -96,6 +105,23 @@ _PlaceEmbeddingsTable = Table(
 )
 _e = _PlaceEmbeddingsTable.c
 
+_UserPlacesTable = Table(
+    "user_places",
+    _metadata,
+    Column("user_place_id", String),
+    Column("user_id", String),
+    Column("place_id", String),
+    Column("approved", Boolean),
+    Column("visited", Boolean),
+    Column("liked", Boolean),
+    Column("note", Text),
+    Column("source", String),
+    Column("source_url", Text),
+    Column("saved_at", DateTime(timezone=True)),
+    Column("visited_at", DateTime(timezone=True)),
+)
+_up = _UserPlacesTable.c
+
 
 _TS_CONFIG = "simple_unaccent"  # custom config from the FTS migration
 
@@ -106,6 +132,7 @@ class HybridSearchRepo:
 
     async def search(
         self,
+        user_id: str,
         query: str,
         query_vector: list[float],
         filters: HybridSearchFilters | None = None,
@@ -116,15 +143,37 @@ class HybridSearchRepo:
         filters = filters or HybridSearchFilters()
         candidate_limit = limit * candidate_multiplier
 
-        # ---- filtered CTE ------------------------------------------------
+        # ---- filtered CTE — user-scoped, deduped on place_id ------------
+        filtered_conditions: list[ColumnElement[bool]] = [
+            _up.user_id == user_id,
+            *_filter_conditions(filters),
+        ]
         filtered = (
-            select(_p.id)
-            .where(and_(*_filter_conditions(filters)))
+            select(
+                _p.id.label("place_id"),
+                _up.user_place_id,
+                _up.user_id,
+                _up.approved,
+                _up.visited,
+                _up.liked,
+                _up.note,
+                _up.source,
+                _up.source_url,
+                _up.saved_at,
+                _up.visited_at,
+            )
+            .distinct(_p.id)  # DISTINCT ON (place_id) — collapse duplicates
+            .select_from(
+                _PlacesV2Table.join(
+                    _UserPlacesTable, _up.place_id == _p.id
+                )
+            )
+            .where(and_(*filtered_conditions))
+            .order_by(_p.id, _up.saved_at.desc())  # keep most recent save
             .cte("filtered")
         )
 
         # ---- vec CTE -----------------------------------------------------
-        # pgvector's cosine_distance binds the list as a vector parameter.
         cosine_dist = _e.vector.cosine_distance(query_vector)
         vec = (
             select(
@@ -133,7 +182,7 @@ class HybridSearchRepo:
             )
             .select_from(
                 _PlaceEmbeddingsTable.join(
-                    filtered, filtered.c.id == _e.place_id
+                    filtered, filtered.c.place_id == _e.place_id
                 )
             )
             .order_by(cosine_dist)
@@ -152,7 +201,7 @@ class HybridSearchRepo:
                 func.row_number().over(order_by=text_rank.desc()).label("rank"),
             )
             .select_from(
-                _PlacesV2Table.join(filtered, filtered.c.id == _p.id)
+                _PlacesV2Table.join(filtered, filtered.c.place_id == _p.id)
             )
             .where(_p.search_vector.op("@@")(tsq))
             .order_by(text_rank.desc())
@@ -160,7 +209,7 @@ class HybridSearchRepo:
             .cte("txt")
         )
 
-        # ---- fused CTE (FULL OUTER JOIN + RRF) ---------------------------
+        # ---- fused (FULL OUTER JOIN + RRF) -------------------------------
         rrf_score = (
             func.coalesce(1.0 / (rrf_k + vec.c.rank), 0)
             + func.coalesce(1.0 / (rrf_k + txt.c.rank), 0)
@@ -178,7 +227,7 @@ class HybridSearchRepo:
             .cte("fused")
         )
 
-        # ---- final SELECT — materialize PlaceCore + scores ---------------
+        # ---- final SELECT — PlaceCore columns + UserPlace columns + scores
         stmt = (
             select(
                 _p.id,
@@ -190,11 +239,25 @@ class HybridSearchRepo:
                 _p.location,
                 _p.created_at,
                 _p.refreshed_at,
+                filtered.c.user_place_id,
+                filtered.c.user_id,
+                filtered.c.approved,
+                filtered.c.visited,
+                filtered.c.liked,
+                filtered.c.note,
+                filtered.c.source,
+                filtered.c.source_url,
+                filtered.c.saved_at,
+                filtered.c.visited_at,
                 fused.c.rrf_score,
                 fused.c.vector_rank,
                 fused.c.text_rank,
             )
-            .select_from(fused.join(_PlacesV2Table, _p.id == fused.c.place_id))
+            .select_from(
+                fused
+                .join(_PlacesV2Table, _p.id == fused.c.place_id)
+                .join(filtered, filtered.c.place_id == fused.c.place_id)
+            )
             .order_by(fused.c.rrf_score.desc())
             .limit(limit)
         )
@@ -204,7 +267,11 @@ class HybridSearchRepo:
         except Exception as exc:
             logger.error(
                 "hybrid_search.failed",
-                extra={"error": str(exc), "query": query},
+                extra={
+                    "error": str(exc),
+                    "user_id": user_id,
+                    "query": query,
+                },
             )
             raise
 
@@ -212,22 +279,29 @@ class HybridSearchRepo:
 
 
 # ---------------------------------------------------------------------------
-# Filter conditions — built from typed columns, not text fragments
+# Filter conditions — typed columns from both tables
 # ---------------------------------------------------------------------------
 
 
 def _filter_conditions(
     filters: HybridSearchFilters,
 ) -> list[ColumnElement[bool]]:
+    """Build WHERE conditions from a HybridSearchFilters.
+
+    Place-side conditions reference _p; user-side reference _up. Caller
+    prepends the `user_id == user_id` condition; this function emits
+    only the optional filter set.
+    """
     conditions: list[ColumnElement[bool]] = []
 
+    # ---- place catalog ----
     if filters.category is not None:
         conditions.append(_p.category == filters.category.value)
 
     if filters.tags:
         # AND semantics: every requested tag value must be present.
-        # Mirrors places_repo.find() — pre-stringify the JSONB literal
-        # because cast() expects a primitive bind value.
+        # Pre-stringify the JSONB literal because cast() expects a
+        # primitive bind value.
         for tag_val in filters.tags:
             conditions.append(
                 _p.tags.op("@>")(
@@ -265,11 +339,21 @@ def _filter_conditions(
             ]
         )
 
-    if filters.created_after is not None:
-        conditions.append(_p.created_at >= filters.created_after)
+    # ---- user_places ----
+    if filters.visited is not None:
+        conditions.append(_up.visited == filters.visited)
 
-    if filters.created_before is not None:
-        conditions.append(_p.created_at <= filters.created_before)
+    if filters.liked is not None:
+        conditions.append(_up.liked == filters.liked)
+
+    if filters.approved is not None:
+        conditions.append(_up.approved == filters.approved)
+
+    if filters.saved_after is not None:
+        conditions.append(_up.saved_at >= filters.saved_after)
+
+    if filters.saved_before is not None:
+        conditions.append(_up.saved_at <= filters.saved_before)
 
     return conditions
 
@@ -299,10 +383,26 @@ def _row_to_hit(row: Mapping[str, Any]) -> HybridSearchHit:
         created_at=_to_datetime(row.get("created_at")),
         refreshed_at=_to_datetime(row.get("refreshed_at")),
     )
+
+    user_data = UserPlace(
+        user_place_id=row["user_place_id"],
+        user_id=row["user_id"],
+        place_id=row["id"],
+        approved=bool(row.get("approved", True)),
+        visited=bool(row.get("visited", False)),
+        liked=row.get("liked"),
+        note=row.get("note"),
+        source=PlaceSource(row["source"]),
+        source_url=row.get("source_url"),
+        saved_at=row["saved_at"],
+        visited_at=_to_datetime(row.get("visited_at")),
+    )
+
     v_rank = row.get("vector_rank")
     t_rank = row.get("text_rank")
     return HybridSearchHit(
         place=place,
+        user_data=user_data,
         rrf_score=float(row["rrf_score"]),
         vector_rank=int(v_rank) if v_rank is not None else None,
         text_rank=int(t_rank) if t_rank is not None else None,
