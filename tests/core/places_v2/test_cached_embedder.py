@@ -8,7 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from totoro_ai.core.places_v2.cached_embedder import CachedEmbedder
+from totoro_ai.core.places_v2.cached_embedder import (
+    DEFAULT_TTL_SECONDS,
+    CachedEmbedder,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -208,12 +211,15 @@ class TestKeyConstruction:
 
 
 # ---------------------------------------------------------------------------
-# TTL — unlimited (no `ex=` arg on SET)
+# TTL — defaults to 90 days, overridable per-instance
 # ---------------------------------------------------------------------------
 
 
 class TestTTL:
-    async def test_set_called_without_ex_argument(self) -> None:
+    def test_default_constant_is_90_days(self) -> None:
+        assert DEFAULT_TTL_SECONDS == 90 * 24 * 60 * 60
+
+    async def test_set_uses_default_ttl_when_unspecified(self) -> None:
         redis = _make_redis(mget_returns=[None])
         cached, _, _ = _make_cached(
             embedder=_make_embedder(return_value=[[0.1] * 8]),
@@ -221,9 +227,21 @@ class TestTTL:
         )
         await cached.embed(["x"], "query")
         pipe = redis.pipeline.return_value.__aenter__.return_value
-        # No ttl → no `ex` kwarg.
         for call in pipe.set.call_args_list:
-            assert "ex" not in call.kwargs
+            assert call.kwargs.get("ex") == DEFAULT_TTL_SECONDS
+
+    async def test_custom_ttl_propagates_to_set(self) -> None:
+        redis = _make_redis(mget_returns=[None])
+        cached = CachedEmbedder(
+            _make_embedder(return_value=[[0.1] * 8]),
+            redis,
+            "voyage-4-lite",
+            ttl_seconds=42,
+        )
+        await cached.embed(["x"], "query")
+        pipe = redis.pipeline.return_value.__aenter__.return_value
+        for call in pipe.set.call_args_list:
+            assert call.kwargs.get("ex") == 42
 
 
 # ---------------------------------------------------------------------------

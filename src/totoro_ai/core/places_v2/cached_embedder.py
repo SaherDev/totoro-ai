@@ -16,10 +16,11 @@ Fail-open semantics: a Redis ``mget`` error falls through to the
 embedder; a write-back error is logged and swallowed. A flaky cache
 must never take search down.
 
-TTL is unlimited — entries are evicted by Redis once ``maxmemory`` is
-hit, so configure the instance with ``maxmemory-policy allkeys-lru``
-(or similar) to keep growth bounded. ``model_name`` is part of the key
-so swapping embedders later doesn't poison hits with the wrong vector
+TTL defaults to 90 days. Long enough that genuinely repeated queries
+(common phrases the agent generates over weeks) stay hot, short enough
+that abandoned keys don't accumulate forever even on Redis instances
+without an LRU eviction policy. ``model_name`` is part of the key so
+swapping embedders later doesn't poison hits with the wrong vector
 space.
 """
 
@@ -40,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 _KEY_PREFIX = "qembed:"
 
+# 90 days — query vectors don't drift for a fixed embedder, but a TTL
+# bounds Redis growth on instances without LRU eviction configured.
+DEFAULT_TTL_SECONDS: int = 90 * 24 * 60 * 60
+
 
 @functools.cache
 def _shared_redis_client(url: str) -> Redis:
@@ -57,10 +62,12 @@ class CachedEmbedder:
         embedder: EmbedderProtocol,
         redis: Redis,
         model_name: str,
+        ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> None:
         self._embedder = embedder
         self._redis = redis
         self._model_name = model_name
+        self._ttl_seconds = ttl_seconds
 
     @classmethod
     def from_url(
@@ -68,9 +75,10 @@ class CachedEmbedder:
         embedder: EmbedderProtocol,
         url: str,
         model_name: str,
+        ttl_seconds: int = DEFAULT_TTL_SECONDS,
     ) -> CachedEmbedder:
         """Construct backed by the shared per-URL Redis client."""
-        return cls(embedder, _shared_redis_client(url), model_name)
+        return cls(embedder, _shared_redis_client(url), model_name, ttl_seconds)
 
     async def embed(
         self, texts: list[str], input_type: str
@@ -120,7 +128,11 @@ class CachedEmbedder:
             try:
                 async with self._redis.pipeline(transaction=False) as pipe:
                     for idx, vec in zip(miss_indices, embedded, strict=True):
-                        pipe.set(keys[idx], json.dumps(vec))  # no TTL
+                        pipe.set(
+                            keys[idx],
+                            json.dumps(vec),
+                            ex=self._ttl_seconds,
+                        )
                     await pipe.execute()
             except Exception:
                 logger.exception("query_embed_cache_set_error")
